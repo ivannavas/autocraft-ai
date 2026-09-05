@@ -1,0 +1,8 @@
+# Normalize text files, but keep the Gradle wrapper script LF-only:
+# CRLF endings break `./gradlew` under bash/WSL/CI.
+* text=auto eol=lf
+
+*.bat text eol=crlf
+*.jar binary
+*.png binary
+*.ogg binary

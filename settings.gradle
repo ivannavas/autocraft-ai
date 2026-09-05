@@ -1,0 +1,18 @@
+pluginManagement {
+    repositories {
+        maven { name = 'Fabric'; url = 'https://maven.fabricmc.net/' }
+        mavenCentral()
+        gradlePluginPortal()
+    }
+    resolutionStrategy {
+        eachPlugin {
+            // Resolve Loom straight from its module instead of the plugin marker,
+            // so a pinned release version works from the dependency cache.
+            if (requested.id.id == 'net.fabricmc.fabric-loom') {
+                useModule("net.fabricmc:fabric-loom:${requested.version}")
+            }
+        }
+    }
+}
+
+rootProject.name = 'autocraft-ai'

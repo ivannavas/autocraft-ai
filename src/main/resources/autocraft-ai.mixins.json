@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "io.github.ivannavas.autocraftai.mixin",
+  "mixins": [],
+  "client": [
+    "KeyboardInputMixin",
+    "MouseHandlerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

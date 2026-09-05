@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "autocraft-ai",
+  "version": "${version}",
+  "name": "Autocraft AI",
+  "description": "Client-side crafting assistant: it reads what you are carrying and works out how to build what you asked for.",
+  "authors": ["ivannavas"],
+  "contact": {
+    "homepage": "https://github.com/ivannavas/autocraft-ai",
+    "sources": "https://github.com/ivannavas/autocraft-ai",
+    "issues": "https://github.com/ivannavas/autocraft-ai/issues"
+  },
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["io.github.ivannavas.autocraftai.AutocraftAiClient"]
+  },
+  "mixins": [
+    {
+      "config": "autocraft-ai.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": "~26.2",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}
