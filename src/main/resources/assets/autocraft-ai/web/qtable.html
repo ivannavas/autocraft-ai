@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Autocraft AI — q-table</title>
+<style>
+  /*
+   * Built as an OBS browser source. The page plane is fully transparent so the capture composites over
+   * whatever is behind it; the panel carries its own translucent surface, which is what makes the colour
+   * work below valid — the palette is validated against #1a1a19, and at this alpha that is what the marks
+   * effectively sit on. Drop --panel-alpha to 0 for a bare floating overlay; legibility is then on you.
+   */
+  :root {
+    --panel-alpha: 0.86;
+    --surface: 26, 26, 25;
+
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --gridline: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+
+    /* Diverging pair: warm/cool poles that read as opposite. Bar direction repeats the sign, so the
+       polarity survives colourblindness and a monochrome stream alike. */
+    --positive: #3987e5;
+    --negative: #e66767;
+
+    --row-height: 21px;
+    --state-column: 240px;
+    --bar-track: 92px;
+  }
+
+  html, body {
+    margin: 0;
+    background: transparent;
+    color-scheme: dark;
+  }
+
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 12px;
+    line-height: 1.35;
+    color: var(--text-primary);
+    padding: 12px;
+  }
+
+  .panel {
+    display: inline-block;
+    background: rgba(var(--surface), var(--panel-alpha));
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px 12px;
+    box-shadow: 0 2px 18px rgba(0, 0, 0, 0.45);
+  }
+
+  /* --- header ------------------------------------------------------------------------------- */
+
+  .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 12px;
+  }
+
+  .title {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+
+  .phase {
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  .phase b {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .tiles {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--gridline);
+  }
+
+  .tile-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+  }
+
+  .tile-value {
+    font-size: 19px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .tile-value .unit {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-secondary);
+    margin-left: 2px;
+  }
+
+  /* --- table -------------------------------------------------------------------------------- */
+
+  table {
+    border-collapse: collapse;
+    /* Fixed, so a long state name can never push the columns around and the bars stay comparable
+       across rows. Every column is exactly one track wide. */
+    table-layout: fixed;
+    /* Column count comes from the data, not a literal: the action set grows as the run learns to do more,
+       and a hardcoded width would quietly squeeze every track the day a sixth one lands. */
+    width: calc(var(--state-column) + var(--action-count, 5) * var(--bar-track));
+  }
+
+  th {
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    text-align: center;
+    padding: 0 6px 6px;
+    white-space: nowrap;
+  }
+
+  th.state-head {
+    text-align: left;
+    padding-left: 0;
+    width: var(--state-column);
+  }
+
+  th.action-head {
+    width: var(--bar-track);
+  }
+
+  td {
+    padding: 1px 6px;
+    height: var(--row-height);
+    vertical-align: middle;
+  }
+
+  td.state {
+    padding-left: 0;
+    white-space: nowrap;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .state .focus {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .state .qualifier {
+    color: var(--text-muted);
+  }
+
+  /* The winning action, said in words. A direct label beside the row beats a number in every cell: it
+     reads at a glance on a stream, and it cannot collide with a bar. */
+  .state .verdict {
+    color: var(--text-secondary);
+  }
+
+  .state .verdict b {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  /* The live row gets a ring rather than a fill: it must not read as another value. */
+  tr.current td {
+    background: rgba(255, 255, 255, 0.055);
+  }
+
+  tr.current td:first-child {
+    border-radius: 4px 0 0 4px;
+    box-shadow: inset 2px 0 0 var(--text-secondary);
+  }
+
+  tr.current td:last-child {
+    border-radius: 0 4px 4px 0;
+  }
+
+  /* --- diverging cell bar ------------------------------------------------------------------- */
+
+  /* The bar lives in a track of its own rather than filling the cell, so the emphasis ring hugs the
+     mark instead of ballooning to whatever width the table happened to give the column. */
+  .track {
+    position: relative;
+    height: 14px;
+    border-radius: 4px;
+  }
+
+  /* One hairline down the middle of every track: the zero every bar is measured from. */
+  .track::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--baseline);
+  }
+
+  .bar {
+    position: absolute;
+    top: 3px;
+    height: 8px;
+    min-width: 2px;
+  }
+
+  .bar.pos {
+    left: 50%;
+    background: var(--positive);
+    border-radius: 0 4px 4px 0;
+  }
+
+  .bar.neg {
+    right: 50%;
+    background: var(--negative);
+    border-radius: 4px 0 0 4px;
+  }
+
+  /* The action the body would take from this state. A ring, not a colour: identity is already carried
+     by the column, and repainting the bar would spend the polarity channel on something else. */
+  .best .track {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
+  }
+
+  .empty {
+    color: var(--text-muted);
+    text-align: center;
+    padding: 18px 0 14px;
+  }
+
+  /* --- footer ------------------------------------------------------------------------------- */
+
+  .foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: 10px;
+    padding-top: 9px;
+    border-top: 1px solid var(--gridline);
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .key {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .swatch {
+    width: 18px;
+    height: 6px;
+    border-radius: 3px;
+  }
+
+  .swatch.neg { background: var(--negative); }
+  .swatch.pos { background: var(--positive); }
+
+  .offline { color: var(--negative); }
+</style>
+</head>
+<body>
+<div class="panel">
+  <div class="head">
+    <span class="title">Autocraft AI</span>
+    <span class="phase">rung <b id="phase">—</b></span>
+  </div>
+
+  <div class="tiles">
+    <div>
+      <div class="tile-label">States known</div>
+      <div class="tile-value" id="states">0</div>
+    </div>
+    <div>
+      <div class="tile-label">Decisions</div>
+      <div class="tile-value" id="decisions">0</div>
+    </div>
+    <div>
+      <div class="tile-label">Exploring</div>
+      <div class="tile-value"><span id="epsilon">0</span><span class="unit">%</span></div>
+    </div>
+    <div>
+      <div class="tile-label">Doing</div>
+      <div class="tile-value" id="doing">—</div>
+    </div>
+  </div>
+
+  <table>
+    <thead><tr id="header"></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <div class="foot">
+    <span class="key">
+      <span class="swatch neg"></span>
+      <span>worse</span>
+      <span style="color: var(--baseline)">|</span>
+      <span>better</span>
+      <span class="swatch pos"></span>
+      <span style="margin-left:6px">bar length = how strongly</span>
+    </span>
+    <span id="status">connecting…</span>
+  </div>
+</div>
+
+<script>
+  // How many rows fit on a stream overlay before it stops being readable. The rest are counted, not drawn.
+  const MAX_ROWS = 12;
+  const POLL_MS = 1000;
+
+  const el = id => document.getElementById(id);
+
+  function renderHeader(actions) {
+    document.querySelector("table").style.setProperty("--action-count", actions.length);
+    el("header").innerHTML =
+      '<th class="state-head">State</th>' +
+      actions.map(a => `<th class="action-head">${a.toLowerCase()}</th>`).join("");
+  }
+
+  // The state key is "PHASE|FOCUS|DISTANCE|HEALTH". The phase is already in the header, and repeating it
+  // on every row would push the part that actually varies off the edge.
+  function stateLabel(key, verdict) {
+    const [, focus, distance, health] = key.split("|");
+    return `<span class="focus">${focus}</span>` +
+           `<span class="qualifier"> · ${distance.toLowerCase()} · ${health.toLowerCase()} hp</span>` +
+           verdict;
+  }
+
+  // Named only when the row has actually learned something; an all-zero row has no opinion to report.
+  function verdictLabel(actions, values, best) {
+    if (Math.abs(values[best]) < 1e-4) {
+      return '<span class="verdict"> · no opinion</span>';
+    }
+    return `<span class="verdict"> → <b>${actions[best].toLowerCase()}</b> ${values[best].toFixed(1)}</span>`;
+  }
+
+  function cell(value, scale, isBest) {
+    const width = Math.max(2, Math.round(Math.abs(value) / scale * 50));
+    const bar = Math.abs(value) < 1e-4
+      ? ""
+      : `<span class="bar ${value > 0 ? "pos" : "neg"}" style="width:${width}%"></span>`;
+    return `<td class="${isBest ? "best" : ""}" title="${value.toFixed(3)}">` +
+           `<div class="track">${bar}</div></td>`;
+  }
+
+  function render(data) {
+    el("phase").textContent = data.phase;
+    el("states").textContent = data.rows.length;
+    el("decisions").textContent = data.decisions.toLocaleString();
+    el("epsilon").textContent = Math.round(data.epsilon * 100);
+    el("doing").textContent = data.currentAction ? data.currentAction.toLowerCase() : "—";
+
+    renderHeader(data.actions);
+
+    // Strongest opinions first, whichever rung they were learned on. Putting the current rung at the top
+    // sounded right and was not: a rung the run has only just started has learned nothing yet, so it filled
+    // the panel with empty rows and pushed everything the brain actually knows off the bottom. What the run
+    // is doing now is already on the header and the Doing tile, and the live row keeps its ring.
+    const strength = r => Math.max(...r.values.map(Math.abs));
+    const rows = [...data.rows].sort((a, b) => strength(b) - strength(a));
+
+    const shown = rows.slice(0, MAX_ROWS);
+    // One shared scale across every cell, so a long bar means the same thing everywhere.
+    const scale = Math.max(1e-3, ...shown.flatMap(r => r.values.map(Math.abs)));
+
+    el("rows").innerHTML = shown.length === 0
+      ? `<tr><td class="empty" colspan="${data.actions.length + 1}">Nothing learned yet — load a world.</td></tr>`
+      : shown.map(row => {
+          const best = row.values.indexOf(Math.max(...row.values));
+          const live = row.state === data.currentState ? ' class="current"' : "";
+          const verdict = verdictLabel(data.actions, row.values, best);
+          return `<tr${live}><td class="state">${stateLabel(row.state, verdict)}</td>` +
+                 row.values.map((v, i) => cell(v, scale, i === best && Math.abs(v) > 1e-4)).join("") +
+                 "</tr>";
+        }).join("");
+
+    const hidden = rows.length - shown.length;
+    el("status").textContent = hidden > 0 ? `+${hidden} more states` : "live";
+    el("status").classList.remove("offline");
+  }
+
+  async function poll() {
+    try {
+      render(await (await fetch("/qtable.json", { cache: "no-store" })).json());
+    } catch (e) {
+      el("status").textContent = "Minecraft not running";
+      el("status").classList.add("offline");
+    }
+  }
+
+  poll();
+  setInterval(poll, POLL_MS);
+</script>
+</body>
+</html>

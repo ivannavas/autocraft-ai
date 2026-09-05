@@ -1,9 +1,16 @@
 package io.github.ivannavas.autocraftai;
 
+import java.nio.file.Path;
+
 import io.github.ivannavas.autocraftai.mob.MobEngine;
+import io.github.ivannavas.autocraftai.mob.ai.QLearningBrain;
+import io.github.ivannavas.autocraftai.ui.ClearLearningButton;
+import io.github.ivannavas.autocraftai.web.QTableServer;
 import lombok.extern.slf4j.Slf4j;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.loader.api.FabricLoader;
 
 @Slf4j
 public class AutocraftAiClient implements ClientModInitializer {
@@ -12,11 +19,24 @@ public class AutocraftAiClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        // Shakedown behaviour for the engine: with nothing else registered, the body wanders.
-        //MobEngine.get().addGoal(1, new RandomStrollGoal());
+        Path storage = FabricLoader.getInstance().getConfigDir().resolve(MOD_ID).resolve("qtable.txt");
+        QLearningBrain brain = new QLearningBrain(MobEngine.get(), storage);
 
-        // The engine runs at the start of the tick so the commands it produces are the ones the player's
-        // own tick, later in the same tick, turns into movement.
+        // The brain goes first: the goal it installs is meant to be the one the engine runs on this tick,
+        // and the engine in turn runs before the player's own tick turns commands into movement.
+        ClientTickEvents.START_CLIENT_TICK.register(brain::tick);
         ClientTickEvents.START_CLIENT_TICK.register(MobEngine.get()::tick);
+
+        // Learning that only lives in memory is not learning, so write it out on the way out too. The
+        // brain also saves as it goes: every hundred decisions, on reaching a rung, and on leaving a world.
+        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> brain.save());
+
+        ClearLearningButton.install(brain);
+
+        // The overlay reads a copy the brain hands over after each decision, never the live table.
+        QTableServer overlay = new QTableServer(brain.actionNames());
+        brain.onSnapshot(overlay::publish);
+        overlay.start();
+        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> overlay.stop());
     }
 }

@@ -52,7 +52,7 @@ public final class MobEngine {
     public void addGoal(int priority, MobGoal goal) {
         entries.add(new Entry(priority, goal));
         entries.sort(Comparator.comparingInt(entry -> entry.priority));
-        log.info("Goal added: {} (priority {})", goal.name(), priority);
+        log.debug("Goal added: {} (priority {})", goal.name(), priority);
     }
 
     public boolean removeGoal(MobGoal goal) {
@@ -62,7 +62,7 @@ public final class MobEngine {
         }
         stop(entry);
         entries.remove(entry);
-        log.info("Goal removed: {}", goal.name());
+        log.debug("Goal removed: {}", goal.name());
         return true;
     }
 
@@ -73,6 +73,16 @@ public final class MobEngine {
 
     public List<MobGoal> goals() {
         return entries.stream().map(entry -> entry.goal).toList();
+    }
+
+    /**
+     * Whether this goal is running and has said it must not be interrupted. Callers that swap goals from
+     * outside the engine have to ask, or {@link MobGoal#isInterruptable()} would only protect a goal from
+     * its peers and not from whatever installed it.
+     */
+    public boolean isCommitted(MobGoal goal) {
+        return entries.stream()
+                .anyMatch(entry -> entry.goal == goal && entry.running && !goal.isInterruptable());
     }
 
     /** Goals currently holding controls, in priority order. */

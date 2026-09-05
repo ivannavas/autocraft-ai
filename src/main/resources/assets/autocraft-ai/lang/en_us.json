@@ -1,0 +1,5 @@
+{
+  "gui.autocraft-ai.clear_learning": "Clear AI learning",
+  "gui.autocraft-ai.clear_learning.confirm": "Click again to erase",
+  "gui.autocraft-ai.clear_learning.done": "Learning erased"
+}
