@@ -4,15 +4,20 @@ import io.github.ivannavas.autocraftai.mob.MobGoal;
 import io.github.ivannavas.autocraftai.mob.goal.ApproachSightingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.FleeSightingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.MineSightingGoal;
+import io.github.ivannavas.autocraftai.mob.goal.PlaceBlockGoal;
 import io.github.ivannavas.autocraftai.mob.goal.RandomStrollGoal;
 import io.github.ivannavas.autocraftai.mob.goal.WatchSightingGoal;
 
 /**
  * The moves the brain can make: one column of the Q-table each.
  *
+ * <p>These are the moves that need the body — legs, or eyes, or both. Crafting is not among them: it needs
+ * neither, so it is not a choice between doing that and doing something else and it lives in its own table
+ * as a thing the body does while it gets on with whatever this picked.
+ *
  * <p>Every action builds the goal the engine will actually run, so choosing an action and installing a goal
- * are the same act. Three of the four need something in view to act on; {@link #WANDER} is the fallback
- * that is always available, which is what guarantees the brain always has a legal move.
+ * are the same act. Most need something in view to act on; {@link #WANDER} is the fallback that is always
+ * available, which is what guarantees the brain always has a legal move.
  *
  * <p>The order of these constants is the column order on disk. A saved table records the names it was
  * written with and is discarded if they no longer match, so reordering or renaming loses the learning
@@ -22,12 +27,12 @@ public enum GoalAction {
 
     WANDER {
         @Override
-        public MobGoal create(Sighting sighting) {
+        public MobGoal create(ActionContext context) {
             return new RandomStrollGoal();
         }
 
         @Override
-        public boolean isApplicable(Sighting sighting) {
+        public boolean isApplicable(ActionContext context) {
             return true;
         }
 
@@ -39,43 +44,67 @@ public enum GoalAction {
 
     APPROACH {
         @Override
-        public MobGoal create(Sighting sighting) {
-            return new ApproachSightingGoal(sighting);
+        public MobGoal create(ActionContext context) {
+            return new ApproachSightingGoal(context.sighting());
         }
     },
 
+    /** Only against something that can follow you. Running away from a log is not a strategy. */
     FLEE {
         @Override
-        public MobGoal create(Sighting sighting) {
-            return new FleeSightingGoal(sighting);
+        public MobGoal create(ActionContext context) {
+            return new FleeSightingGoal(context.sighting());
+        }
+
+        @Override
+        public boolean isApplicable(ActionContext context) {
+            return context.sighting().isValid() && context.sighting().isCreature();
         }
     },
 
     WATCH {
         @Override
-        public MobGoal create(Sighting sighting) {
-            return new WatchSightingGoal(sighting);
+        public MobGoal create(ActionContext context) {
+            return new WatchSightingGoal(context.sighting());
         }
     },
 
     /** Only ever legal against a block: there is nothing to break about a cow. */
     MINE {
         @Override
-        public MobGoal create(Sighting sighting) {
-            return new MineSightingGoal(sighting);
+        public MobGoal create(ActionContext context) {
+            return new MineSightingGoal(context.sighting());
         }
 
         @Override
-        public boolean isApplicable(Sighting sighting) {
-            return sighting.isBlock();
+        public boolean isApplicable(ActionContext context) {
+            return context.sighting().isBlock();
+        }
+    },
+
+    /** Build a step up. Legal whenever the body has something to put down, walled in or not. */
+    PLACE {
+        @Override
+        public MobGoal create(ActionContext context) {
+            return new PlaceBlockGoal();
+        }
+
+        @Override
+        public boolean isApplicable(ActionContext context) {
+            return context.hasBlocks();
+        }
+
+        @Override
+        public boolean usesSighting() {
+            return false;
         }
     };
 
-    public abstract MobGoal create(Sighting sighting);
+    public abstract MobGoal create(ActionContext context);
 
-    /** Whether the action means anything given what is in view. */
-    public boolean isApplicable(Sighting sighting) {
-        return sighting.isValid();
+    /** Whether the action means anything given what is in view and what the run is after. */
+    public boolean isApplicable(ActionContext context) {
+        return context.sighting().isValid();
     }
 
     /**

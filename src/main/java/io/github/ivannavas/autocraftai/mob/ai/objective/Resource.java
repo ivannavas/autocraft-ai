@@ -24,6 +24,7 @@ public enum Resource {
     STICK(stack -> stack.is(Items.STICK)),
     CRAFTING_TABLE(stack -> stack.is(Items.CRAFTING_TABLE)),
     PICKAXE(stack -> stack.is(ItemTags.PICKAXES)),
+    SWORD(stack -> stack.is(ItemTags.SWORDS)),
     COBBLESTONE(stack -> stack.is(Items.COBBLESTONE));
 
     private final Predicate<ItemStack> test;

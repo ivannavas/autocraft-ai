@@ -20,8 +20,14 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * Tabular Q-learning over {@link Observation} keys and {@link GoalAction} columns.
  *
- * <p>Plain one-step Q-learning: {@code Q(s,a) += rate * (reward + discount * max Q(s',a') - Q(s,a))}, with
- * an epsilon-greedy choice that decays towards mostly-greedy as the brain gathers experience.
+ * <p>Q-learning over temporally extended actions, which is what a column here is: a goal plus how long it
+ * is held for. The update is the semi-Markov one,
+ * {@code Q(s,a) += rate * (R + discount^k * max Q(s',a') - Q(s,a))}, where {@code R} is everything the move
+ * earned over its whole run and {@code k} is how many steps that took.
+ *
+ * <p>The exponent is not a detail. A fifteen-second move collects fifteen seconds of reward, so discounting
+ * it as if it were one step would make long commitments look better than short ones for no reason other
+ * than their length, and the table would learn to stand around doing one thing forever.
  *
  * <p>Choice and update both take a mask of legal actions. Without it the table would spend its exploration
  * budget on moves that cannot be made — there is no approaching a thing that is not there — and the
@@ -119,9 +125,16 @@ public final class QTable {
         return best.get(random.nextInt(best.size()));
     }
 
-    /** One learning step with a successor state to bootstrap from. */
-    public void update(String state, int action, double reward, String nextState, boolean[] nextAllowed) {
-        learn(state, action, reward + DISCOUNT * bestValue(nextState, nextAllowed));
+    /**
+     * One learning step with a successor state to bootstrap from.
+     *
+     * @param reward everything the move earned across its whole run
+     * @param steps  how many decisions it ran for, which is what the discount is raised to
+     */
+    public void update(String state, int action, double reward, int steps,
+                       String nextState, boolean[] nextAllowed) {
+        double discount = Math.pow(DISCOUNT, Math.max(1, steps));
+        learn(state, action, reward + discount * bestValue(nextState, nextAllowed));
     }
 
     /** One learning step for a transition with no successor, such as dying. */

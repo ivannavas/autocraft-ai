@@ -20,15 +20,19 @@ import net.minecraft.world.level.block.Block;
  */
 public enum Rung implements Phase {
 
-    /** Punch trees. The one rung the current action set can climb on its own. */
+    /** Punch trees. Three logs is twelve planks, one more than the whole wooden stretch spends. */
     GATHER_LOGS(Resource.LOG, 3, 4.0, BlockTags.LOGS),
 
-    /** Enough planks for a table, a pickaxe and the sticks it needs. One log makes four. */
-    GET_PLANKS(Resource.PLANKS, 9, 2.0, null),
+    /** Table 4, sticks 2, sword 2, pickaxe 3 — eleven planks before anything is spare. */
+    GET_PLANKS(Resource.PLANKS, 11, 2.0, null),
 
     GET_CRAFTING_TABLE(Resource.CRAFTING_TABLE, 1, 6.0, null),
 
-    GET_STICKS(Resource.STICK, 2, 3.0, null),
+    /** One stick craft makes four, which is one more than the sword and pickaxe need between them. */
+    GET_STICKS(Resource.STICK, 4, 3.0, null),
+
+    /** Before the pickaxe on purpose: the body has to survive the night it spends mining. */
+    GET_SWORD(Resource.SWORD, 1, 10.0, null),
 
     GET_PICKAXE(Resource.PICKAXE, 1, 10.0, null),
 
@@ -51,13 +55,22 @@ public enum Rung implements Phase {
         return resource;
     }
 
+
     public int required() {
         return required;
     }
 
+    /**
+     * Reached once the run has held this much at any point, not only while it still is.
+     *
+     * <p>Measuring the bag as it stands made the first rung unreachable in practice: the crafting table
+     * turns logs into planks as soon as it can, so the log count never got to three at once and everything
+     * downstream stayed frozen behind it — a body with a sword and a crafting table still being told to go
+     * and find wood.
+     */
     @Override
     public boolean isComplete(StepContext context) {
-        return context.after().count(resource) >= required;
+        return context.obtained().count(resource) >= required;
     }
 
     /** Paid per unit picked up, so the climb is rewarded on the way and not only at the top. */

@@ -19,7 +19,8 @@ public class AutocraftAiClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        Path storage = FabricLoader.getInstance().getConfigDir().resolve(MOD_ID).resolve("qtable.txt");
+        // One file per learned dimension, so a change to one action set never invalidates the others.
+        Path storage = FabricLoader.getInstance().getConfigDir().resolve(MOD_ID);
         QLearningBrain brain = new QLearningBrain(MobEngine.get(), storage);
 
         // The brain goes first: the goal it installs is meant to be the one the engine runs on this tick,

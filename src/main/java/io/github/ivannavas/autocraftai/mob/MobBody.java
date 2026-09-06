@@ -98,6 +98,11 @@ public final class MobBody {
         this.jumping = jumping;
     }
 
+    /** Asked for by a goal rather than by walking into something. Lasts the tick, like every command. */
+    public void jump() {
+        this.jumping = true;
+    }
+
     public void setSneaking(boolean sneaking) {
         this.sneaking = sneaking;
     }

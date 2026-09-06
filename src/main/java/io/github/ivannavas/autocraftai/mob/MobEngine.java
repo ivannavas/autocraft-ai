@@ -75,6 +75,11 @@ public final class MobEngine {
         return entries.stream().map(entry -> entry.goal).toList();
     }
 
+    /** Whether this goal currently holds its controls. */
+    public boolean isRunning(MobGoal goal) {
+        return entries.stream().anyMatch(entry -> entry.goal == goal && entry.running);
+    }
+
     /**
      * Whether this goal is running and has said it must not be interrupted. Callers that swap goals from
      * outside the engine have to ask, or {@link MobGoal#isInterruptable()} would only protect a goal from

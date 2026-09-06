@@ -35,6 +35,26 @@ public record InventoryCensus(Map<Resource, Integer> counts) {
         return counts.getOrDefault(resource, 0);
     }
 
+    /**
+     * This running total plus whatever was gained between two snapshots.
+     *
+     * <p>A total, not the most ever held at once. The difference is the whole fix: a body that chops one
+     * log, turns it into planks, chops another and turns that into planks too never holds three logs at
+     * any instant, so a high-water mark of what is in the bag would sit at one for ever and the first rung
+     * would stay just as unreachable. What a rung means by "get three logs" is that three logs were got.
+     *
+     * <p>Only rises. Spending is not un-getting, and losses — dropping, dying — are handled by the caller
+     * throwing the whole total away rather than by counting downwards.
+     */
+    public InventoryCensus plusGains(InventoryCensus before, InventoryCensus after) {
+        Map<Resource, Integer> total = new EnumMap<>(Resource.class);
+        for (Resource resource : Resource.values()) {
+            int gained = Math.max(0, after.count(resource) - before.count(resource));
+            total.put(resource, count(resource) + gained);
+        }
+        return new InventoryCensus(total);
+    }
+
     /** How many more of this the body holds than the given earlier census. Never negative. */
     public int gainedSince(InventoryCensus earlier, Resource resource) {
         return Math.max(0, count(resource) - earlier.count(resource));

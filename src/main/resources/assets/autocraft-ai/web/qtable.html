@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Autocraft AI — q-table</title>
+<title>Autocraft AI — tabla Q</title>
 <style>
   /*
    * Built as an OBS browser source. The page plane is fully transparent so the capture composites over
@@ -26,9 +26,14 @@
     --positive: #3987e5;
     --negative: #e66767;
 
-    --row-height: 21px;
-    --state-column: 240px;
-    --bar-track: 92px;
+    /* The machine's own load is a quantity, not an opinion, so it is painted in a warm neutral kept
+       deliberately outside the diverging pair: a busy CPU is neither good news nor bad. The negative is
+       borrowed for exactly one case that genuinely is bad, and the figures beside the bar say so too. */
+    --load: #a8a69c;
+
+    --row-height: 26px;
+    --state-column: 290px;
+    --bar-track: 76px;
   }
 
   html, body {
@@ -50,7 +55,7 @@
     background: rgba(var(--surface), var(--panel-alpha));
     border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 14px 16px 12px;
+    padding: 18px 20px 14px;
     box-shadow: 0 2px 18px rgba(0, 0, 0, 0.45);
   }
 
@@ -108,6 +113,50 @@
     margin-left: 2px;
   }
 
+  /* --- crafting strip ------------------------------------------------------------------------ */
+
+  .crafts {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--gridline);
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .crafts-label {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-right: 2px;
+  }
+
+  .craft {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 5px 2px 3px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary);
+  }
+
+  /* The one that just happened, so a glance catches the moment rather than only the tally. */
+  .craft.fresh {
+    background: rgba(57, 135, 229, 0.20);
+    box-shadow: inset 0 0 0 1px var(--positive);
+    color: var(--text-primary);
+  }
+
+  .craft img {
+    width: 16px;
+    height: 16px;
+    /* Sixteen-pixel art: smoothing it would turn every sprite to mush. */
+    image-rendering: pixelated;
+  }
+
   /* --- table -------------------------------------------------------------------------------- */
 
   table {
@@ -122,6 +171,7 @@
 
   th {
     font-size: 10px;
+    padding-bottom: 8px;
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -137,12 +187,16 @@
     width: var(--state-column);
   }
 
+  /* Action names are words, not column titles: lower case reads the same and fits a narrower track, which
+     matters because the panel grows by one track for every action the brain learns to take. */
   th.action-head {
     width: var(--bar-track);
+    text-transform: none;
+    letter-spacing: 0.02em;
   }
 
   td {
-    padding: 1px 6px;
+    padding: 2px 8px;
     height: var(--row-height);
     vertical-align: middle;
   }
@@ -240,13 +294,138 @@
     padding: 18px 0 14px;
   }
 
+  /* --- machine load -------------------------------------------------------------------------- */
+
+  /* --- one block per learned table ------------------------------------------------------------ */
+
+  /* The generous gap is the whole point of this layout: three tables stacked tight read as one
+     confusing table with odd rows in the middle of it. */
+  /* --- what is happening right now ------------------------------------------------------------ */
+
+  /* One line, deliberately. The five-tile block this replaces was the bulk of what made the panel feel
+     crowded; the two things worth glancing at fit on a single row. */
+  .now {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 4px 18px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--gridline);
+    font-size: 12px;
+  }
+
+  .now-item {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  .now-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+  }
+
+  .now-value {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .block + .block {
+    margin-top: 26px;
+    padding-top: 18px;
+    border-top: 1px solid var(--gridline);
+  }
+
+  .section-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin: 0 0 10px;
+  }
+
+  .section-label b {
+    color: var(--text-secondary);
+    font-weight: 600;
+  }
+
+  .load {
+    margin-top: 24px;
+    padding-top: 14px;
+    border-top: 1px solid var(--gridline);
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin-top: 10px;
+    padding-top: 9px;
+    border-top: 1px solid var(--gridline);
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .load-label {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .gauge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* The whole track is the capacity, so the empty part carries the "out of what" that a bare percentage
+     on a stream has to be taken on trust. */
+  .meter {
+    width: 64px;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+  }
+
+  .meter-fill {
+    display: block;
+    width: 0;
+    height: 100%;
+    border-radius: 3px;
+    background: var(--load);
+    /* These numbers land on their own second-long beat, and a bar that teleports reads as a spike that
+       did not happen. Well under the beat, so it is always settled before the next one arrives. */
+    transition: width 0.3s ease-out;
+  }
+
+  /* A heap with nothing left is the one machine number that is genuinely bad news — that is the stutter —
+     so it earns the panel's negative. Never colour alone: the figures beside it are saying the same. */
+  .meter-fill.hot {
+    background: var(--negative);
+  }
+
+  .gauge-value {
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+
   /* --- footer ------------------------------------------------------------------------------- */
+
+  /* One muted line under the title carrying what the panel is, so the table does not have to be guessed
+     at from its column headings alone. */
+  .intro {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin: -6px 0 12px;
+  }
 
   .foot {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    flex-wrap: wrap;
+    gap: 4px 16px;
     margin-top: 10px;
     padding-top: 9px;
     border-top: 1px solid var(--gridline);
@@ -257,7 +436,21 @@
   .key {
     display: flex;
     align-items: center;
-    gap: 6px;
+    flex-wrap: wrap;
+    gap: 4px 6px;
+  }
+
+  /* Same ring the preferred action wears, shrunk to sit in a sentence. */
+  .key .ring {
+    display: inline-block;
+    width: 14px;
+    height: 8px;
+    border-radius: 3px;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
+  }
+
+  .key .sep {
+    color: var(--baseline);
   }
 
   .swatch {
@@ -269,140 +462,312 @@
   .swatch.neg { background: var(--negative); }
   .swatch.pos { background: var(--positive); }
 
+  .tally {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+
   .offline { color: var(--negative); }
 </style>
 </head>
 <body>
 <div class="panel">
-  <div class="head">
-    <span class="title">Autocraft AI</span>
-    <span class="phase">rung <b id="phase">—</b></span>
+  <div class="now">
+    <span class="now-item"><span class="now-label">Objetivo</span><span class="now-value" id="phase">—</span></span>
+    <span class="now-item"><span class="now-label">Ahora</span><span class="now-value" id="doing">—</span></span>
+    <span class="now-item"><span class="now-label">Fabricando</span><span class="now-value" id="making">—</span></span>
   </div>
 
-  <div class="tiles">
-    <div>
-      <div class="tile-label">States known</div>
-      <div class="tile-value" id="states">0</div>
-    </div>
-    <div>
-      <div class="tile-label">Decisions</div>
-      <div class="tile-value" id="decisions">0</div>
-    </div>
-    <div>
-      <div class="tile-label">Exploring</div>
-      <div class="tile-value"><span id="epsilon">0</span><span class="unit">%</span></div>
-    </div>
-    <div>
-      <div class="tile-label">Doing</div>
-      <div class="tile-value" id="doing">—</div>
-    </div>
-  </div>
+  <section class="block">
+    <div class="section-label">Qué hacer</div>
+    <table>
+      <thead><tr id="goal-header"></tr></thead>
+      <tbody id="goal-rows"></tbody>
+    </table>
+  </section>
 
-  <table>
-    <thead><tr id="header"></tr></thead>
-    <tbody id="rows"></tbody>
-  </table>
+  <section class="block">
+    <div class="section-label">Qué fabricar mientras tanto</div>
+    <table>
+      <thead><tr id="craft-header"></tr></thead>
+      <tbody id="craft-rows"></tbody>
+    </table>
+  </section>
+
+  <section class="block">
+    <div class="section-label">Cuando se atasca <b id="interruption-count">0</b> veces reconsiderado</div>
+    <table>
+      <thead><tr id="int-header"></tr></thead>
+      <tbody id="int-rows"></tbody>
+    </table>
+  </section>
+
+  <div class="load">
+    <span class="load-label">Máquina</span>
+    <span class="gauge" id="gauge-cpu">
+      <span>CPU</span>
+      <span class="meter"><span class="meter-fill" id="cpu-bar"></span></span>
+      <span class="gauge-value" id="cpu">—</span>
+    </span>
+    <span class="gauge" id="gauge-memory">
+      <span>Memoria</span>
+      <span class="meter"><span class="meter-fill" id="memory-bar"></span></span>
+      <span class="gauge-value" id="memory">—</span>
+    </span>
+  </div>
 
   <div class="foot">
     <span class="key">
       <span class="swatch neg"></span>
-      <span>worse</span>
-      <span style="color: var(--baseline)">|</span>
-      <span>better</span>
+      <span>peor</span>
+      <span class="sep">|</span>
+      <span>mejor</span>
       <span class="swatch pos"></span>
-      <span style="margin-left:6px">bar length = how strongly</span>
+      <span class="sep">·</span>
+      <span>la barra mide cuánto</span>
+      <span class="sep">·</span>
+      <span class="ring"></span>
+      <span>acción preferida</span>
+      <span class="sep">·</span>
+      <span>distancia: cerca / media / lejos</span>
+      <span class="sep">·</span>
+      <span>la duración y el crafteo los deciden sus propias tablas</span>
     </span>
-    <span id="status">connecting…</span>
+    <span class="tally"><span id="tally">—</span> <span class="sep">·</span> <span id="status">conectando…</span></span>
   </div>
 </div>
 
 <script>
   // How many rows fit on a stream overlay before it stops being readable. The rest are counted, not drawn.
   const MAX_ROWS = 12;
-  const POLL_MS = 1000;
+  /** The interrupt table is a footnote to the main one, not a rival for the panel. */
+  const MAX_INTERRUPT_ROWS = 5;
+  /** The crafting table has few situations worth showing: it is a side activity, not the main story. */
+  const MAX_CRAFT_ROWS = 6;
+  const GIGABYTE = 1024 ** 3;
+  // Where a heap stops being roomy and starts being the reason the game stutters.
+  const HEAP_HOT = 0.9;
+
+  // The wire format stays in the enum names the q-table is keyed by — those are what is written to disk,
+  // and translating them there would orphan every saved table. Spanish is a display layer, and every
+  // lookup falls back to the raw name so a constant added tomorrow shows up readable rather than blank.
+  const ACCIONES = {
+    WANDER: "deambular", APPROACH: "acercarse", FLEE: "huir",
+    WATCH: "observar", MINE: "picar", CRAFT: "fabricar", PLACE: "colocar",
+  };
+  const VISTA = {
+    NOTHING: "nada", BLOCK: "bloque", RESOURCE: "recurso", ITEM: "objeto",
+    PASSIVE: "animal", HOSTILE: "hostil", PLAYER: "jugador",
+  };
+  const DISTANCIA = { NONE: "", CLOSE: "cerca", NEAR: "media", FAR: "lejos" };
+  const DURACION = { SHORT: "1s", MEDIUM: "4s", LONG: "10s" };
+  const RESCATES = {
+    CONTINUE: "seguir", MINE_WALL: "picar el muro", PLACE: "colocar", WANDER: "irse a otra parte",
+  };
+  const CRAFTEOS = {
+    NOTHING: "nada", PLANKS: "tablones", STICK: "palos",
+    CRAFTING_TABLE: "mesa de trabajo", SWORD: "espada", PICKAXE: "pico",
+  };
+  const VIDA = { LOW: "vida baja", MID: "vida media", HIGH: "vida alta" };
+  const OBJETIVOS = {
+    GATHER_LOGS: "conseguir madera", GET_PLANKS: "conseguir tablones",
+    GET_CRAFTING_TABLE: "conseguir mesa de trabajo", GET_STICKS: "conseguir palos",
+    GET_SWORD: "conseguir una espada",
+    GET_PICKAXE: "conseguir un pico", GATHER_STONE: "conseguir piedra",
+    DONE: "todo completado",
+  };
+
+  const traducir = (mapa, clave) =>
+    mapa[clave] ?? String(clave).toLowerCase().replace(/_/g, " ");
+
+  // One decimal is enough until it rounds a real opinion down to "0.0", which reads as "knows nothing"
+  // and is the opposite of what a small positive value means.
+  const cifra = valor => Math.abs(valor) < 0.05 ? valor.toFixed(2) : valor.toFixed(1);
+
+  // "2,4" — the panel speaks Spanish, and toFixed would put a point in the middle of it.
+  const gigas = bytes => (bytes / GIGABYTE).toLocaleString("es-ES", { maximumFractionDigits: 1 });
+
+  const porciento = fraccion => Math.round(fraccion * 100);
 
   const el = id => document.getElementById(id);
 
-  function renderHeader(actions) {
-    document.querySelector("table").style.setProperty("--action-count", actions.length);
-    el("header").innerHTML =
-      '<th class="state-head">State</th>' +
-      actions.map(a => `<th class="action-head">${a.toLowerCase()}</th>`).join("");
-  }
-
-  // The state key is "PHASE|FOCUS|DISTANCE|HEALTH". The phase is already in the header, and repeating it
-  // on every row would push the part that actually varies off the edge.
+  // The table on screen is the goal table. Timing and crafting are learned in their own tables and shown
+  // as the choice of the moment rather than as more columns.
+  // The state key is "<context>|<subject>|<distance>|<health>|<flags>". The context is the rung or THREAT,
+  // which the goal table's own rows do not need repeating on every line; the rest is what varies.
   function stateLabel(key, verdict) {
-    const [, focus, distance, health] = key.split("|");
-    return `<span class="focus">${focus}</span>` +
-           `<span class="qualifier"> · ${distance.toLowerCase()} · ${health.toLowerCase()} hp</span>` +
-           verdict;
+    const [, focus, distance, health, flags] = key.split("|");
+    const cerca = traducir(DISTANCIA, distance);
+    const pared = flags && flags.includes("W") ? " · pared" : "";
+    return `<span class="focus">${traducir(VISTA, focus)}</span>` +
+           `<span class="qualifier">${cerca ? " · " + cerca : ""} · ${traducir(VIDA, health)}` +
+           `${pared}</span>` + verdict;
   }
 
-  // Named only when the row has actually learned something; an all-zero row has no opinion to report.
-  function verdictLabel(actions, values, best) {
-    if (Math.abs(values[best]) < 1e-4) {
-      return '<span class="verdict"> · no opinion</span>';
+  // The interrupt table is keyed differently: "<goal>|stuck|<flags>" — the goal that stalled and what the
+  // body could see about the bind it stalled in.
+  function stuckLabel(key, verdict) {
+    const [goal, , flags] = key.split("|");
+    const pared = flags && flags.includes("W") ? " · pared" : "";
+    const bloques = flags && flags.includes("B") ? " · con bloques" : "";
+    return `<span class="focus">${traducir(ACCIONES, goal)}</span>` +
+           `<span class="qualifier">${pared}${bloques}</span>` + verdict;
+  }
+
+  // Three things a row can be saying, and they are not the same. It has found something worth doing; or
+  // the best it knows is an untried column and all it has really learned is what hurt; or it knows nothing.
+  function verdictLabel(dict, actions, values, best) {
+    if (values[best] > 1e-4) {
+      return `<span class="verdict"> → <b>${traducir(dict, actions[best])}</b> ${cifra(values[best])}</span>`;
     }
-    return `<span class="verdict"> → <b>${actions[best].toLowerCase()}</b> ${values[best].toFixed(1)}</span>`;
+    const peor = values.indexOf(Math.min(...values));
+    if (values[peor] < -1e-4) {
+      return `<span class="verdict"> · evita <b>${traducir(dict, actions[peor])}</b></span>`;
+    }
+    return '<span class="verdict"> · sin opinión todavía</span>';
   }
 
-  function cell(value, scale, isBest) {
+  function cell(value, scale, name, isBest) {
     const width = Math.max(2, Math.round(Math.abs(value) / scale * 50));
     const bar = Math.abs(value) < 1e-4
       ? ""
       : `<span class="bar ${value > 0 ? "pos" : "neg"}" style="width:${width}%"></span>`;
-    return `<td class="${isBest ? "best" : ""}" title="${value.toFixed(3)}">` +
+    return `<td class="${isBest ? "best" : ""}" title="${name}: ${value.toFixed(3)}">` +
            `<div class="track">${bar}</div></td>`;
   }
 
-  function render(data) {
-    el("phase").textContent = data.phase;
-    el("states").textContent = data.rows.length;
-    el("decisions").textContent = data.decisions.toLocaleString();
-    el("epsilon").textContent = Math.round(data.epsilon * 100);
-    el("doing").textContent = data.currentAction ? data.currentAction.toLowerCase() : "—";
+  // The crafting table is keyed by "<rung>|<what is held>": what the run is after and what is already
+  // in the bag, which is what actually decides a craft.
+  function craftLabel(key, verdict) {
+    const [rung, held] = key.split("|");
+    const cosas = !held || held === "-"
+      ? "con las manos vacías"
+      : "con " + held.split("+").map(r => traducir(CRAFTEOS, r)).join(", ");
+    return `<span class="focus">${traducir(OBJETIVOS, rung)}</span>` +
+           `<span class="qualifier"> · ${cosas}</span>` + verdict;
+  }
 
-    renderHeader(data.actions);
+  /**
+   * One learned table on screen. All three are the same shape — situations down the side, columns across,
+   * a diverging bar per cell — so they are one function rather than three that drift apart.
+   */
+  function renderTable(spec) {
+    const { headId, bodyId, actions, rows, dict, label, max, current } = spec;
+    const table = el(headId).closest("table");
+    table.style.setProperty("--action-count", actions.length);
+    el(headId).innerHTML = `<th class="state-head">${spec.sideHead}</th>` +
+      actions.map(a => `<th class="action-head">${traducir(dict, a)}</th>`).join("");
 
-    // Strongest opinions first, whichever rung they were learned on. Putting the current rung at the top
-    // sounded right and was not: a rung the run has only just started has learned nothing yet, so it filled
-    // the panel with empty rows and pushed everything the brain actually knows off the bottom. What the run
-    // is doing now is already on the header and the Doing tile, and the live row keeps its ring.
-    const strength = r => Math.max(...r.values.map(Math.abs));
-    const rows = [...data.rows].sort((a, b) => strength(b) - strength(a));
+    if (!rows.length) {
+      el(bodyId).innerHTML =
+        `<tr><td class="empty" colspan="${actions.length + 1}">${spec.empty}</td></tr>`;
+      return;
+    }
 
-    const shown = rows.slice(0, MAX_ROWS);
-    // One shared scale across every cell, so a long bar means the same thing everywhere.
+    // Strongest opinions first. What the run is doing now is not a reason to show a row that has learned
+    // nothing yet, and the live row keeps its own ring either way.
+    const fuerza = r => Math.max(...r.values.map(Math.abs));
+    const shown = [...rows].sort((a, b) => fuerza(b) - fuerza(a)).slice(0, max);
+    // One shared scale across the table, so a long bar means the same thing on every row of it.
     const scale = Math.max(1e-3, ...shown.flatMap(r => r.values.map(Math.abs)));
 
-    el("rows").innerHTML = shown.length === 0
-      ? `<tr><td class="empty" colspan="${data.actions.length + 1}">Nothing learned yet — load a world.</td></tr>`
-      : shown.map(row => {
-          const best = row.values.indexOf(Math.max(...row.values));
-          const live = row.state === data.currentState ? ' class="current"' : "";
-          const verdict = verdictLabel(data.actions, row.values, best);
-          return `<tr${live}><td class="state">${stateLabel(row.state, verdict)}</td>` +
-                 row.values.map((v, i) => cell(v, scale, i === best && Math.abs(v) > 1e-4)).join("") +
-                 "</tr>";
-        }).join("");
+    el(bodyId).innerHTML = shown.map(row => {
+      const best = row.values.indexOf(Math.max(...row.values));
+      const live = row.state === current ? ' class="current"' : "";
+      const verdict = verdictLabel(dict, actions, row.values, best);
+      return `<tr${live}><td class="state">${label(row.state, verdict)}</td>` +
+             row.values.map((v, i) =>
+                 cell(v, scale, traducir(dict, actions[i]), i === best && Math.abs(v) > 1e-4)).join("") +
+             "</tr>";
+    }).join("");
+  }
 
-    const hidden = rows.length - shown.length;
-    el("status").textContent = hidden > 0 ? `+${hidden} more states` : "live";
+  function meter(id, fraction, hot) {
+    const bar = el(id);
+    bar.style.width = porciento(Math.min(1, Math.max(0, fraction))) + "%";
+    bar.classList.toggle("hot", hot);
+  }
+
+  // What the game is costing the machine. It arrives on its own beat, apart from the table, so it draws
+  // on its own too — and with null when the game has gone, because a load left frozen on screen reads as
+  // a game that is still running.
+  function renderStats(stats) {
+    // The process load, not the machine's: the question the panel is answering is what this game costs.
+    // A JVM that will not say reports it negative, and a dash is the honest answer to that.
+    const cpu = stats && stats.processCpu >= 0 ? stats.processCpu : null;
+    el("cpu").textContent = cpu === null ? "—" : porciento(cpu) + " %";
+    meter("cpu-bar", cpu ?? 0, false);
+    el("gauge-cpu").title = cpu === null ? "" :
+      `El juego usa el ${porciento(cpu)} % de la CPU` +
+      (stats.systemCpu >= 0 ? ` · toda la máquina, el ${porciento(stats.systemCpu)} %` : "");
+
+    // The heap, which is the memory a player can do anything about: it is what the launcher's slider set.
+    const heap = stats && stats.heapMax > 0 ? stats.heapUsed / stats.heapMax : null;
+    el("memory").textContent = heap === null ? "—" :
+      `${gigas(stats.heapUsed)} / ${gigas(stats.heapMax)} GB`;
+    meter("memory-bar", heap ?? 0, heap !== null && heap >= HEAP_HOT);
+    el("gauge-memory").title = heap === null ? "" :
+      `El juego tiene ${gigas(stats.heapMax)} GB de memoria y usa ${gigas(stats.heapUsed)} GB` +
+      (stats.ramTotal > 0
+        ? ` · la máquina, ${gigas(stats.ramUsed)} de ${gigas(stats.ramTotal)} GB` : "");
+  }
+
+  /**
+   * The interrupt table: what to do about a move that has stopped getting anywhere. Its rows are keyed by
+   * the goal that got stuck and what was around, so they read as "this goal, in this bind".
+   */
+  function render(data) {
+    el("interruption-count").textContent = (data.interruptions || 0).toLocaleString("es-ES");
+
+    el("phase").textContent = traducir(OBJETIVOS, data.phase);
+    // The duration belongs with the action: "fleeing" and "fleeing for ten seconds" are different moves.
+    el("doing").textContent = data.currentAction
+      ? `${traducir(ACCIONES, data.currentAction)} ${traducir(DURACION, data.currentTiming)}`
+      : "—";
+    el("making").textContent = data.currentCraft && data.currentCraft !== "NOTHING"
+      ? traducir(CRAFTEOS, data.currentCraft)
+      : "—";
+
+    renderTable({
+      headId: "goal-header", bodyId: "goal-rows", sideHead: "Situación",
+      actions: data.actions || [], rows: data.rows || [],
+      dict: ACCIONES, label: stateLabel, max: MAX_ROWS, current: data.currentState,
+      empty: "Todavía no ha aprendido nada — entra en un mundo.",
+    });
+
+    renderTable({
+      headId: "craft-header", bodyId: "craft-rows", sideHead: "Objetivo y bolsa",
+      actions: data.craftActions || [], rows: data.craftRows || [],
+      dict: CRAFTEOS, label: craftLabel, max: MAX_CRAFT_ROWS, current: null,
+      empty: "todavía no ha tenido nada que fabricar",
+    });
+
+    renderTable({
+      headId: "int-header", bodyId: "int-rows", sideHead: "Atascado en",
+      actions: data.interruptActions || [], rows: data.interruptRows || [],
+      dict: RESCATES, label: stuckLabel, max: MAX_INTERRUPT_ROWS, current: null,
+      empty: "todavía no se ha atascado",
+    });
+
+    // The counters that used to sit in tiles at the top live down here now, where they inform without
+    // taking the first thing a viewer looks at.
+    el("tally").textContent =
+      `${(data.decisions || 0).toLocaleString("es-ES")} decisiones · `
+      + `${Math.round((data.epsilon || 0) * 100)} % al azar`;
+    el("status").textContent = "en directo";
     el("status").classList.remove("offline");
   }
 
-  async function poll() {
-    try {
-      render(await (await fetch("/qtable.json", { cache: "no-store" })).json());
-    } catch (e) {
-      el("status").textContent = "Minecraft not running";
-      el("status").classList.add("offline");
-    }
-  }
-
-  poll();
-  setInterval(poll, POLL_MS);
+  const stream = new EventSource("/events");
+  stream.addEventListener("qtable", event => render(JSON.parse(event.data)));
+  stream.addEventListener("stats", event => renderStats(JSON.parse(event.data)));
+  stream.onerror = () => {
+    el("status").textContent = "Minecraft no está abierto";
+    el("status").classList.add("offline");
+    renderStats(null);
+  };
 </script>
 </body>
 </html>

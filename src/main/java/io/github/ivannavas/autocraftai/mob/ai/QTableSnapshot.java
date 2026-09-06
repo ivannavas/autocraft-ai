@@ -17,11 +17,24 @@ public record QTableSnapshot(
         long decisions,
         String phase,
         String currentState,
-        String currentAction) {
+        String currentAction,
+        String currentTiming,
+        String currentCraft,
+        long interruptions,
+        List<String> craftActions,
+        List<Row> craftRows,
+        List<String> interruptActions,
+        List<Row> interruptRows,
+        List<CraftLog.Craft> crafts) {
 
     public QTableSnapshot {
         actions = List.copyOf(actions);
         rows = List.copyOf(rows);
+        craftActions = List.copyOf(craftActions);
+        craftRows = List.copyOf(craftRows);
+        interruptActions = List.copyOf(interruptActions);
+        interruptRows = List.copyOf(interruptRows);
+        crafts = List.copyOf(crafts);
     }
 
     /** One state and what it believes each action is worth. */
@@ -32,6 +45,7 @@ public record QTableSnapshot(
     }
 
     public static QTableSnapshot empty(List<String> actions) {
-        return new QTableSnapshot(actions, List.of(), 0.0, 0L, "-", null, null);
+        return new QTableSnapshot(actions, List.of(), 0.0, 0L, "-", null, null, null, null, 0L,
+                List.of(), List.of(), List.of(), List.of(), List.of());
     }
 }

@@ -49,6 +49,11 @@ public final class Sighting {
         return blockPos != null;
     }
 
+    /** Something that moves under its own power, which is the only kind of thing worth fleeing. */
+    public boolean isCreature() {
+        return kind == FocusKind.HOSTILE || kind == FocusKind.PASSIVE || kind == FocusKind.PLAYER;
+    }
+
     /** The block this is a sighting of, or {@code null} when it is an entity or nothing at all. */
     public BlockPos blockPos() {
         return blockPos;

@@ -63,6 +63,7 @@ public final class Progression {
         return current().flatMap(Phase::wanted);
     }
 
+
     /** What the step was worth towards the current rung. */
     public double score(StepContext context) {
         return current().map(phase -> phase.score(context)).orElse(0.0);

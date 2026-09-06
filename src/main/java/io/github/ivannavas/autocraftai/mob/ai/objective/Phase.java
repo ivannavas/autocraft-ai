@@ -25,4 +25,5 @@ public interface Phase extends Objective {
     default Optional<TagKey<Block>> wanted() {
         return Optional.empty();
     }
+
 }

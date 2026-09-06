@@ -179,6 +179,28 @@ public final class Perception {
         return distance <= 10.0 ? Distance.NEAR : Distance.FAR;
     }
 
+
+    /**
+     * The solid block straight ahead at body height — a wall — or {@code null} if the way is clear.
+     *
+     * <p>Both blocks are checked, at foot level and one up, because a step the body can walk over is not a
+     * wall and should not read as one. The position comes back rather than a flag because whatever decides
+     * to dig through it needs something to dig at, and while the body is fleeing the thing it is attending
+     * to is the mob behind it, not the obstruction in front.
+     */
+    public static BlockPos wallAhead(LocalPlayer player) {
+        Vec3 look = player.getLookAngle();
+        Vec3 front = player.position().add(look.x, 0.0, look.z);
+        BlockPos ahead = BlockPos.containing(front.x, player.position().y + 0.5, front.z);
+        Level level = player.level();
+        if (!level.isLoaded(ahead)) {
+            return null;
+        }
+        boolean blocked = level.getBlockState(ahead).isSolid()
+                && level.getBlockState(ahead.above()).isSolid();
+        return blocked ? ahead.immutable() : null;
+    }
+
     /** Health band of the body, in thirds of its maximum. */
     public static Health healthOf(LocalPlayer player) {
         float fraction = Mth.clamp(player.getHealth() / Math.max(1.0F, player.getMaxHealth()), 0.0F, 1.0F);

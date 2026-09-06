@@ -13,18 +13,26 @@ public final class GeneralObjectives {
 
     /** Half a heart is worth this much. Losing four hearts outweighs any single step of progress. */
     private static final double HEALTH_WEIGHT = 1.0;
-    /** Per block covered, so that going nowhere is never the safe answer. */
-    private static final double EXPLORATION_WEIGHT = 0.05;
-    /** Cap on the distance that pays, so one lucky fall does not swamp a run of good choices. */
-    private static final double EXPLORATION_CAP = 6.0;
+    /**
+     * Per block covered, so that going nowhere is never the safe answer — and no more than that. This is a
+     * nudge, not an achievement: priced any higher it beats the rung it is supposed to be serving, and once
+     * moves can be held for ten seconds a body that runs collects ten times the nudge for doing nothing.
+     */
+    private static final double EXPLORATION_WEIGHT = 0.01;
+    /** Cap per second on the distance that pays, so one lucky fall does not swamp a run of good choices. */
+    private static final double EXPLORATION_CAP = 4.0;
     /** Charged every decision, so dithering costs something even when nothing else happens. */
     private static final double IDLE_COST = 0.05;
 
     private static final List<Objective> ALL = List.of(
             objective("survival", context -> context.healthDelta() * HEALTH_WEIGHT),
+            // Both are per-second quantities, so both scale with how long the move was held. Without that
+            // a fifteen-second move would be charged one second of impatience and capped as if it had had
+            // one second to cover ground.
             objective("exploration",
-                    context -> Math.min(context.distanceCovered(), EXPLORATION_CAP) * EXPLORATION_WEIGHT),
-            objective("impatience", context -> -IDLE_COST));
+                    context -> Math.min(context.distanceCovered(), EXPLORATION_CAP * context.steps())
+                            * EXPLORATION_WEIGHT),
+            objective("impatience", context -> -IDLE_COST * context.steps()));
 
     private GeneralObjectives() {
     }
