@@ -2,6 +2,8 @@ package io.github.ivannavas.autocraftai.mob.ai;
 
 import java.util.List;
 
+import io.github.ivannavas.autocraftai.mob.ai.objective.planner.PlannerLog;
+
 /**
  * An immutable copy of what the brain knows, taken on the client thread and read by the web server's
  * threads.
@@ -16,6 +18,7 @@ public record QTableSnapshot(
         double epsilon,
         long decisions,
         String phase,
+        String phaseReason,
         String currentState,
         String currentAction,
         String currentTiming,
@@ -25,7 +28,8 @@ public record QTableSnapshot(
         List<Row> craftRows,
         List<String> interruptActions,
         List<Row> interruptRows,
-        List<CraftLog.Craft> crafts) {
+        List<CraftLog.Craft> crafts,
+        List<PlannerLog.Entry> planner) {
 
     public QTableSnapshot {
         actions = List.copyOf(actions);
@@ -35,6 +39,7 @@ public record QTableSnapshot(
         interruptActions = List.copyOf(interruptActions);
         interruptRows = List.copyOf(interruptRows);
         crafts = List.copyOf(crafts);
+        planner = List.copyOf(planner);
     }
 
     /** One state and what it believes each action is worth. */
@@ -45,7 +50,7 @@ public record QTableSnapshot(
     }
 
     public static QTableSnapshot empty(List<String> actions) {
-        return new QTableSnapshot(actions, List.of(), 0.0, 0L, "-", null, null, null, null, 0L,
-                List.of(), List.of(), List.of(), List.of(), List.of());
+        return new QTableSnapshot(actions, List.of(), 0.0, 0L, "-", "", null, null, null, null, 0L,
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
     }
 }

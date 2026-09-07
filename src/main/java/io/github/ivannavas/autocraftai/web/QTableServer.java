@@ -171,8 +171,9 @@ public final class QTableServer {
      * and the broadcaster writes down the stream from then on, until the browser goes away or the game shuts
      * down. Holding the thread here instead would let two open browser sources use up the pool between them.
      *
-     * <p>The table and the stats go out before the stream is registered, so a page that connects between two
-     * decisions has something to draw at once rather than a second of dashes.
+     * <p>The words go out first and the table and the stats before the stream is registered, so a page that
+     * connects between two decisions has something to draw at once, in the right language, rather than a
+     * second of dashes.
      */
     private void handleEvents(HttpExchange exchange) throws IOException {
         exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
@@ -180,7 +181,8 @@ public final class QTableServer {
         // Length zero means chunked here: the response ends when the server says so, which is the point.
         exchange.sendResponseHeaders(200, 0);
         Subscriber subscriber = new Subscriber(exchange);
-        if (subscriber.send("qtable", Json.of(latest.get()))
+        if (subscriber.send("labels", Labels.json())
+                && subscriber.send("qtable", Json.of(latest.get()))
                 && subscriber.send("stats", Json.of(Stats.sample()))) {
             subscribers.add(subscriber);
         } else {

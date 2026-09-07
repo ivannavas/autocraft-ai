@@ -23,6 +23,21 @@ public final class GeneralObjectives {
     private static final double EXPLORATION_CAP = 4.0;
     /** Charged every decision, so dithering costs something even when nothing else happens. */
     private static final double IDLE_COST = 0.05;
+    /**
+     * Per second spent swinging at a block the held item cannot harvest.
+     *
+     * <p>Priced at exactly what a log pays, which is the point: this is the one mistake that looks like
+     * progress. Standing still plainly gets nothing and costs the going rate for a wasted second; punching
+     * stone bare-handed gets nothing either, but the animation plays and the block cracks and eventually
+     * breaks, so nothing about it tells the tables it was a bad move. A second of it now costs what a
+     * second of doing it properly would have paid.
+     *
+     * <p>Eighty times the cost of dithering, and a ten-second commitment spent on it costs twice what
+     * dying does. That is not a slip of the pen. Dying is one bad moment; a body that has learned to mine
+     * stone with its fists will do it for the rest of the run, and the cost has to be big enough that a
+     * single such move outweighs whatever chain of small rewards led the table into it.
+     */
+    private static final double WASTED_EFFORT_COST = 4.0;
 
     private static final List<Objective> ALL = List.of(
             objective("survival", context -> context.healthDelta() * HEALTH_WEIGHT),
@@ -32,7 +47,9 @@ public final class GeneralObjectives {
             objective("exploration",
                     context -> Math.min(context.distanceCovered(), EXPLORATION_CAP * context.steps())
                             * EXPLORATION_WEIGHT),
-            objective("impatience", context -> -IDLE_COST * context.steps()));
+            objective("impatience", context -> -IDLE_COST * context.steps()),
+            // Already a per-second quantity, since it is counted in ticks as they pass.
+            objective("wasted effort", context -> -WASTED_EFFORT_COST * context.wastedSeconds()));
 
     private GeneralObjectives() {
     }

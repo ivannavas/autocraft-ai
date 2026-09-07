@@ -1,6 +1,7 @@
 package io.github.ivannavas.autocraftai.web;
 
 import java.util.Locale;
+import java.util.Map;
 import java.util.StringJoiner;
 
 import io.github.ivannavas.autocraftai.mob.ai.QTableSnapshot;
@@ -36,6 +37,7 @@ final class Json {
         StringBuilder out = new StringBuilder(256 + snapshot.rows().size() * 64);
         out.append('{');
         out.append("\"phase\":").append(string(snapshot.phase())).append(',');
+        out.append("\"phaseReason\":").append(string(snapshot.phaseReason())).append(',');
         out.append("\"currentState\":").append(string(snapshot.currentState())).append(',');
         out.append("\"currentAction\":").append(string(snapshot.currentAction())).append(',');
         out.append("\"currentTiming\":").append(string(snapshot.currentTiming())).append(',');
@@ -45,6 +47,7 @@ final class Json {
         out.append("\"interruptions\":").append(snapshot.interruptions()).append(',');
         out.append("\"actions\":").append(strings(snapshot.actions())).append(',');
         out.append("\"crafts\":").append(crafts(snapshot)).append(',');
+        out.append("\"planner\":").append(planner(snapshot)).append(',');
         out.append("\"craftActions\":").append(strings(snapshot.craftActions())).append(',');
         out.append("\"craftRows\":").append(rows(snapshot.craftRows())).append(',');
         out.append("\"interruptActions\":").append(strings(snapshot.interruptActions())).append(',');
@@ -52,6 +55,24 @@ final class Json {
         out.append("\"rows\":").append(rows(snapshot));
         out.append('}');
         return out.toString();
+    }
+
+    /**
+     * The planner's conversation: what was asked and what came back, oldest first.
+     *
+     * <p>The detail — the whole prompt, the whole reply — goes out with it, because the panel shows it on
+     * hover and a summary alone cannot answer the question a viewer actually has, which is "what did it
+     * say". It is a couple of kilobytes at most and only changes when the planner is called.
+     */
+    private static String planner(QTableSnapshot snapshot) {
+        long now = System.currentTimeMillis();
+        StringJoiner joiner = new StringJoiner(",", "[", "]");
+        snapshot.planner().forEach(entry -> joiner.add("{\"kind\":" + string(entry.kind().name())
+                + ",\"objective\":" + string(entry.objective())
+                + ",\"text\":" + string(entry.text())
+                + ",\"detail\":" + string(entry.detail())
+                + ",\"ago\":" + Math.max(0L, now - entry.at()) + "}"));
+        return joiner.toString();
     }
 
     private static String crafts(QTableSnapshot snapshot) {
@@ -81,6 +102,25 @@ final class Json {
     private static String strings(Iterable<String> items) {
         StringJoiner joiner = new StringJoiner(",", "[", "]");
         items.forEach(item -> joiner.add(string(item)));
+        return joiner.toString();
+    }
+
+    /**
+     * The overlay's own words, grouped: {@code {"locale":"es-ES","action":{"MINE":"picar"},...}}.
+     *
+     * <p>Sent once when a page connects rather than with every snapshot. It is a couple of kilobytes and
+     * it only changes when the player changes the game's language, which a reconnect picks up.
+     */
+    static String of(String locale, Map<String, Map<String, String>> groups) {
+        StringJoiner joiner = new StringJoiner(",", "{", "}");
+        joiner.add("\"locale\":" + string(locale));
+        groups.forEach((group, words) -> joiner.add(string(group) + ":" + object(words)));
+        return joiner.toString();
+    }
+
+    private static String object(Map<String, String> words) {
+        StringJoiner joiner = new StringJoiner(",", "{", "}");
+        words.forEach((key, value) -> joiner.add(string(key) + ":" + string(value)));
         return joiner.toString();
     }
 

@@ -2,10 +2,12 @@ package io.github.ivannavas.autocraftai.mob.ai;
 
 import io.github.ivannavas.autocraftai.mob.MobGoal;
 import io.github.ivannavas.autocraftai.mob.goal.ApproachSightingGoal;
+import io.github.ivannavas.autocraftai.mob.goal.DigDownGoal;
 import io.github.ivannavas.autocraftai.mob.goal.FleeSightingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.MineSightingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.PlaceBlockGoal;
 import io.github.ivannavas.autocraftai.mob.goal.RandomStrollGoal;
+import io.github.ivannavas.autocraftai.mob.goal.TravelGoal;
 import io.github.ivannavas.autocraftai.mob.goal.WatchSightingGoal;
 
 /**
@@ -73,7 +75,7 @@ public enum GoalAction {
     MINE {
         @Override
         public MobGoal create(ActionContext context) {
-            return new MineSightingGoal(context.sighting());
+            return new MineSightingGoal(context.sighting(), context.tool());
         }
 
         @Override
@@ -92,6 +94,48 @@ public enum GoalAction {
         @Override
         public boolean isApplicable(ActionContext context) {
             return context.hasBlocks();
+        }
+
+        @Override
+        public boolean usesSighting() {
+            return false;
+        }
+    },
+
+    /**
+     * Go somewhere else and keep going. Wandering covers a circle ten blocks across; this is how a body
+     * that has been told the problem is the desert it is standing in gets out of the desert.
+     */
+    TRAVEL {
+        @Override
+        public MobGoal create(ActionContext context) {
+            return new TravelGoal();
+        }
+
+        @Override
+        public boolean isApplicable(ActionContext context) {
+            return true;
+        }
+
+        @Override
+        public boolean usesSighting() {
+            return false;
+        }
+    },
+
+    /**
+     * Dig straight down. The one move that can reach anything under the ground, and so the one that makes
+     * stone, coal and iron objectives worth setting at all.
+     */
+    DIG_DOWN {
+        @Override
+        public MobGoal create(ActionContext context) {
+            return new DigDownGoal();
+        }
+
+        @Override
+        public boolean isApplicable(ActionContext context) {
+            return context.canDigDown();
         }
 
         @Override

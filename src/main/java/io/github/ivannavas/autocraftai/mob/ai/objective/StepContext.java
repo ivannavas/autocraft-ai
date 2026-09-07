@@ -18,6 +18,10 @@ import net.minecraft.world.phys.Vec3;
  * <p>A step here is one whole move, which may have been held for one second or fifteen. {@link #steps()} is
  * how many, and any objective that charges or pays by the second has to use it — otherwise a long move
  * would pay the same standing costs as a short one and the table would learn to dawdle.
+ *
+ * <p>{@link #wastedTicks()} is the one thing here that no pair of snapshots could show: swinging at stone
+ * bare-handed changes nothing about the body, the bag or the ground it stands on, which is exactly why it
+ * had to be counted as it happened rather than worked out afterwards.
  */
 public record StepContext(
         LocalPlayer player,
@@ -28,7 +32,11 @@ public record StepContext(
         InventoryCensus before,
         InventoryCensus after,
         InventoryCensus obtained,
-        int steps) {
+        int steps,
+        int wastedTicks) {
+
+    /** Twenty ticks to the second, which is Minecraft's clock and not this class's opinion. */
+    private static final double TICKS_PER_SECOND = 20.0;
 
     /** Half-hearts gained; negative when the body took a hit. */
     public float healthDelta() {
@@ -44,5 +52,10 @@ public record StepContext(
 
     public int gained(Resource resource) {
         return after.gainedSince(before, resource);
+    }
+
+    /** Seconds spent swinging at blocks the thing in hand was never going to get a drop out of. */
+    public double wastedSeconds() {
+        return wastedTicks / TICKS_PER_SECOND;
     }
 }

@@ -8,6 +8,8 @@ import io.github.ivannavas.autocraftai.mob.MobBody;
 import io.github.ivannavas.autocraftai.mob.MobControl;
 import io.github.ivannavas.autocraftai.mob.MobGoal;
 import io.github.ivannavas.autocraftai.mob.ai.Sighting;
+import io.github.ivannavas.autocraftai.mob.ai.WastedEffort;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Tool;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.core.BlockPos;
@@ -29,6 +31,17 @@ import net.minecraft.world.phys.Vec3;
  * anything else asks the server to accept a break the player is not aimed at. Until the head has finished
  * turning, this goal turns and does not swing.
  *
+ * <h2>The right thing in the hand</h2>
+ * Before the first swing it puts the block's tool in the hand if the hotbar has one. Which tool that is
+ * comes from the objective when the planner named it and from Minecraft's own mineable tags otherwise —
+ * see {@link Tool}. Without this the body swings with whatever was selected, which for most of a run is
+ * nothing: punching stone drops no cobblestone at all, so an objective asking for it could never complete
+ * however well the table had learned to choose mining.
+ *
+ * <p>When there is no such tool to be had it swings anyway and the time is booked to
+ * {@link WastedEffort}. Refusing to swing would leave the tables with nothing to learn from — a move that
+ * does nothing is invisible — where a move that costs something is a move they can learn to stop choosing.
+ *
  * <h2>Why it refuses to be interrupted</h2>
  * A log takes about sixty ticks of punching; the brain re-decides every twenty. Every swap calls
  * {@link MultiPlayerGameMode#stopDestroyBlock()} and throws the progress away, so mining could only ever
@@ -48,13 +61,16 @@ public final class MineSightingGoal implements MobGoal {
 
     private final Sighting sighting;
     private final BlockPos target;
+    private final Tool tool;
 
     private int ticksRunning;
     private boolean breaking;
+    private boolean equipped;
 
-    public MineSightingGoal(Sighting sighting) {
+    public MineSightingGoal(Sighting sighting, Tool tool) {
         this.sighting = sighting;
         this.target = sighting.blockPos();
+        this.tool = tool == null ? Tool.HAND : tool;
     }
 
     @Override
@@ -82,6 +98,7 @@ public final class MineSightingGoal implements MobGoal {
     public void start(MobBody body) {
         ticksRunning = 0;
         breaking = false;
+        equipped = false;
     }
 
     @Override
@@ -98,6 +115,7 @@ public final class MineSightingGoal implements MobGoal {
         // Close enough to swing: stand still, or the body drifts into the block it is breaking and the
         // straight-line steering starts shoving at the wall.
         body.moveControl().stop();
+        equip(body);
         swing(body);
     }
 
@@ -111,6 +129,22 @@ public final class MineSightingGoal implements MobGoal {
     private boolean withinReach(MobBody body, Vec3 centre) {
         double reach = body.player().blockInteractionRange() - REACH_MARGIN;
         return body.player().getEyePosition().distanceToSqr(centre) <= reach * reach;
+    }
+
+    /**
+     * Selects the tool once, on arrival rather than every tick. Switching slots mid-break is what
+     * {@code stopDestroyBlock} is for, and doing it repeatedly would cancel the break it is here to speed
+     * up. With no such tool in the hotbar the hand stays as it is: slow beats not at all.
+     */
+    private void equip(MobBody body) {
+        if (equipped) {
+            return;
+        }
+        equipped = true;
+        int slot = tool.hotbarSlot(body.player().getInventory());
+        if (slot >= 0) {
+            body.player().getInventory().setSelectedSlot(slot);
+        }
     }
 
     private void swing(MobBody body) {
@@ -128,8 +162,21 @@ public final class MineSightingGoal implements MobGoal {
                 Minecraft.getInstance().level.addBreakingBlockEffect(hit.getBlockPos(), hit.getDirection());
                 body.player().swing(InteractionHand.MAIN_HAND);
                 breaking = true;
+                chargeForABareHandedSwing(body);
             }
         });
+    }
+
+    /**
+     * Books the tick against wasted effort when this swing will not drop anything.
+     *
+     * <p>The game's own test, not ours: a block that needs no tool comes back correct however empty the
+     * hand is, so wood punched by hand costs nothing here and only stone, ore and their like do.
+     */
+    private void chargeForABareHandedSwing(MobBody body) {
+        if (!body.player().hasCorrectToolForDrops(body.level().getBlockState(target))) {
+            WastedEffort.get().wastedSwing();
+        }
     }
 
     /** The game's own raycast, but only when it landed on the block this goal is here for. */
@@ -148,6 +195,6 @@ public final class MineSightingGoal implements MobGoal {
 
     @Override
     public String name() {
-        return "Mine(" + sighting.kind() + ")";
+        return "Mine(" + sighting.kind() + (tool == Tool.HAND ? "" : ", " + tool.name()) + ")";
     }
 }

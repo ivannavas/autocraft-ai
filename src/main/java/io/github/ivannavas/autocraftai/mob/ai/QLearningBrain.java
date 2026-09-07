@@ -13,7 +13,9 @@ import io.github.ivannavas.autocraftai.mob.ai.objective.GeneralObjectives;
 import io.github.ivannavas.autocraftai.mob.ai.objective.InventoryCensus;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Objective;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Progression;
+import io.github.ivannavas.autocraftai.mob.ai.objective.planner.PlannerLog;
 import io.github.ivannavas.autocraftai.mob.ai.objective.StepContext;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Tool;
 import io.github.ivannavas.autocraftai.mob.goal.CraftAtTableGoal;
 import io.github.ivannavas.autocraftai.mob.goal.CraftGoal;
 import io.github.ivannavas.autocraftai.mob.goal.CraftingGoal;
@@ -85,12 +87,19 @@ public final class QLearningBrain {
     private static final double INTERRUPTION_PENALTY = -3.0;
     /** Under this much ground covered in a step, with legs engaged, the body is going nowhere. */
     private static final double STUCK_DISTANCE = 0.5;
+    /**
+     * How far past its commitment a goal that refuses interruption may run before it is cut short anyway.
+     *
+     * <p>Long enough for a block to come apart and no longer. See {@link #stillHolding()} for what went
+     * wrong without it.
+     */
+    private static final int COMMITTED_GRACE_STEPS = 5;
     /** Ticks spent on the death screen before asking to come back. Long enough to see what killed you. */
     private static final int RESPAWN_DELAY_TICKS = 40;
 
     private final MobEngine engine;
     private final Perception perception = new Perception();
-    private final Progression progression = Progression.standard();
+    private final Progression progression;
 
     private final Table goals;
     private final Table timing;
@@ -120,6 +129,7 @@ public final class QLearningBrain {
     private InventoryCensus lastCensus = InventoryCensus.empty();
     private InventoryCensus obtained = InventoryCensus.empty();
     private InventoryCensus previousStepCensus;
+    private int wastedTicks;
     private int ticksSinceStep;
     private int decisionsSinceSave;
     private int decisionsSinceReport;
@@ -127,6 +137,9 @@ public final class QLearningBrain {
 
     public QLearningBrain(MobEngine engine, Path directory) {
         this.engine = engine;
+        // The objectives are planned rather than scripted: the ladder that used to be the plan is now only
+        // what the run climbs when there is nobody to ask.
+        this.progression = Progression.planned(directory);
         this.goals = new Table(names(GoalAction.values()), directory.resolve("goals.txt"));
         this.timing = new Table(names(Commitment.values()), directory.resolve("timing.txt"));
         this.crafting = new Table(names(CraftChoice.values()), directory.resolve("crafting.txt"));
@@ -180,6 +193,9 @@ public final class QLearningBrain {
         // Counted once per step and nowhere else: stepSince is called more than once in a step that ends
         // in an interruption, and accumulating there would count the same gain twice.
         tallyGains(player);
+        // Taken here for the same reason as the gains: the goals count it as it happens, and reading it
+        // anywhere but once a step would either drop it or charge for it twice.
+        wastedTicks += WastedEffort.get().drain();
         retireFinishedCraft();
         boolean goingNowhere = goingNowhere(player);
         if (stillHolding()) {
@@ -227,19 +243,39 @@ public final class QLearningBrain {
         tables.forEach(Table::save);
     }
 
+    /** Writes everything out and lets go of the planner's thread. The last thing the mod does. */
+    public void close() {
+        save();
+        progression.close();
+    }
+
     /**
      * Whether the move in flight keeps the body for another step.
      *
      * <p>It runs out its committed length, with two exceptions. A goal that cannot be abandoned half way —
-     * a block coming apart — holds on past the end of its commitment rather than losing the work. And a
-     * goal that has finished with nothing left to restart gives the rest of the time back, because sitting
-     * out ten idle seconds would teach the table that the length was the mistake.
+     * a block coming apart — holds on past the end of its commitment rather than losing the work, but only
+     * for {@link #COMMITTED_GRACE_STEPS} beyond it. And a goal that has finished with nothing left to
+     * restart gives the rest of the time back, because sitting out ten idle seconds would teach the table
+     * that the length was the mistake.
+     *
+     * <h2>Why the grace is bounded</h2>
+     * It was not, and digging down exposed what that meant. A goal is uninterruptable while a block is
+     * coming apart, and digging down is never not breaking a block: it finishes one and starts the next
+     * before the step is over. So one choice of {@code DIG_DOWN} held the body until it hit bedrock or
+     * lava, no matter which commitment the timing table had picked, and no table saw another decision the
+     * whole way down. The exception is for finishing a block, so it lasts about as long as finishing a
+     * block takes.
+     *
+     * <p>Being cut short is not the same as losing the work. The move ends and the brain chooses again,
+     * and choosing the same thing on the same block leaves the goal exactly where it was — {@code install}
+     * only tears a goal down when the choice has actually changed.
      */
     private boolean stillHolding() {
         if (commitment == null) {
             return false;
         }
-        if (installedGoal != null && engine.isCommitted(installedGoal)) {
+        if (installedGoal != null && engine.isCommitted(installedGoal)
+                && stepsRun < commitment.steps() + COMMITTED_GRACE_STEPS) {
             return true;
         }
         if (stepsRun >= commitment.steps()) {
@@ -259,6 +295,11 @@ public final class QLearningBrain {
         // follows should already be taken with the new rung's eyes.
         double climbed = progression.advanceIfComplete(step);
         double reward = score(step) + climbed;
+
+        // What the move that just ended did, before anything replaces it. The planner reads these when an
+        // objective drags on: a run of them is what a rut looks like from outside.
+        DecisionLog.get().record(lastObservation == null ? null : lastObservation.key(),
+                installedAction == null ? null : installedAction.name(), step.steps(), reward);
 
         ActionContext context = surroundings(client, player);
         Observation observation = Observation.of(player, context, progression.stateKey());
@@ -297,6 +338,7 @@ public final class QLearningBrain {
         lastHealth = step.healthAfter();
         lastPosition = step.positionAfter();
         lastCensus = step.after();
+        wastedTicks = 0;
 
         publish(observation.key(), action.name(), chosen.name(), craft.name());
         maintain(climbed > 0.0);
@@ -359,8 +401,12 @@ public final class QLearningBrain {
         timing.learn(observation.key(), reward + INTERRUPTION_PENALTY, step.steps(), timing.everything);
         goals.forget();
 
+        DecisionLog.get().record(lastObservation == null ? null : lastObservation.key(),
+                installedAction == null ? null : installedAction.name(), step.steps(),
+                reward + INTERRUPTION_PENALTY);
+
         log.debug("Interrupting {} with {}", installedAction, rescue);
-        installRescue(rescue, context);
+        installRescue(rescue, player, context);
 
         // A rescue gets the shortest commitment there is: it exists to unstick the body, and whether it
         // worked is a question worth asking again in a second rather than in ten.
@@ -371,15 +417,19 @@ public final class QLearningBrain {
         lastHealth = step.healthAfter();
         lastPosition = step.positionAfter();
         lastCensus = step.after();
+        wastedTicks = 0;
         publish(observation.key(), rescue.name(), commitment.name(), "NOTHING");
     }
 
-    private void installRescue(Interruption rescue, ActionContext context) {
+    private void installRescue(Interruption rescue, LocalPlayer player, ActionContext context) {
         uninstall();
         installedAction = null;
         installedTarget = null;
         installedGoal = switch (rescue) {
-            case MINE_WALL -> new MineSightingGoal(Sighting.ofBlock(FocusKind.BLOCK, context.wall()));
+            // The wall's own tool, not the sighting's: what is being dug through here is the obstruction,
+            // and while fleeing the sighting is the mob behind us.
+            case MINE_WALL -> new MineSightingGoal(
+                    Sighting.ofBlock(FocusKind.BLOCK, context.wall()), toolFor(player, context.wall()));
             case PLACE -> new PlaceBlockGoal();
             default -> new RandomStrollGoal();
         };
@@ -388,11 +438,25 @@ public final class QLearningBrain {
 
     /** Everything around the body, gathered once so the sighting and the map agree with each other. */
     private ActionContext surroundings(Minecraft client, LocalPlayer player) {
+        Sighting sighting = perception.look(client, player, progression.wanted());
         return new ActionContext(
-                perception.look(client, player, progression.wanted()),
+                sighting,
                 Recipes.craftableNow(player),
                 Perception.wallAhead(player),
-                PlaceBlockGoal.hotbarSlotWithBlock(player) >= 0);
+                PlaceBlockGoal.hotbarSlotWithBlock(player) >= 0,
+                Perception.canDigDown(player),
+                toolFor(player, sighting.blockPos()));
+    }
+
+    /**
+     * What to break a block with: the objective's answer when it named this block, the game's otherwise.
+     * Worked out here rather than inside the goal so the goal is handed a decision instead of a lookup.
+     */
+    private Tool toolFor(LocalPlayer player, BlockPos pos) {
+        if (pos == null || !player.level().isLoaded(pos)) {
+            return Tool.HAND;
+        }
+        return progression.toolFor(player.level().getBlockState(pos));
     }
 
     /** What changed since the last decision, which is all the objectives are allowed to see. */
@@ -409,7 +473,8 @@ public final class QLearningBrain {
                 fresh ? census : lastCensus,
                 census,
                 obtained,
-                steps);
+                steps,
+                wastedTicks);
     }
 
     /**
@@ -458,13 +523,20 @@ public final class QLearningBrain {
     /**
      * Swaps the engine's goal for the chosen one. Repeating the same action on the same thing leaves the
      * running goal alone: restarting it every decision would mean a tree never finishes being chopped.
+     *
+     * <h2>A committed goal is not swap-proof here</h2>
+     * It used to be: a goal that declared itself uninterruptable was left alone whatever the tables had
+     * just decided. That was the other half of the digging loop. Once the commitment was over the brain
+     * did choose again — and published the new choice, so the overlay showed it — but this refused to
+     * hand the body over, because a shaft is always mid-block. The body kept digging while the panel said
+     * it was doing something else.
+     *
+     * <p>Keeping the break is {@link #stillHolding()}'s job and it does it there, by holding the move for
+     * as long as the commitment plus a block's worth of grace. By the time a choice reaches here that time
+     * is up, and a choice that has genuinely changed is meant to take effect. What still protects a break
+     * is the line below: choosing the same thing on the same block changes nothing at all.
      */
     private void install(GoalAction action, ActionContext context) {
-        // A goal mid-way through something it cannot abandon keeps the body. Swapping here is what made
-        // mining impossible to learn: every swap threw away the break.
-        if (installedGoal != null && engine.isCommitted(installedGoal)) {
-            return;
-        }
         Object target = action.usesSighting() ? context.sighting().target() : null;
         if (installedGoal != null && action == installedAction && Objects.equals(target, installedTarget)) {
             return;
@@ -543,9 +615,11 @@ public final class QLearningBrain {
     private void publish(String state, String action, String timingChoice, String craftChoice) {
         snapshotListener.accept(new QTableSnapshot(
                 goals.columns, goals.table.rows(), goals.table.epsilon(), goals.table.decisions(),
-                progression.stateKey(), state, action, timingChoice, craftChoice, interruptionCount,
+                progression.stateKey(), progression.reason(),
+                state, action, timingChoice, craftChoice, interruptionCount,
                 crafting.columns, crafting.table.rows(),
-                interrupts.columns, interrupts.table.rows(), CraftLog.get().recent()));
+                interrupts.columns, interrupts.table.rows(), CraftLog.get().recent(),
+                PlannerLog.get().recent()));
     }
 
     /**
@@ -582,6 +656,7 @@ public final class QLearningBrain {
     public void clearLearning() {
         tables.forEach(table -> table.table.clear());
         CraftLog.get().clear();
+        PlannerLog.get().clear();
         forget();
         save();
     }
@@ -597,6 +672,11 @@ public final class QLearningBrain {
         // from whatever the next census finds, so the ladder never claims a pickaxe that is on the floor.
         obtained = InventoryCensus.empty();
         previousStepCensus = null;
+        // A tally of the moment, not a record of the run: an episode that ends takes it with it rather
+        // than charging the next one for swings it never made.
+        wastedTicks = 0;
+        WastedEffort.get().clear();
+        DecisionLog.get().clear();
         commitment = null;
         stepsRun = 0;
         idleSteps = 0;

@@ -29,8 +29,9 @@ public class AutocraftAiClient implements ClientModInitializer {
         ClientTickEvents.START_CLIENT_TICK.register(MobEngine.get()::tick);
 
         // Learning that only lives in memory is not learning, so write it out on the way out too. The
-        // brain also saves as it goes: every hundred decisions, on reaching a rung, and on leaving a world.
-        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> brain.save());
+        // brain also saves as it goes: every hundred decisions, on reaching an objective, and on leaving a
+        // world. Closing also lets go of the thread the objective planner asks Claude on.
+        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> brain.close());
 
         ClearLearningButton.install(brain);
 

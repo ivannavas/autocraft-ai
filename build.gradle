@@ -22,6 +22,17 @@ dependencies {
     // Fabric API. This is technically optional, but you probably want it anyway.
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
+    // The objective agent. Sprout is the framework the agent is written against; jackson is what it
+    // parses the API's answers with, and Minecraft ships neither — so both, and sprout-core underneath,
+    // are nested in the mod jar with include(). include() does not follow transitives, which is why every
+    // jar that has to be there is named individually below.
+    implementation "io.github.ivannavas:sprout-anthropic:${project.sprout_version}"
+    include "io.github.ivannavas:sprout-anthropic:${project.sprout_version}"
+    include "io.github.ivannavas:sprout-core:${project.sprout_version}"
+    include "com.fasterxml.jackson.core:jackson-databind:${project.jackson_version}"
+    include "com.fasterxml.jackson.core:jackson-core:${project.jackson_version}"
+    include "com.fasterxml.jackson.core:jackson-annotations:${project.jackson_annotations_version}"
+
     compileOnly "org.projectlombok:lombok:1.18.38"
     annotationProcessor "org.projectlombok:lombok:1.18.38"
     testCompileOnly "org.projectlombok:lombok:1.18.38"

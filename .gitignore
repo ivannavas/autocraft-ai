@@ -21,3 +21,5 @@ bin/
 # fabric / loom
 run/
 remappedSrc/
+
+logs

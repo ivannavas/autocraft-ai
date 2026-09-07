@@ -3,11 +3,11 @@ package io.github.ivannavas.autocraftai.mob.ai;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Predicate;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.tags.TagKey;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
@@ -15,7 +15,7 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
@@ -54,7 +54,7 @@ public final class Perception {
     private static final int BLOCK_SCAN_HORIZONTAL = 8;
     private static final int BLOCK_SCAN_VERTICAL = 4;
 
-    public Sighting look(Minecraft client, LocalPlayer player, Optional<TagKey<Block>> wanted) {
+    public Sighting look(Minecraft client, LocalPlayer player, Optional<Predicate<BlockState>> wanted) {
         Sighting threat = nearestThreat(player);
         if (threat.isPresent()) {
             return threat;
@@ -122,11 +122,11 @@ public final class Perception {
      * Nearest block of the wanted kind in a box around the body. Walks the box rather than raycasting: the
      * point is to find the tree, not to check whether the body happens to be facing it.
      */
-    private Sighting nearestWantedBlock(LocalPlayer player, Optional<TagKey<Block>> wanted) {
+    private Sighting nearestWantedBlock(LocalPlayer player, Optional<Predicate<BlockState>> wanted) {
         if (wanted.isEmpty()) {
             return Sighting.nothing();
         }
-        TagKey<Block> tag = wanted.get();
+        Predicate<BlockState> kind = wanted.get();
         Level level = player.level();
         BlockPos origin = player.blockPosition();
         Vec3 from = player.position();
@@ -137,7 +137,7 @@ public final class Perception {
         for (BlockPos pos : BlockPos.betweenClosed(
                 origin.offset(-BLOCK_SCAN_HORIZONTAL, -BLOCK_SCAN_VERTICAL, -BLOCK_SCAN_HORIZONTAL),
                 origin.offset(BLOCK_SCAN_HORIZONTAL, BLOCK_SCAN_VERTICAL, BLOCK_SCAN_HORIZONTAL))) {
-            if (!level.isLoaded(pos) || !level.getBlockState(pos).is(tag)) {
+            if (!level.isLoaded(pos) || !kind.test(level.getBlockState(pos))) {
                 continue;
             }
             double distance = Vec3.atCenterOf(pos).distanceToSqr(from);
@@ -199,6 +199,26 @@ public final class Perception {
         boolean blocked = level.getBlockState(ahead).isSolid()
                 && level.getBlockState(ahead.above()).isSolid();
         return blocked ? ahead.immutable() : null;
+    }
+
+    /**
+     * Whether there is ground under the feet worth breaking, with more ground under that.
+     *
+     * <p>The same two-block check {@link io.github.ivannavas.autocraftai.mob.goal.DigDownGoal} makes before
+     * every swing, asked here so an impossible dig is never chosen in the first place. Standing over air or
+     * lava is not somewhere to dig; it is somewhere to already be falling.
+     */
+    public static boolean canDigDown(LocalPlayer player) {
+        Level level = player.level();
+        BlockPos under = player.blockPosition().below();
+        BlockPos below = under.below();
+        if (!level.isLoaded(under) || !level.isLoaded(below)) {
+            return false;
+        }
+        return !level.getBlockState(under).isAir()
+                && level.getFluidState(under).isEmpty()
+                && level.getBlockState(below).isSolid()
+                && level.getFluidState(below).isEmpty();
     }
 
     /** Health band of the body, in thirds of its maximum. */

@@ -1,86 +1,76 @@
 package io.github.ivannavas.autocraftai.mob.ai.objective;
 
+import java.util.List;
 import java.util.Optional;
+import java.util.function.Predicate;
 
-import net.minecraft.tags.BlockTags;
-import net.minecraft.tags.TagKey;
-import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
 
 /**
- * The ladder the run climbs, in order.
+ * The opening the run falls back on when nobody is planning it.
  *
- * <p>Every rung is the same shape — hold enough of one {@link Resource} — which is what makes the
- * progression something you extend by adding a line rather than by writing a new class. Completion is read
- * off the inventory, so a body that joins a world already carrying a pickaxe starts partway up rather than
- * being told to go and chop wood it does not need.
+ * <p>This used to be the plan itself. It is now the reserve: the objectives come from the planner, and
+ * these are what the body climbs while an answer is on its way, or for the whole run when there is no key
+ * to ask with. Keeping it is not politeness towards the old design — a run that stops having objectives
+ * the moment the network does is a run that stops learning, and the fallback is what makes the planner an
+ * improvement rather than a dependency.
  *
- * <p>This is the wood-and-stone stretch the run opens with. The rungs past it — iron, the Nether, the
- * End — are the same shape and go on the end of this list; what gates them is not the ladder but the
- * actions available to climb it, and today there is no action that crafts.
+ * <p>Every rung is a {@link Gather} like any other, so the two sources of objectives are the same thing to
+ * everything downstream. Only the name differs, and only because these seven have been on the overlay long
+ * enough to be worth keeping legible.
  */
 public enum Rung implements Phase {
 
     /** Punch trees. Three logs is twelve planks, one more than the whole wooden stretch spends. */
-    GATHER_LOGS(Resource.LOG, 3, 4.0, BlockTags.LOGS),
+    GATHER_LOGS(Resource.LOG, 3),
 
     /** Table 4, sticks 2, sword 2, pickaxe 3 — eleven planks before anything is spare. */
-    GET_PLANKS(Resource.PLANKS, 11, 2.0, null),
+    GET_PLANKS(Resource.PLANKS, 11),
 
-    GET_CRAFTING_TABLE(Resource.CRAFTING_TABLE, 1, 6.0, null),
+    GET_CRAFTING_TABLE(Resource.CRAFTING_TABLE, 1),
 
     /** One stick craft makes four, which is one more than the sword and pickaxe need between them. */
-    GET_STICKS(Resource.STICK, 4, 3.0, null),
+    GET_STICKS(Resource.STICK, 4),
 
     /** Before the pickaxe on purpose: the body has to survive the night it spends mining. */
-    GET_SWORD(Resource.SWORD, 1, 10.0, null),
+    GET_SWORD(Resource.SWORD, 1),
 
-    GET_PICKAXE(Resource.PICKAXE, 1, 10.0, null),
+    GET_PICKAXE(Resource.PICKAXE, 1),
 
     /** With a pickaxe in hand, stone is the first thing worth digging for. */
-    GATHER_STONE(Resource.COBBLESTONE, 8, 2.0, BlockTags.BASE_STONE_OVERWORLD);
+    GATHER_STONE(Resource.COBBLESTONE, 8);
 
-    private final Resource resource;
-    private final int required;
-    private final double rewardPerUnit;
-    private final TagKey<Block> wanted;
+    private final Gather gather;
 
-    Rung(Resource resource, int required, double rewardPerUnit, TagKey<Block> wanted) {
-        this.resource = resource;
-        this.required = required;
-        this.rewardPerUnit = rewardPerUnit;
-        this.wanted = wanted;
+    Rung(Resource resource, int required) {
+        this.gather = Gather.of(resource, required);
+    }
+
+    /** The ladder in order, as the plain objectives everything else deals in. */
+    public static List<Phase> ladder() {
+        return List.of(values());
     }
 
     public Resource resource() {
-        return resource;
+        return gather.resource();
     }
-
 
     public int required() {
-        return required;
+        return gather.amount();
     }
 
-    /**
-     * Reached once the run has held this much at any point, not only while it still is.
-     *
-     * <p>Measuring the bag as it stands made the first rung unreachable in practice: the crafting table
-     * turns logs into planks as soon as it can, so the log count never got to three at once and everything
-     * downstream stayed frozen behind it — a body with a sword and a crafting table still being told to go
-     * and find wood.
-     */
     @Override
     public boolean isComplete(StepContext context) {
-        return context.obtained().count(resource) >= required;
+        return gather.isComplete(context);
     }
 
-    /** Paid per unit picked up, so the climb is rewarded on the way and not only at the top. */
     @Override
     public double score(StepContext context) {
-        return context.gained(resource) * rewardPerUnit;
+        return gather.score(context);
     }
 
     @Override
-    public Optional<TagKey<Block>> wanted() {
-        return Optional.ofNullable(wanted);
+    public Optional<Predicate<BlockState>> wanted() {
+        return gather.wanted();
     }
 }

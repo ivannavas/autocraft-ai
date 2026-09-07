@@ -333,6 +333,15 @@
     font-weight: 600;
   }
 
+  /* Why this objective and not another. Its own row — it is a sentence, not a field, and wedging it in
+     beside the three values is what would make the line feel crowded again. */
+  .now-reason {
+    flex-basis: 100%;
+    color: var(--text-muted);
+    font-style: italic;
+    line-height: 1.4;
+  }
+
   .block + .block {
     margin-top: 26px;
     padding-top: 18px;
@@ -470,18 +479,53 @@
   }
 
   .offline { color: var(--negative); }
+
+  /* The planner's conversation. Two columns so the verbs line up down the left and the eye can skim
+     what happened without reading every line of it. */
+  .talk {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 6px 12px;
+    align-items: baseline;
+    font-size: 12px;
+  }
+
+  .talk-kind {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .talk-kind.answered { color: var(--positive); }
+  .talk-kind.failed { color: var(--negative); }
+
+  .talk-text {
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
+
+  .talk-ago {
+    color: var(--text-muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .talk-empty { color: var(--text-muted); }
 </style>
 </head>
 <body>
 <div class="panel">
   <div class="now">
-    <span class="now-item"><span class="now-label">Objetivo</span><span class="now-value" id="phase">—</span></span>
-    <span class="now-item"><span class="now-label">Ahora</span><span class="now-value" id="doing">—</span></span>
-    <span class="now-item"><span class="now-label">Fabricando</span><span class="now-value" id="making">—</span></span>
+    <span class="now-item"><span class="now-label" id="t-objective">Objective</span><span class="now-value" id="phase">—</span></span>
+    <span class="now-item"><span class="now-label" id="t-doing">Now</span><span class="now-value" id="doing">—</span></span>
+    <span class="now-item"><span class="now-label" id="t-making">Crafting</span><span class="now-value" id="making">—</span></span>
+    <span class="now-reason" id="phase-reason" hidden></span>
   </div>
 
   <section class="block">
-    <div class="section-label">Qué hacer</div>
+    <div class="section-label" id="t-goals">What to do</div>
     <table>
       <thead><tr id="goal-header"></tr></thead>
       <tbody id="goal-rows"></tbody>
@@ -489,7 +533,7 @@
   </section>
 
   <section class="block">
-    <div class="section-label">Qué fabricar mientras tanto</div>
+    <div class="section-label" id="t-crafts">What to make meanwhile</div>
     <table>
       <thead><tr id="craft-header"></tr></thead>
       <tbody id="craft-rows"></tbody>
@@ -497,22 +541,28 @@
   </section>
 
   <section class="block">
-    <div class="section-label">Cuando se atasca <b id="interruption-count">0</b> veces reconsiderado</div>
+    <div class="section-label"><span id="t-interrupts">When it gets stuck</span>
+      <b id="interruption-count">0</b> <span id="t-interrupts-suffix">times reconsidered</span></div>
     <table>
       <thead><tr id="int-header"></tr></thead>
       <tbody id="int-rows"></tbody>
     </table>
   </section>
 
+  <section class="block">
+    <div class="section-label" id="t-planner">The planner</div>
+    <div class="talk" id="planner"></div>
+  </section>
+
   <div class="load">
-    <span class="load-label">Máquina</span>
+    <span class="load-label" id="t-machine">Machine</span>
     <span class="gauge" id="gauge-cpu">
-      <span>CPU</span>
+      <span id="t-cpu">CPU</span>
       <span class="meter"><span class="meter-fill" id="cpu-bar"></span></span>
       <span class="gauge-value" id="cpu">—</span>
     </span>
     <span class="gauge" id="gauge-memory">
-      <span>Memoria</span>
+      <span id="t-memory">Memory</span>
       <span class="meter"><span class="meter-fill" id="memory-bar"></span></span>
       <span class="gauge-value" id="memory">—</span>
     </span>
@@ -521,21 +571,21 @@
   <div class="foot">
     <span class="key">
       <span class="swatch neg"></span>
-      <span>peor</span>
+      <span id="t-key-worse">worse</span>
       <span class="sep">|</span>
-      <span>mejor</span>
+      <span id="t-key-better">better</span>
       <span class="swatch pos"></span>
       <span class="sep">·</span>
-      <span>la barra mide cuánto</span>
+      <span id="t-key-bar">the bar is how much</span>
       <span class="sep">·</span>
       <span class="ring"></span>
-      <span>acción preferida</span>
+      <span id="t-key-best">preferred move</span>
       <span class="sep">·</span>
-      <span>distancia: cerca / media / lejos</span>
+      <span id="t-key-distance">distance: close / mid / far</span>
       <span class="sep">·</span>
-      <span>la duración y el crafteo los deciden sus propias tablas</span>
+      <span id="t-key-tables">duration and crafting have tables of their own</span>
     </span>
-    <span class="tally"><span id="tally">—</span> <span class="sep">·</span> <span id="status">conectando…</span></span>
+    <span class="tally"><span id="tally">—</span> <span class="sep">·</span> <span id="status">connecting…</span></span>
   </div>
 </div>
 
@@ -550,48 +600,166 @@
   // Where a heap stops being roomy and starts being the reason the game stutters.
   const HEAP_HOT = 0.9;
 
-  // The wire format stays in the enum names the q-table is keyed by — those are what is written to disk,
-  // and translating them there would orphan every saved table. Spanish is a display layer, and every
-  // lookup falls back to the raw name so a constant added tomorrow shows up readable rather than blank.
-  const ACCIONES = {
-    WANDER: "deambular", APPROACH: "acercarse", FLEE: "huir",
-    WATCH: "observar", MINE: "picar", CRAFT: "fabricar", PLACE: "colocar",
-  };
-  const VISTA = {
-    NOTHING: "nada", BLOCK: "bloque", RESOURCE: "recurso", ITEM: "objeto",
-    PASSIVE: "animal", HOSTILE: "hostil", PLAYER: "jugador",
-  };
-  const DISTANCIA = { NONE: "", CLOSE: "cerca", NEAR: "media", FAR: "lejos" };
-  const DURACION = { SHORT: "1s", MEDIUM: "4s", LONG: "10s" };
-  const RESCATES = {
-    CONTINUE: "seguir", MINE_WALL: "picar el muro", PLACE: "colocar", WANDER: "irse a otra parte",
-  };
-  const CRAFTEOS = {
-    NOTHING: "nada", PLANKS: "tablones", STICK: "palos",
-    CRAFTING_TABLE: "mesa de trabajo", SWORD: "espada", PICKAXE: "pico",
-  };
-  const VIDA = { LOW: "vida baja", MID: "vida media", HIGH: "vida alta" };
-  const OBJETIVOS = {
-    GATHER_LOGS: "conseguir madera", GET_PLANKS: "conseguir tablones",
-    GET_CRAFTING_TABLE: "conseguir mesa de trabajo", GET_STICKS: "conseguir palos",
-    GET_SWORD: "conseguir una espada",
-    GET_PICKAXE: "conseguir un pico", GATHER_STONE: "conseguir piedra",
-    DONE: "todo completado",
+  /**
+   * English, and the panel's floor.
+   *
+   * The game sends its own words the moment a page connects — the same lang/*.json files the rest of the
+   * mod uses — so the overlay speaks whatever language Minecraft is set to. These are what it says until
+   * then, and what it keeps saying for any key that language has no translation for. A panel in the wrong
+   * language is a nuisance; a panel of blanks is useless.
+   *
+   * The wire format stays in the enum names the q-table is keyed by: those are what is written to disk,
+   * and translating them at the source would orphan every saved table. Every lookup falls back to the raw
+   * name, so a constant added tomorrow shows up readable rather than blank.
+   */
+  const DEFAULTS = {
+    locale: "en-US",
+    text: {
+      "objective": "Objective", "doing": "Now", "making": "Crafting",
+      "goals": "What to do", "crafts": "What to make meanwhile",
+      "interrupts": "When it gets stuck", "interrupts.suffix": "times reconsidered",
+      "planner": "The planner",
+      "head.situation": "Situation", "head.craft": "Objective and bag", "head.stuck": "Stuck on",
+      "empty.goals": "Nothing learned yet — join a world.",
+      "empty.crafts": "nothing to make so far",
+      "empty.interrupts": "not stuck yet",
+      "empty.planner": "it has not been asked anything yet",
+      "ago": "%s ago",
+      "machine": "Machine", "cpu": "CPU", "memory": "Memory",
+      "key.worse": "worse", "key.better": "better", "key.bar": "the bar is how much",
+      "key.best": "preferred move", "key.distance": "distance: close / mid / far",
+      "key.tables": "duration and crafting have tables of their own",
+      "status.connecting": "connecting…", "status.live": "live",
+      "status.offline": "Minecraft is not open",
+      "tally.decisions": "%s decisions", "tally.random": "%s %% at random",
+      "verdict.avoid": "avoids", "verdict.none": "no opinion yet",
+      "qualifier.wall": "wall", "qualifier.blocks": "carrying blocks",
+      "bag.empty": "empty-handed", "bag.holding": "holding %s",
+      "shape.gather": "get %1$s %2$s", "shape.travel": "go to %s",
+      "shape.descend": "dig down to height %s", "shape.ascend": "climb to height %s",
+      "shape.build": "build %s",
+      "tip.cpu": "The game is using %s %% of the CPU",
+      "tip.cpu.machine": "the whole machine, %s %%",
+      "tip.memory": "The game has %1$s GB of memory and is using %2$s GB",
+      "tip.memory.machine": "the machine, %1$s of %2$s GB",
+    },
+    action: {
+      WANDER: "wander", APPROACH: "approach", FLEE: "flee", WATCH: "watch", MINE: "mine",
+      PLACE: "place", TRAVEL: "travel", DIG_DOWN: "dig down",
+    },
+    focus: {
+      NOTHING: "nothing", BLOCK: "block", RESOURCE: "resource", ITEM: "item",
+      PASSIVE: "animal", HOSTILE: "hostile", PLAYER: "player",
+    },
+    distance: { NONE: "", CLOSE: "close", NEAR: "mid", FAR: "far" },
+    health: { LOW: "low health", MID: "half health", HIGH: "full health" },
+    rescue: {
+      CONTINUE: "carry on", MINE_WALL: "dig the wall", PLACE: "place a block",
+      WANDER: "go elsewhere",
+    },
+    craft: {
+      NOTHING: "nothing", PLANKS: "planks", STICK: "sticks",
+      CRAFTING_TABLE: "a crafting table", SWORD: "a sword", PICKAXE: "a pickaxe",
+    },
+    resource: {
+      LOG: "logs", PLANKS: "planks", STICK: "sticks", CRAFTING_TABLE: "crafting table",
+      PICKAXE: "pickaxe", SWORD: "sword", COBBLESTONE: "cobblestone", DIRT: "dirt",
+      COAL: "coal", IRON: "iron", OBSIDIAN: "obsidian",
+    },
+    terrain: {
+      WOODED: "woodland", PLAINS: "plains", DESERT: "a desert", MOUNTAIN: "the mountains",
+      CAVE: "a cave", SNOWY: "the snow", SWAMP: "a swamp", WATER: "the water",
+    },
+    structure: {
+      WORKBENCH: "a crafting table", SHELTER: "a shelter", NETHER_PORTAL: "the Nether portal",
+    },
+    planner: {
+      ASKED: "asked", ANSWERED: "answered", KEPT: "kept the objective", FAILED: "no answer",
+    },
+    objective: {
+      GATHER_LOGS: "get wood", GET_PLANKS: "get planks",
+      GET_CRAFTING_TABLE: "get a crafting table", GET_STICKS: "get sticks",
+      GET_SWORD: "get a sword", GET_PICKAXE: "get a pickaxe", GATHER_STONE: "get stone",
+      PLANNING: "deciding what to do next", DONE: "all done",
+    },
   };
 
-  const traducir = (mapa, clave) =>
-    mapa[clave] ?? String(clave).toLowerCase().replace(/_/g, " ");
+  /** The words in use. Replaced once, when the game says which language it is in. */
+  let L = DEFAULTS;
+
+  /** Durations are a number and a unit; there is nothing in them to translate. */
+  const DURATION = { SHORT: "1s", MEDIUM: "4s", LONG: "10s" };
+
+  /**
+   * Minecraft's format strings, which is what arrives in a translation: %s in order, %1$s by position,
+   * %% for a literal per cent. Anything else is left alone rather than guessed at.
+   */
+  function format(template, ...args) {
+    let next = 0;
+    return String(template).replace(/%(?:(\d+)\$)?([s%])/g, (whole, index, kind) => {
+      if (kind === "%") {
+        return "%";
+      }
+      const value = index ? args[Number(index) - 1] : args[next++];
+      return value === undefined ? whole : String(value);
+    });
+  }
+
+  /** One of our own phrases, with its arguments filled in. */
+  const t = (key, ...args) => format(L.text[key] ?? DEFAULTS.text[key] ?? key, ...args);
+
+  /** One enum name in words. Falls back to a readable version of the name itself. */
+  const word = (group, key) =>
+    (L[group] ?? {})[key] ?? String(key).toLowerCase().replace(/_/g, " ");
+
+  // Objectives are no longer a fixed list: Claude names them, and there are four shapes it can name.
+  // The seven old rungs keep the names they always had, so all of it has to read the same here.
+  const SHAPES = [
+    [/^GET_(\d+)_(\w+)$/, m => t("shape.gather", m[1], word("resource", m[2]))],
+    [/^GO_(\w+)$/, m => t("shape.travel", word("terrain", m[1]))],
+    [/^DIG_TO_(-?\d+)$/, m => t("shape.descend", m[1])],
+    [/^CLIMB_TO_(-?\d+)$/, m => t("shape.ascend", m[1])],
+    [/^BUILD_(\w+)$/, m => t("shape.build", word("structure", m[1]))],
+  ];
+
+  const objectiveLabel = key => {
+    const text = String(key ?? "");
+    for (const [shape, write] of SHAPES) {
+      const found = shape.exec(text);
+      if (found) {
+        return write(found);
+      }
+    }
+    return word("objective", key);
+  };
 
   // One decimal is enough until it rounds a real opinion down to "0.0", which reads as "knows nothing"
   // and is the opposite of what a small positive value means.
-  const cifra = valor => Math.abs(valor) < 0.05 ? valor.toFixed(2) : valor.toFixed(1);
+  const figure = value => Math.abs(value) < 0.05 ? value.toFixed(2) : value.toFixed(1);
 
-  // "2,4" — the panel speaks Spanish, and toFixed would put a point in the middle of it.
-  const gigas = bytes => (bytes / GIGABYTE).toLocaleString("es-ES", { maximumFractionDigits: 1 });
+  // The panel's own locale, so "2.4" and "2,4" are decided by the same setting as the words around them.
+  const count = value => (value || 0).toLocaleString(L.locale);
+  const gigabytes = bytes => (bytes / GIGABYTE).toLocaleString(L.locale, { maximumFractionDigits: 1 });
 
-  const porciento = fraccion => Math.round(fraccion * 100);
+  const percent = fraction => Math.round(fraction * 100);
 
   const el = id => document.getElementById(id);
+
+  /** Writes the words that sit in the markup rather than being drawn each frame. */
+  function applyLabels() {
+    const fixed = {
+      "t-objective": "objective", "t-doing": "doing", "t-making": "making",
+      "t-goals": "goals", "t-crafts": "crafts",
+      "t-interrupts": "interrupts", "t-interrupts-suffix": "interrupts.suffix",
+      "t-planner": "planner",
+      "t-machine": "machine", "t-cpu": "cpu", "t-memory": "memory",
+      "t-key-worse": "key.worse", "t-key-better": "key.better", "t-key-bar": "key.bar",
+      "t-key-best": "key.best", "t-key-distance": "key.distance", "t-key-tables": "key.tables",
+    };
+    for (const [id, key] of Object.entries(fixed)) {
+      el(id).textContent = t(key);
+    }
+  }
 
   // The table on screen is the goal table. Timing and crafting are learned in their own tables and shown
   // as the choice of the moment rather than as more columns.
@@ -599,34 +767,34 @@
   // which the goal table's own rows do not need repeating on every line; the rest is what varies.
   function stateLabel(key, verdict) {
     const [, focus, distance, health, flags] = key.split("|");
-    const cerca = traducir(DISTANCIA, distance);
-    const pared = flags && flags.includes("W") ? " · pared" : "";
-    return `<span class="focus">${traducir(VISTA, focus)}</span>` +
-           `<span class="qualifier">${cerca ? " · " + cerca : ""} · ${traducir(VIDA, health)}` +
-           `${pared}</span>` + verdict;
+    const near = word("distance", distance);
+    const wall = flags && flags.includes("W") ? " · " + t("qualifier.wall") : "";
+    return `<span class="focus">${word("focus", focus)}</span>` +
+           `<span class="qualifier">${near ? " · " + near : ""} · ${word("health", health)}` +
+           `${wall}</span>` + verdict;
   }
 
   // The interrupt table is keyed differently: "<goal>|stuck|<flags>" — the goal that stalled and what the
   // body could see about the bind it stalled in.
   function stuckLabel(key, verdict) {
     const [goal, , flags] = key.split("|");
-    const pared = flags && flags.includes("W") ? " · pared" : "";
-    const bloques = flags && flags.includes("B") ? " · con bloques" : "";
-    return `<span class="focus">${traducir(ACCIONES, goal)}</span>` +
-           `<span class="qualifier">${pared}${bloques}</span>` + verdict;
+    const wall = flags && flags.includes("W") ? " · " + t("qualifier.wall") : "";
+    const blocks = flags && flags.includes("B") ? " · " + t("qualifier.blocks") : "";
+    return `<span class="focus">${word("action", goal)}</span>` +
+           `<span class="qualifier">${wall}${blocks}</span>` + verdict;
   }
 
   // Three things a row can be saying, and they are not the same. It has found something worth doing; or
   // the best it knows is an untried column and all it has really learned is what hurt; or it knows nothing.
-  function verdictLabel(dict, actions, values, best) {
+  function verdictLabel(group, actions, values, best) {
     if (values[best] > 1e-4) {
-      return `<span class="verdict"> → <b>${traducir(dict, actions[best])}</b> ${cifra(values[best])}</span>`;
+      return `<span class="verdict"> → <b>${word(group, actions[best])}</b> ${figure(values[best])}</span>`;
     }
-    const peor = values.indexOf(Math.min(...values));
-    if (values[peor] < -1e-4) {
-      return `<span class="verdict"> · evita <b>${traducir(dict, actions[peor])}</b></span>`;
+    const worst = values.indexOf(Math.min(...values));
+    if (values[worst] < -1e-4) {
+      return `<span class="verdict"> · ${t("verdict.avoid")} <b>${word(group, actions[worst])}</b></span>`;
     }
-    return '<span class="verdict"> · sin opinión todavía</span>';
+    return `<span class="verdict"> · ${t("verdict.none")}</span>`;
   }
 
   function cell(value, scale, name, isBest) {
@@ -638,15 +806,15 @@
            `<div class="track">${bar}</div></td>`;
   }
 
-  // The crafting table is keyed by "<rung>|<what is held>": what the run is after and what is already
+  // The crafting table is keyed by "<objective>|<what is held>": what the run is after and what is already
   // in the bag, which is what actually decides a craft.
   function craftLabel(key, verdict) {
-    const [rung, held] = key.split("|");
-    const cosas = !held || held === "-"
-      ? "con las manos vacías"
-      : "con " + held.split("+").map(r => traducir(CRAFTEOS, r)).join(", ");
-    return `<span class="focus">${traducir(OBJETIVOS, rung)}</span>` +
-           `<span class="qualifier"> · ${cosas}</span>` + verdict;
+    const [objective, held] = key.split("|");
+    const holding = !held || held === "-"
+      ? t("bag.empty")
+      : t("bag.holding", held.split("+").map(r => word("craft", r)).join(", "));
+    return `<span class="focus">${objectiveLabel(objective)}</span>` +
+           `<span class="qualifier"> · ${holding}</span>` + verdict;
   }
 
   /**
@@ -654,39 +822,77 @@
    * a diverging bar per cell — so they are one function rather than three that drift apart.
    */
   function renderTable(spec) {
-    const { headId, bodyId, actions, rows, dict, label, max, current } = spec;
+    const { headId, bodyId, actions, rows, group, label, max, current } = spec;
     const table = el(headId).closest("table");
     table.style.setProperty("--action-count", actions.length);
-    el(headId).innerHTML = `<th class="state-head">${spec.sideHead}</th>` +
-      actions.map(a => `<th class="action-head">${traducir(dict, a)}</th>`).join("");
+    el(headId).innerHTML = `<th class="state-head">${t(spec.sideHead)}</th>` +
+      actions.map(a => `<th class="action-head">${word(group, a)}</th>`).join("");
 
     if (!rows.length) {
       el(bodyId).innerHTML =
-        `<tr><td class="empty" colspan="${actions.length + 1}">${spec.empty}</td></tr>`;
+        `<tr><td class="empty" colspan="${actions.length + 1}">${t(spec.empty)}</td></tr>`;
       return;
     }
 
     // Strongest opinions first. What the run is doing now is not a reason to show a row that has learned
     // nothing yet, and the live row keeps its own ring either way.
-    const fuerza = r => Math.max(...r.values.map(Math.abs));
-    const shown = [...rows].sort((a, b) => fuerza(b) - fuerza(a)).slice(0, max);
+    const strength = r => Math.max(...r.values.map(Math.abs));
+    const shown = [...rows].sort((a, b) => strength(b) - strength(a)).slice(0, max);
     // One shared scale across the table, so a long bar means the same thing on every row of it.
     const scale = Math.max(1e-3, ...shown.flatMap(r => r.values.map(Math.abs)));
 
     el(bodyId).innerHTML = shown.map(row => {
       const best = row.values.indexOf(Math.max(...row.values));
       const live = row.state === current ? ' class="current"' : "";
-      const verdict = verdictLabel(dict, actions, row.values, best);
+      const verdict = verdictLabel(group, actions, row.values, best);
       return `<tr${live}><td class="state">${label(row.state, verdict)}</td>` +
              row.values.map((v, i) =>
-                 cell(v, scale, traducir(dict, actions[i]), i === best && Math.abs(v) > 1e-4)).join("") +
+                 cell(v, scale, word(group, actions[i]), i === best && Math.abs(v) > 1e-4)).join("") +
              "</tr>";
     }).join("");
   }
 
+  /** "45s" / "3m", so a line can say how long ago it was without a clock on the page. */
+  const elapsed = millis => {
+    const seconds = Math.max(0, Math.round(millis / 1000));
+    return seconds < 90 ? seconds + "s" : Math.round(seconds / 60) + "m";
+  };
+
+  /**
+   * What the planner was asked and what it said, oldest first.
+   *
+   * The whole prompt and the whole reply ride along in `detail` and go on the row's tooltip: the line
+   * itself has to stay short enough to skim, and the question a viewer actually has — what did it say —
+   * is one hover away rather than absent.
+   */
+  function renderPlanner(entries) {
+    const talk = el("planner");
+    if (!entries.length) {
+      talk.innerHTML = `<div class="talk-empty">${t("empty.planner")}</div>`;
+      return;
+    }
+    talk.innerHTML = entries.map(entry => {
+      const kind = String(entry.kind || "").toLowerCase();
+      const tip = entry.detail ? ` title="${escape(entry.detail)}"` : "";
+      // The objective travels as its key so it can be named here, in the same words the rest of the
+      // panel uses. What follows it is the planner's own sentence and is left exactly as it wrote it.
+      const named = entry.objective
+        ? `<b>${escape(objectiveLabel(entry.objective))}</b>${entry.text ? " · " : ""}`
+        : "";
+      return `<span class="talk-kind ${kind}">${word("planner", entry.kind)}</span>` +
+             `<span class="talk-text"${tip}>${named}${escape(entry.text || "")}</span>` +
+             `<span class="talk-ago">${t("ago", elapsed(entry.ago || 0))}</span>`;
+    }).join("");
+  }
+
+  /** Everything here is written by a model or read off a block; none of it may become markup. */
+  const escape = text => String(text)
+    .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+
   function meter(id, fraction, hot) {
     const bar = el(id);
-    bar.style.width = porciento(Math.min(1, Math.max(0, fraction))) + "%";
+    bar.style.width = percent(Math.min(1, Math.max(0, fraction))) + "%";
     bar.classList.toggle("hot", hot);
   }
 
@@ -697,21 +903,21 @@
     // The process load, not the machine's: the question the panel is answering is what this game costs.
     // A JVM that will not say reports it negative, and a dash is the honest answer to that.
     const cpu = stats && stats.processCpu >= 0 ? stats.processCpu : null;
-    el("cpu").textContent = cpu === null ? "—" : porciento(cpu) + " %";
+    el("cpu").textContent = cpu === null ? "—" : percent(cpu) + " %";
     meter("cpu-bar", cpu ?? 0, false);
     el("gauge-cpu").title = cpu === null ? "" :
-      `El juego usa el ${porciento(cpu)} % de la CPU` +
-      (stats.systemCpu >= 0 ? ` · toda la máquina, el ${porciento(stats.systemCpu)} %` : "");
+      t("tip.cpu", percent(cpu)) +
+      (stats.systemCpu >= 0 ? " · " + t("tip.cpu.machine", percent(stats.systemCpu)) : "");
 
     // The heap, which is the memory a player can do anything about: it is what the launcher's slider set.
     const heap = stats && stats.heapMax > 0 ? stats.heapUsed / stats.heapMax : null;
     el("memory").textContent = heap === null ? "—" :
-      `${gigas(stats.heapUsed)} / ${gigas(stats.heapMax)} GB`;
+      `${gigabytes(stats.heapUsed)} / ${gigabytes(stats.heapMax)} GB`;
     meter("memory-bar", heap ?? 0, heap !== null && heap >= HEAP_HOT);
     el("gauge-memory").title = heap === null ? "" :
-      `El juego tiene ${gigas(stats.heapMax)} GB de memoria y usa ${gigas(stats.heapUsed)} GB` +
+      t("tip.memory", gigabytes(stats.heapMax), gigabytes(stats.heapUsed)) +
       (stats.ramTotal > 0
-        ? ` · la máquina, ${gigas(stats.ramUsed)} de ${gigas(stats.ramTotal)} GB` : "");
+        ? " · " + t("tip.memory.machine", gigabytes(stats.ramUsed), gigabytes(stats.ramTotal)) : "");
   }
 
   /**
@@ -719,55 +925,82 @@
    * the goal that got stuck and what was around, so they read as "this goal, in this bind".
    */
   function render(data) {
-    el("interruption-count").textContent = (data.interruptions || 0).toLocaleString("es-ES");
+    el("interruption-count").textContent = count(data.interruptions);
 
-    el("phase").textContent = traducir(OBJETIVOS, data.phase);
+    el("phase").textContent = objectiveLabel(data.phase);
+    // Only there when a planner chose the objective and said why; the fixed ladder has nothing to add.
+    const reason = el("phase-reason");
+    reason.textContent = data.phaseReason || "";
+    reason.hidden = !data.phaseReason;
     // The duration belongs with the action: "fleeing" and "fleeing for ten seconds" are different moves.
     el("doing").textContent = data.currentAction
-      ? `${traducir(ACCIONES, data.currentAction)} ${traducir(DURACION, data.currentTiming)}`
+      ? `${word("action", data.currentAction)} ${DURATION[data.currentTiming] ?? ""}`.trim()
       : "—";
     el("making").textContent = data.currentCraft && data.currentCraft !== "NOTHING"
-      ? traducir(CRAFTEOS, data.currentCraft)
+      ? word("craft", data.currentCraft)
       : "—";
 
     renderTable({
-      headId: "goal-header", bodyId: "goal-rows", sideHead: "Situación",
+      headId: "goal-header", bodyId: "goal-rows", sideHead: "head.situation",
       actions: data.actions || [], rows: data.rows || [],
-      dict: ACCIONES, label: stateLabel, max: MAX_ROWS, current: data.currentState,
-      empty: "Todavía no ha aprendido nada — entra en un mundo.",
+      group: "action", label: stateLabel, max: MAX_ROWS, current: data.currentState,
+      empty: "empty.goals",
     });
 
     renderTable({
-      headId: "craft-header", bodyId: "craft-rows", sideHead: "Objetivo y bolsa",
+      headId: "craft-header", bodyId: "craft-rows", sideHead: "head.craft",
       actions: data.craftActions || [], rows: data.craftRows || [],
-      dict: CRAFTEOS, label: craftLabel, max: MAX_CRAFT_ROWS, current: null,
-      empty: "todavía no ha tenido nada que fabricar",
+      group: "craft", label: craftLabel, max: MAX_CRAFT_ROWS, current: null,
+      empty: "empty.crafts",
     });
 
     renderTable({
-      headId: "int-header", bodyId: "int-rows", sideHead: "Atascado en",
+      headId: "int-header", bodyId: "int-rows", sideHead: "head.stuck",
       actions: data.interruptActions || [], rows: data.interruptRows || [],
-      dict: RESCATES, label: stuckLabel, max: MAX_INTERRUPT_ROWS, current: null,
-      empty: "todavía no se ha atascado",
+      group: "rescue", label: stuckLabel, max: MAX_INTERRUPT_ROWS, current: null,
+      empty: "empty.interrupts",
     });
+
+    renderPlanner(data.planner || []);
 
     // The counters that used to sit in tiles at the top live down here now, where they inform without
     // taking the first thing a viewer looks at.
-    el("tally").textContent =
-      `${(data.decisions || 0).toLocaleString("es-ES")} decisiones · `
-      + `${Math.round((data.epsilon || 0) * 100)} % al azar`;
-    el("status").textContent = "en directo";
+    el("tally").textContent = t("tally.decisions", count(data.decisions)) + " · "
+      + t("tally.random", Math.round((data.epsilon || 0) * 100));
+    el("status").textContent = t("status.live");
     el("status").classList.remove("offline");
   }
 
+  /** The last snapshot, kept so a change of language redraws rather than waiting for the next decision. */
+  let latest = null;
+  let latestStats = null;
+
   const stream = new EventSource("/events");
-  stream.addEventListener("qtable", event => render(JSON.parse(event.data)));
-  stream.addEventListener("stats", event => renderStats(JSON.parse(event.data)));
+  stream.addEventListener("labels", event => {
+    const sent = JSON.parse(event.data);
+    // Group by group, so a language that has translated half of them keeps English for the other half
+    // instead of losing it.
+    L = { locale: sent.locale || DEFAULTS.locale };
+    for (const [group, words] of Object.entries(DEFAULTS)) {
+      if (group !== "locale") {
+        L[group] = { ...words, ...(sent[group] ?? {}) };
+      }
+    }
+    applyLabels();
+    if (latest) {
+      render(latest);
+    }
+    renderStats(latestStats);
+  });
+  stream.addEventListener("qtable", event => render(latest = JSON.parse(event.data)));
+  stream.addEventListener("stats", event => renderStats(latestStats = JSON.parse(event.data)));
   stream.onerror = () => {
-    el("status").textContent = "Minecraft no está abierto";
+    el("status").textContent = t("status.offline");
     el("status").classList.add("offline");
-    renderStats(null);
+    renderStats(latestStats = null);
   };
+
+  el("status").textContent = t("status.connecting");
 </script>
 </body>
 </html>
