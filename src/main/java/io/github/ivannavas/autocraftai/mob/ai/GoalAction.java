@@ -157,6 +157,10 @@ public enum GoalAction {
     /**
      * Dig straight down. The one move that can reach anything under the ground, and so the one that makes
      * stone, coal and iron objectives worth setting at all.
+     *
+     * <p>And the one move that can put the body somewhere it cannot get out of, which is why it is not
+     * offered unless down is where the plan is. See {@link ActionContext#worthDigging()}: a body after
+     * wood that starts a shaft has not found a slower route to wood, it has left.
      */
     DIG_DOWN {
         @Override
@@ -166,7 +170,7 @@ public enum GoalAction {
 
         @Override
         public boolean isApplicable(ActionContext context) {
-            return context.canDigDown();
+            return context.canDigDown() && context.worthDigging();
         }
 
         @Override

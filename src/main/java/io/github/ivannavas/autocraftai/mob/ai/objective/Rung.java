@@ -60,6 +60,11 @@ public enum Rung implements Phase {
     }
 
     @Override
+    public boolean wantsDepth() {
+        return gather.wantsDepth();
+    }
+
+    @Override
     public String shape() {
         return gather.shape();
     }

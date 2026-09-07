@@ -447,6 +447,11 @@ public final class QLearningBrain {
             allowed[i] = action == GoalAction.MINE
                     ? spots[i].canMine(player, sighted)
                     : spots[i].canPlace(player, sighted);
+            // Mining the block under the feet is digging down by another name, and the same rule applies:
+            // without it the shaft the goal table is not allowed to start could be started here instead.
+            if (spots[i] == Spot.UNDER_FOOT && !progression.worthDigging(player.getBlockY())) {
+                allowed[i] = false;
+            }
         }
         return allowed;
     }
@@ -563,7 +568,8 @@ public final class QLearningBrain {
                 toolFor(player, sighting.blockPos()),
                 Perception.isHungry(player),
                 Perception.canEat(player),
-                Perception.wellFed(player));
+                Perception.wellFed(player),
+                progression.worthDigging(player.getBlockY()));
     }
 
     /**
@@ -595,7 +601,8 @@ public final class QLearningBrain {
                 wastedTicks,
                 fresh ? player.getFoodData().getFoodLevel() : lastFood,
                 player.getFoodData().getFoodLevel(),
-                craftedThisStep);
+                craftedThisStep,
+                territory.pinned());
     }
 
     /**

@@ -42,6 +42,11 @@ public record Gather(Resource resource, int amount, List<Source> sources, String
     }
 
     @Override
+    public boolean wantsDepth() {
+        return resource.underground();
+    }
+
+    @Override
     public String shape() {
         return "GET";
     }

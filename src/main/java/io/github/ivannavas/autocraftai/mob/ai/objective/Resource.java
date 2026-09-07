@@ -38,33 +38,47 @@ import net.minecraft.world.level.block.state.BlockState;
  */
 public enum Resource {
 
-    LOG(stack -> stack.is(ItemTags.LOGS), 4.0, state -> state.is(BlockTags.LOGS)),
-    PLANKS(stack -> stack.is(ItemTags.PLANKS), 2.0, null),
-    STICK(stack -> stack.is(Items.STICK), 3.0, null),
-    CRAFTING_TABLE(stack -> stack.is(Items.CRAFTING_TABLE), 6.0, state -> state.is(Blocks.CRAFTING_TABLE)),
-    PICKAXE(stack -> stack.is(ItemTags.PICKAXES), 10.0, null),
-    SWORD(stack -> stack.is(ItemTags.SWORDS), 10.0, null),
-    COBBLESTONE(stack -> stack.is(Items.COBBLESTONE), 2.0, state -> state.is(BlockTags.BASE_STONE_OVERWORLD)),
+    LOG(stack -> stack.is(ItemTags.LOGS), 4.0, state -> state.is(BlockTags.LOGS), Where.SURFACE),
+    PLANKS(stack -> stack.is(ItemTags.PLANKS), 2.0, null, Where.SURFACE),
+    STICK(stack -> stack.is(Items.STICK), 3.0, null, Where.SURFACE),
+    CRAFTING_TABLE(stack -> stack.is(Items.CRAFTING_TABLE), 6.0,
+            state -> state.is(Blocks.CRAFTING_TABLE), Where.SURFACE),
+    PICKAXE(stack -> stack.is(ItemTags.PICKAXES), 10.0, null, Where.SURFACE),
+    SWORD(stack -> stack.is(ItemTags.SWORDS), 10.0, null, Where.SURFACE),
+    COBBLESTONE(stack -> stack.is(Items.COBBLESTONE), 2.0,
+            state -> state.is(BlockTags.BASE_STONE_OVERWORLD), Where.UNDERGROUND),
 
     /** Free to dig and the cheapest thing to build with, which is what makes it worth naming. */
-    DIRT(stack -> stack.is(Items.DIRT), 1.0, state -> state.is(BlockTags.DIRT)),
+    DIRT(stack -> stack.is(Items.DIRT), 1.0, state -> state.is(BlockTags.DIRT), Where.SURFACE),
 
     COAL(stack -> stack.is(Items.COAL), 6.0,
-            state -> state.is(Blocks.COAL_ORE) || state.is(Blocks.DEEPSLATE_COAL_ORE)),
+            state -> state.is(Blocks.COAL_ORE) || state.is(Blocks.DEEPSLATE_COAL_ORE), Where.UNDERGROUND),
 
     /** Raw or smelted: the run cannot smelt yet, and what it is after is the ore either way. */
     IRON(stack -> stack.is(Items.RAW_IRON) || stack.is(Items.IRON_INGOT), 12.0,
-            state -> state.is(BlockTags.IRON_ORES)),
+            state -> state.is(BlockTags.IRON_ORES), Where.UNDERGROUND),
 
     /** Out of reach until there is a diamond pickaxe, and nameable anyway: the portal is made of it. */
-    OBSIDIAN(stack -> stack.is(Items.OBSIDIAN), 20.0, state -> state.is(Blocks.OBSIDIAN)),
+    OBSIDIAN(stack -> stack.is(Items.OBSIDIAN), 20.0, state -> state.is(Blocks.OBSIDIAN), Where.UNDERGROUND),
 
     /**
      * Anything edible, which the game itself decides: a stack is food when it carries the food component.
      * No block form — it comes off animals, not out of the ground — so the eyes never look for it and the
      * way to get it is to go and hit something.
      */
-    FOOD(stack -> stack.get(DataComponents.FOOD) != null, 5.0, null);
+    FOOD(stack -> stack.get(DataComponents.FOOD) != null, 5.0, null, Where.SURFACE);
+
+
+    /**
+     * Two words instead of two bare booleans at the end of every line above.
+     *
+     * <p>They live in a type of their own because an enum constant cannot see a static field of its own
+     * enum — the constants are built first, and the field does not exist yet.
+     */
+    private interface Where {
+        boolean UNDERGROUND = true;
+        boolean SURFACE = false;
+    }
 
     /** Enough that hunting another animal is not worth the time. Two full meals in hand. */
     public static final int ENOUGH_FOOD = 8;
@@ -116,11 +130,25 @@ public enum Resource {
     private final Predicate<ItemStack> test;
     private final double worth;
     private final Predicate<BlockState> inWorld;
+    private final boolean underground;
 
-    Resource(Predicate<ItemStack> test, double worth, Predicate<BlockState> inWorld) {
+    Resource(Predicate<ItemStack> test, double worth, Predicate<BlockState> inWorld,
+             boolean underground) {
         this.test = test;
         this.worth = worth;
         this.inWorld = inWorld;
+        this.underground = underground;
+    }
+
+    /**
+     * Whether this is found below the ground rather than on it.
+     *
+     * <p>The one fact that says whether digging towards a thing is a route to it or a way of burying
+     * yourself. There is no wood under the grass, so a body after logs that starts a shaft is not taking
+     * a slower path to them, it is leaving.
+     */
+    public boolean underground() {
+        return underground;
     }
 
     public boolean matches(ItemStack stack) {

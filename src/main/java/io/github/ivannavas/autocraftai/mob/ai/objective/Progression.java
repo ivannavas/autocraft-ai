@@ -74,6 +74,16 @@ public final class Progression {
      */
     private static final int REVIEW_AFTER_STEPS = 520;
 
+    /**
+     * How long a body that has stopped moving at all waits before the planner is asked about it.
+     *
+     * <p>Much shorter than the ordinary window, because it is a different question. An objective that is
+     * taking a while might still be working; a body that has not moved in a minute is not working on
+     * anything, and the plan it is failing at is usually the reason. This is the hole case: the objective
+     * is fine and unreachable from where the body is, and nothing about pursuing it says "climb out".
+     */
+    private static final int REVIEW_WHEN_STUCK_STEPS = 60;
+
     private final ObjectivePlanner planner;
     private final List<Phase> fallback;
     private final List<String> achieved = new ArrayList<>();
@@ -128,6 +138,22 @@ public final class Progression {
      */
     public Bounds bounds() {
         return bounds;
+    }
+
+    /**
+     * Whether sinking a shaft is a route to what the plan wants, or a way of leaving it behind.
+     *
+     * <p>This is a rule and not a lesson, and it is a rule because of what the mistake costs. Digging down
+     * while after wood pays nothing, which the tables could in principle learn — but by the time they have
+     * had the experience the body is at the bottom of a hole where nothing else works either, and the only
+     * move that still does anything is the one that made it. A body cannot learn its way out of a place
+     * its learning cannot reach.
+     *
+     * <p>Down is a route when what the plan wants is down there, or when the plan wants the body lower
+     * than it is. Otherwise it is not offered.
+     */
+    public boolean worthDigging(int y) {
+        return current != null && (current.wantsDepth() || y > bounds.ceiling());
     }
 
     /** Which way the run is pulling, in a word, for the tables that only need that much. */
@@ -212,11 +238,13 @@ public final class Progression {
             return;
         }
         stepsOnCurrent += Math.max(1, context.steps());
-        if (stepsOnCurrent < REVIEW_AFTER_STEPS) {
+        int window = context.pinned() ? REVIEW_WHEN_STUCK_STEPS : REVIEW_AFTER_STEPS;
+        if (stepsOnCurrent < window) {
             return;
         }
         stepsOnCurrent = 0;
-        log.info("{} is taking a while; asking the planner to look at it", current.name());
+        log.info("{} has {}; asking the planner to look at it", current.name(),
+                context.pinned() ? "the body stuck in one place" : "been going a while");
         String objective = current.toString();
         planner.consider(() ->
                 Situation.of(context.player(), context.obtained(), achieved, objective));

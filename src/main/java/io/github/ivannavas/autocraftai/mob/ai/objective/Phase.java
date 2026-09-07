@@ -50,6 +50,18 @@ public interface Phase extends Objective {
     }
 
     /**
+     * Whether pursuing this means going down.
+     *
+     * <p>Asked before the body is allowed to sink a shaft, because that move is the one way it can put
+     * itself somewhere it cannot get out of, and it is only ever a route to things that are down there.
+     * Stone, coal and iron are; wood is not, and a body after wood that starts digging has stopped
+     * looking for wood.
+     */
+    default boolean wantsDepth() {
+        return false;
+    }
+
+    /**
      * What the objective says to break this block with, when it has an opinion about this block.
      *
      * <p>An opinion is all it is: the game's own {@link Tool#bestFor(BlockState)} is right about every

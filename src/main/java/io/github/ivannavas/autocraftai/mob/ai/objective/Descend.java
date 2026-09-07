@@ -26,6 +26,11 @@ public record Descend(int level, String reason) implements Phase {
     }
 
     @Override
+    public boolean wantsDepth() {
+        return true;
+    }
+
+    @Override
     public String shape() {
         return "DOWN";
     }

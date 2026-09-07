@@ -24,6 +24,10 @@ import net.minecraft.world.phys.Vec3;
  * <p>{@link #wastedTicks()} is the one thing here that no pair of snapshots could show: swinging at stone
  * bare-handed changes nothing about the body, the bag or the ground it stands on, which is exactly why it
  * had to be counted as it happened rather than worked out afterwards.
+ *
+ * <p>{@link #pinned()} reaches further back than one step, and has to: whether the body is stuck is not a
+ * fact about the last second but about the last minute of them, which is what
+ * {@link io.github.ivannavas.autocraftai.mob.ai.Territory} is for.
  */
 public record StepContext(
         LocalPlayer player,
@@ -38,7 +42,8 @@ public record StepContext(
         int wastedTicks,
         int foodBefore,
         int foodAfter,
-        List<Resource> crafted) {
+        List<Resource> crafted,
+        boolean pinned) {
 
     /** Twenty ticks to the second, which is Minecraft's clock and not this class's opinion. */
     private static final double TICKS_PER_SECOND = 20.0;

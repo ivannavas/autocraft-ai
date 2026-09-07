@@ -106,12 +106,18 @@ public class ObjectiveAgent extends AgentExecutor {
             - If the objective is simply taking a while and the moves show progress, leave it alone.
             To leave it alone, answer {"objective": "KEEP", "reason": "<why it is still right>"}.
 
-            Alongside the objective you may set "bounds": the heights it is right for the player to stay
-            between while pursuing it. Being outside costs it, a little per block and per second, so it can
-            still dip out when there is a reason. Use it to keep a plan honest — mining stone belongs
-            underground and looking for a forest belongs on the surface — and leave it out when the plan
-            genuinely does not care, which is often. An invented band is a cost for nothing.
+            Alongside the objective, set "bounds": the heights it is right for the player to stay between
+            while pursuing it. Being outside costs it, a little per block and per second, so it can still
+            dip out when there is a reason. Set one for almost every plan — most objectives belong at a
+            height, and saying so is what stops the player pursuing a good objective from a place it can
+            never be reached from.
               "bounds": {"floor": 40, "ceiling": 70}
+            - Wood, animals, food, dirt and anything else on the surface: keep the player on the surface.
+              The situation says what height it is at now, and near that is usually right — something like
+              twenty below it and forty above.
+            - Stone, coal and iron: underground, so a band that reaches down to where they are.
+            - Travelling anywhere: the surface, because that is where you can walk.
+            - Leave it out only when the plan genuinely has no opinion, which is rare.
 
             Every "target" is one of the words listed under its own shape. They are the only words the
             player understands: an objective naming anything else is thrown away, and the player carries on

@@ -22,10 +22,11 @@ import net.minecraft.core.BlockPos;
  * @param hungry     the body is hungry enough for it to be worth deciding about
  * @param canEat     there is a mouthful in the hotbar and room for it
  * @param wellFed    the larder is full enough that another animal is not worth killing
+ * @param worthDigging going down is a route to what the plan wants, rather than a way of leaving it
  */
 public record ActionContext(Sighting sighting, Set<Resource> craftable, BlockPos wall,
                             boolean hasBlocks, boolean canDigDown, Tool tool,
-                            boolean hungry, boolean canEat, boolean wellFed) {
+                            boolean hungry, boolean canEat, boolean wellFed, boolean worthDigging) {
 
     public ActionContext {
         craftable = Set.copyOf(craftable);
@@ -70,6 +71,14 @@ public record ActionContext(Sighting sighting, Set<Resource> craftable, BlockPos
      */
     public boolean wellFed() {
         return wellFed;
+    }
+
+    /**
+     * Whether a shaft goes towards the plan or away from it. See
+     * {@link io.github.ivannavas.autocraftai.mob.ai.objective.Progression#worthDigging}.
+     */
+    public boolean worthDigging() {
+        return worthDigging;
     }
 
     public String flags() {
