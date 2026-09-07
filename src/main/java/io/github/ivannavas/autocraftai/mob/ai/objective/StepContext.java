@@ -33,10 +33,17 @@ public record StepContext(
         InventoryCensus after,
         InventoryCensus obtained,
         int steps,
-        int wastedTicks) {
+        int wastedTicks,
+        int foodBefore,
+        int foodAfter) {
 
     /** Twenty ticks to the second, which is Minecraft's clock and not this class's opinion. */
     private static final double TICKS_PER_SECOND = 20.0;
+
+    /** Points of hunger restored; zero when it only ticked down, which is not this term's business. */
+    public int foodGained() {
+        return Math.max(0, foodAfter - foodBefore);
+    }
 
     /** Half-hearts gained; negative when the body took a hit. */
     public float healthDelta() {

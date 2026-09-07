@@ -19,9 +19,13 @@ import net.minecraft.core.BlockPos;
  * @param hasBlocks  the body is carrying something it could put down
  * @param canDigDown there is solid ground under the feet with more solid ground under that
  * @param tool       what to break the sighted block with, per the objective or per the game
+ * @param hungry     the body is hungry enough for it to be worth deciding about
+ * @param canEat     there is a mouthful in the hotbar and room for it
+ * @param wellFed    the larder is full enough that another animal is not worth killing
  */
 public record ActionContext(Sighting sighting, Set<Resource> craftable, BlockPos wall,
-                            boolean hasBlocks, boolean canDigDown, Tool tool) {
+                            boolean hasBlocks, boolean canDigDown, Tool tool,
+                            boolean hungry, boolean canEat, boolean wellFed) {
 
     public ActionContext {
         craftable = Set.copyOf(craftable);
@@ -33,8 +37,11 @@ public record ActionContext(Sighting sighting, Set<Resource> craftable, BlockPos
      *
      * <p>A literal map of every block in view cannot be a tabular key — no two ticks would ever share one
      * and nothing would ever be learned twice. What can is a handful of facts that change which move is
-     * right, and these two are the pair that make building a way out of somewhere a decision the table can
-     * even represent: it is walled in, and it has something to build with.
+     * right: it is walled in, it has something to build with, it is hungry. The first two are what make
+     * building a way out a decision the table can represent at all; the third is what lets it learn that a
+     * cow is worth chasing on an empty stomach and not worth it on a full one.
+     *
+     * <p>Letters in a fixed order, so a state written before hunger existed still reads the same today.
      */
     public boolean walled() {
         return wall != null;
@@ -49,13 +56,33 @@ public record ActionContext(Sighting sighting, Set<Resource> craftable, BlockPos
         return canDigDown;
     }
 
+    /** Whether eating is a move the body could make right now. Legality only, like {@link #canDigDown()}. */
+    public boolean canEat() {
+        return canEat;
+    }
+
+    /**
+     * Whether there is enough food in the bag that hunting is a waste of the time it takes.
+     *
+     * <p>A rule rather than something the table is left to learn, and deliberately. The reward for killing
+     * a cow you do not need is the same as for killing one you do — a resource gain — so nothing in the
+     * numbers would ever tell the difference, and the body would spend a well-stocked run chasing animals.
+     */
+    public boolean wellFed() {
+        return wellFed;
+    }
+
     public String flags() {
-        if (walled() && hasBlocks) {
-            return "WB";
-        }
+        StringBuilder tags = new StringBuilder();
         if (walled()) {
-            return "W";
+            tags.append('W');
         }
-        return hasBlocks ? "B" : "-";
+        if (hasBlocks) {
+            tags.append('B');
+        }
+        if (hungry) {
+            tags.append('H');
+        }
+        return tags.isEmpty() ? "-" : tags.toString();
     }
 }

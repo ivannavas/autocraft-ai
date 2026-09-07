@@ -49,8 +49,6 @@ public class ObjectiveAgent extends AgentExecutor {
             the run makes progress towards finishing the game.
 
             1. GATHER — get N units of a resource.
-               target: LOG, PLANKS, STICK, CRAFTING_TABLE, PICKAXE, SWORD, COBBLESTONE, DIRT, COAL, IRON,
-                       OBSIDIAN
                amount: 1..64
                sources: optional, but strongly recommended for anything taken from the world. It is the
                        list of blocks the resource comes off and what to break each one with. The player
@@ -60,11 +58,11 @@ public class ObjectiveAgent extends AgentExecutor {
                        Example: "sources": [{"block": "minecraft:oak_log", "tool": "AXE"},
                                             {"block": "minecraft:birch_log", "tool": "AXE"}]
                        Anything that is crafted rather than found (planks, sticks, pickaxe, sword, table)
-                       has no sources.
+                       has no sources, and neither does FOOD: it comes off animals, and the player gets it
+                       by hunting rather than by looking for a block.
 
             2. TRAVEL — go to a different kind of place. Use it when the problem is where the player is
                standing: there are no trees in a desert however many times you ask for logs.
-               target: WOODED, PLAINS, DESERT, MOUNTAIN, CAVE, SNOWY, SWAMP, WATER
 
             3. DESCEND — get down to a height. Stone, coal and iron are underground, and the player will
                never find them on the surface however long it looks.
@@ -76,8 +74,6 @@ public class ObjectiveAgent extends AgentExecutor {
                amount: the Y level to reach, between -55 and 200
 
             5. BUILD — put something up out of what the player is carrying.
-               target: WORKBENCH (a crafting table left standing), SHELTER (a stone shelter),
-                       NETHER_PORTAL (the obsidian frame of a portal to the Nether)
 
             Rules:
             - Always ask for something reachable from the current situation. If an ingredient is missing,
@@ -90,6 +86,9 @@ public class ObjectiveAgent extends AgentExecutor {
             - Small, justified amounts: what the next step needs, not a warehouse.
             - Weigh the time of day, the health and the hostiles: at night or with hostiles close by, a
               sword or a shelter is worth more than iron.
+            - Watch the hunger. Below about half a bar with nothing edible in the inventory it is urgent:
+              ask for FOOD, and the player will hunt for it. A player that has food in the bag will eat it
+              on its own when it needs to, so do not ask for more of it than a couple of meals.
 
             When the situation says REVIEW, the player already has an objective and has been at it for a
             while without finishing. Read the moves listed with it before you answer:

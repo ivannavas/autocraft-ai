@@ -2,7 +2,9 @@ package io.github.ivannavas.autocraftai.mob.ai;
 
 import io.github.ivannavas.autocraftai.mob.MobGoal;
 import io.github.ivannavas.autocraftai.mob.goal.ApproachSightingGoal;
+import io.github.ivannavas.autocraftai.mob.goal.AttackSightingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.DigDownGoal;
+import io.github.ivannavas.autocraftai.mob.goal.EatGoal;
 import io.github.ivannavas.autocraftai.mob.goal.FleeSightingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.MineSightingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.PlaceBlockGoal;
@@ -136,6 +138,51 @@ public enum GoalAction {
         @Override
         public boolean isApplicable(ActionContext context) {
             return context.canDigDown();
+        }
+
+        @Override
+        public boolean usesSighting() {
+            return false;
+        }
+    },
+
+    /**
+     * Hit the thing in view. The body could approach a zombie, watch it and run from it, and could not
+     * touch it — so the only answer it could ever learn to a mob was to leave.
+     *
+     * <p>Legal against anything alive, with one exception: an animal is not worth killing when the bag is
+     * already full of food. That is {@link ActionContext#wellFed()}'s job and it is a rule, not a lesson —
+     * the reward for a cow you need and one you do not is identical, so no amount of learning would tell
+     * them apart. Hostiles are always fair game, however much is in the larder.
+     */
+    ATTACK {
+        @Override
+        public MobGoal create(ActionContext context) {
+            return new AttackSightingGoal(context.sighting());
+        }
+
+        @Override
+        public boolean isApplicable(ActionContext context) {
+            if (!context.sighting().isValid() || !context.sighting().isCreature()) {
+                return false;
+            }
+            return context.sighting().kind() != FocusKind.PASSIVE || !context.wellFed();
+        }
+    },
+
+    /**
+     * Eat something. Starving is the one way to die that the body could see coming and had no answer to,
+     * because nothing in the action set could hold down the use button.
+     */
+    EAT {
+        @Override
+        public MobGoal create(ActionContext context) {
+            return new EatGoal();
+        }
+
+        @Override
+        public boolean isApplicable(ActionContext context) {
+            return context.canEat();
         }
 
         @Override

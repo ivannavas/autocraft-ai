@@ -634,6 +634,7 @@
       "tally.decisions": "%s decisions", "tally.random": "%s %% at random",
       "verdict.avoid": "avoids", "verdict.none": "no opinion yet",
       "qualifier.wall": "wall", "qualifier.blocks": "carrying blocks",
+      "qualifier.hungry": "hungry",
       "bag.empty": "empty-handed", "bag.holding": "holding %s",
       "shape.gather": "get %1$s %2$s", "shape.travel": "go to %s",
       "shape.descend": "dig down to height %s", "shape.ascend": "climb to height %s",
@@ -645,7 +646,7 @@
     },
     action: {
       WANDER: "wander", APPROACH: "approach", FLEE: "flee", WATCH: "watch", MINE: "mine",
-      PLACE: "place", TRAVEL: "travel", DIG_DOWN: "dig down",
+      PLACE: "place", TRAVEL: "travel", DIG_DOWN: "dig down", ATTACK: "attack", EAT: "eat",
     },
     focus: {
       NOTHING: "nothing", BLOCK: "block", RESOURCE: "resource", ITEM: "item",
@@ -664,7 +665,7 @@
     resource: {
       LOG: "logs", PLANKS: "planks", STICK: "sticks", CRAFTING_TABLE: "crafting table",
       PICKAXE: "pickaxe", SWORD: "sword", COBBLESTONE: "cobblestone", DIRT: "dirt",
-      COAL: "coal", IRON: "iron", OBSIDIAN: "obsidian",
+      COAL: "coal", IRON: "iron", OBSIDIAN: "obsidian", FOOD: "food",
     },
     terrain: {
       WOODED: "woodland", PLAINS: "plains", DESERT: "a desert", MOUNTAIN: "the mountains",
@@ -768,20 +769,27 @@
   function stateLabel(key, verdict) {
     const [, focus, distance, health, flags] = key.split("|");
     const near = word("distance", distance);
-    const wall = flags && flags.includes("W") ? " · " + t("qualifier.wall") : "";
     return `<span class="focus">${word("focus", focus)}</span>` +
            `<span class="qualifier">${near ? " · " + near : ""} · ${word("health", health)}` +
-           `${wall}</span>` + verdict;
+           `${qualifiers(flags)}</span>` + verdict;
   }
+
+  /**
+   * The state key's flag letters, spelled out. One letter each and in a fixed order — W walled in, B
+   * carrying blocks, H hungry — so a row written before a letter existed still reads correctly.
+   */
+  const QUALIFIERS = [["W", "qualifier.wall"], ["B", "qualifier.blocks"], ["H", "qualifier.hungry"]];
+
+  const qualifiers = flags =>
+    QUALIFIERS.filter(([letter]) => flags && flags.includes(letter))
+      .map(([, key]) => " · " + t(key)).join("");
 
   // The interrupt table is keyed differently: "<goal>|stuck|<flags>" — the goal that stalled and what the
   // body could see about the bind it stalled in.
   function stuckLabel(key, verdict) {
     const [goal, , flags] = key.split("|");
-    const wall = flags && flags.includes("W") ? " · " + t("qualifier.wall") : "";
-    const blocks = flags && flags.includes("B") ? " · " + t("qualifier.blocks") : "";
     return `<span class="focus">${word("action", goal)}</span>` +
-           `<span class="qualifier">${wall}${blocks}</span>` + verdict;
+           `<span class="qualifier">${qualifiers(flags)}</span>` + verdict;
   }
 
   // Three things a row can be saying, and they are not the same. It has found something worth doing; or

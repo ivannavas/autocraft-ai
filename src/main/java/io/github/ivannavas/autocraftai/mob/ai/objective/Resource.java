@@ -3,6 +3,7 @@ package io.github.ivannavas.autocraftai.mob.ai.objective;
 import java.util.Optional;
 import java.util.function.Predicate;
 
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.world.entity.player.Inventory;
@@ -54,7 +55,17 @@ public enum Resource {
             state -> state.is(BlockTags.IRON_ORES)),
 
     /** Out of reach until there is a diamond pickaxe, and nameable anyway: the portal is made of it. */
-    OBSIDIAN(stack -> stack.is(Items.OBSIDIAN), 20.0, state -> state.is(Blocks.OBSIDIAN));
+    OBSIDIAN(stack -> stack.is(Items.OBSIDIAN), 20.0, state -> state.is(Blocks.OBSIDIAN)),
+
+    /**
+     * Anything edible, which the game itself decides: a stack is food when it carries the food component.
+     * No block form — it comes off animals, not out of the ground — so the eyes never look for it and the
+     * way to get it is to go and hit something.
+     */
+    FOOD(stack -> stack.get(DataComponents.FOOD) != null, 5.0, null);
+
+    /** Enough that hunting another animal is not worth the time. Two full meals in hand. */
+    public static final int ENOUGH_FOOD = 8;
 
     private final Predicate<ItemStack> test;
     private final double worth;

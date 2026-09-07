@@ -125,6 +125,7 @@ public final class QLearningBrain {
     private long interruptionCount;
 
     private float lastHealth;
+    private int lastFood;
     private Vec3 lastPosition;
     private InventoryCensus lastCensus = InventoryCensus.empty();
     private InventoryCensus obtained = InventoryCensus.empty();
@@ -336,6 +337,7 @@ public final class QLearningBrain {
         idleSteps = 0;
         lastObservation = observation;
         lastHealth = step.healthAfter();
+        lastFood = player.getFoodData().getFoodLevel();
         lastPosition = step.positionAfter();
         lastCensus = step.after();
         wastedTicks = 0;
@@ -415,6 +417,7 @@ public final class QLearningBrain {
         idleSteps = 0;
         lastObservation = observation;
         lastHealth = step.healthAfter();
+        lastFood = player.getFoodData().getFoodLevel();
         lastPosition = step.positionAfter();
         lastCensus = step.after();
         wastedTicks = 0;
@@ -445,7 +448,10 @@ public final class QLearningBrain {
                 Perception.wallAhead(player),
                 PlaceBlockGoal.hotbarSlotWithBlock(player) >= 0,
                 Perception.canDigDown(player),
-                toolFor(player, sighting.blockPos()));
+                toolFor(player, sighting.blockPos()),
+                Perception.isHungry(player),
+                Perception.canEat(player),
+                Perception.wellFed(player));
     }
 
     /**
@@ -474,7 +480,9 @@ public final class QLearningBrain {
                 census,
                 obtained,
                 steps,
-                wastedTicks);
+                wastedTicks,
+                fresh ? player.getFoodData().getFoodLevel() : lastFood,
+                player.getFoodData().getFoodLevel());
     }
 
     /**

@@ -63,7 +63,7 @@ final class Labels {
             "status.connecting", "status.live", "status.offline",
             "tally.decisions", "tally.random",
             "verdict.avoid", "verdict.none",
-            "qualifier.wall", "qualifier.blocks",
+            "qualifier.wall", "qualifier.blocks", "qualifier.hungry",
             "bag.empty", "bag.holding",
             "shape.gather", "shape.travel", "shape.descend", "shape.ascend", "shape.build",
             "tip.cpu", "tip.cpu.machine", "tip.memory", "tip.memory.machine");

@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Predicate;
 
+import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
+import io.github.ivannavas.autocraftai.mob.goal.EatGoal;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -50,6 +52,8 @@ public final class Perception {
     private static final double THREAT_RANGE = 8.0;
     /** Drops are worth a detour from this far away. */
     private static final double PICKUP_SCAN_RANGE = 12.0;
+    /** At or below this the body is hungry enough for the tables to be told about it. */
+    private static final int HUNGRY_BELOW = 10;
     /** Box half-extents for the wanted-block scan. */
     private static final int BLOCK_SCAN_HORIZONTAL = 8;
     private static final int BLOCK_SCAN_VERTICAL = 4;
@@ -219,6 +223,26 @@ public final class Perception {
                 && level.getFluidState(under).isEmpty()
                 && level.getBlockState(below).isSolid()
                 && level.getFluidState(below).isEmpty();
+    }
+
+    /**
+     * Whether the body is hungry enough for it to be worth a decision.
+     *
+     * <p>Half a bar, not one point short of full. Every player is a little hungry most of the time, and a
+     * flag that is true almost always would split every state in the table for nothing.
+     */
+    public static boolean isHungry(LocalPlayer player) {
+        return player.getFoodData().getFoodLevel() <= HUNGRY_BELOW;
+    }
+
+    /** Whether there is a mouthful in the hotbar and room for it. */
+    public static boolean canEat(LocalPlayer player) {
+        return player.canEat(false) && EatGoal.hotbarSlotWithFood(player) >= 0;
+    }
+
+    /** Whether the larder is full enough that killing another animal is only a way to pass the time. */
+    public static boolean wellFed(LocalPlayer player) {
+        return Resource.FOOD.countIn(player.getInventory()) >= Resource.ENOUGH_FOOD;
     }
 
     /** Health band of the body, in thirds of its maximum. */

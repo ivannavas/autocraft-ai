@@ -38,6 +38,14 @@ public final class GeneralObjectives {
      * single such move outweighs whatever chain of small rewards led the table into it.
      */
     private static final double WASTED_EFFORT_COST = 4.0;
+    /**
+     * Per point of hunger restored. A loaf is six points, so a meal pays about what a log does.
+     *
+     * <p>Only gains are paid for. Hunger ticks down all day whatever the body is doing, and charging for
+     * that would be charging for the passage of time twice — impatience already does it — while making
+     * every long move look worse than it was.
+     */
+    private static final double NOURISHMENT_WEIGHT = 0.6;
 
     private static final List<Objective> ALL = List.of(
             objective("survival", context -> context.healthDelta() * HEALTH_WEIGHT),
@@ -49,7 +57,8 @@ public final class GeneralObjectives {
                             * EXPLORATION_WEIGHT),
             objective("impatience", context -> -IDLE_COST * context.steps()),
             // Already a per-second quantity, since it is counted in ticks as they pass.
-            objective("wasted effort", context -> -WASTED_EFFORT_COST * context.wastedSeconds()));
+            objective("wasted effort", context -> -WASTED_EFFORT_COST * context.wastedSeconds()),
+            objective("nourishment", context -> context.foodGained() * NOURISHMENT_WEIGHT));
 
     private GeneralObjectives() {
     }

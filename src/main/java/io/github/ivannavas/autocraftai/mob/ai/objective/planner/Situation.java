@@ -45,6 +45,8 @@ public record Situation(
         int lightLevel,
         float health,
         float maxHealth,
+        int food,
+        int maxFood,
         int depth,
         int hostilesNearby,
         List<String> carrying,
@@ -59,6 +61,8 @@ public record Situation(
     /** Minecraft's day is 24000 ticks; the sun is down between these two. */
     private static final long DUSK = 13000L;
     private static final long DAWN = 23000L;
+    /** A full hunger bar, which the game has no getter for because it is never anything else. */
+    private static final int MAX_FOOD = 20;
     /** Said when the game has not settled on one, which is never in practice. */
     private static final String DEFAULT_LANGUAGE = "en_us";
 
@@ -90,6 +94,8 @@ public record Situation(
                 player.level().getMaxLocalRawBrightness(player.blockPosition()),
                 player.getHealth(),
                 player.getMaxHealth(),
+                player.getFoodData().getFoodLevel(),
+                MAX_FOOD,
                 player.getBlockY(),
                 hostilesNear(player),
                 carried(player.getInventory()),
@@ -134,8 +140,8 @@ public record Situation(
 
     /** One line, for the overlay: enough to tell one call apart from the next. */
     public String summary() {
-        return String.format(Locale.ROOT, "%s, Y %d, %.0f/%.0f HP%s",
-                biome.replace("minecraft:", ""), depth, health, maxHealth,
+        return String.format(Locale.ROOT, "%s, Y %d, %.0f/%.0f HP, %d/%d food%s",
+                biome.replace("minecraft:", ""), depth, health, maxHealth, food, maxFood,
                 isReview() ? ", " + objective : "");
     }
 
@@ -149,6 +155,7 @@ public record Situation(
         text.append("Time: ").append(night ? "night" : "day")
                 .append(", light ").append(lightLevel).append("/15\n");
         text.append(String.format(Locale.ROOT, "Health: %.1f/%.1f%n", health, maxHealth));
+        text.append(String.format(Locale.ROOT, "Hunger: %d/%d%n", food, maxFood));
         text.append("Height Y: ").append(depth).append('\n');
         text.append("Hostiles in sight: ").append(hostilesNearby).append('\n');
         text.append("Inventory: ").append(carrying.isEmpty() ? "empty" : String.join(", ", carrying))
