@@ -11,8 +11,10 @@ import io.github.ivannavas.autocraftai.mob.ai.WastedEffort;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Tool;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
@@ -48,8 +50,11 @@ public final class DigDownGoal implements MobGoal {
     private static final int BOTTOM = -59;
     /** A block that has not given way in this long is not going to. */
     private static final int GIVE_UP_TICKS = 400;
+    /** Unable to draw a line to the floor for this long: something is in the way that will not move. */
+    private static final int BLIND_TICKS = 30;
 
     private int ticksRunning;
+    private int ticksBlind;
     private boolean breaking;
     private boolean unsafe;
     private BlockPos equippedFor;
@@ -78,6 +83,7 @@ public final class DigDownGoal implements MobGoal {
     @Override
     public void start(MobBody body) {
         ticksRunning = 0;
+        ticksBlind = 0;
         breaking = false;
         unsafe = false;
         equippedFor = null;
@@ -153,13 +159,17 @@ public final class DigDownGoal implements MobGoal {
     }
 
     private void swing(MobBody body, BlockPos target) {
-        BlockHitResult hit = crosshairOn(target);
+        BlockHitResult hit = aimedAt(body, target);
         if (hit == null) {
-            // Still turning to look down. Swinging now would ask the server to break whatever the crosshair
-            // happens to be on instead, which is the wall in front rather than the floor.
+            // Still turning to look down. Swinging now would ask the server to break whatever is in the
+            // way instead, which is the wall in front rather than the floor.
             breaking = false;
+            if (++ticksBlind >= BLIND_TICKS) {
+                unsafe = true;
+            }
             return;
         }
+        ticksBlind = 0;
         gameMode().ifPresent(gameMode -> {
             if (gameMode.continueDestroyBlock(hit.getBlockPos(), hit.getDirection())) {
                 Minecraft.getInstance().level.addBreakingBlockEffect(hit.getBlockPos(), hit.getDirection());
@@ -174,14 +184,19 @@ public final class DigDownGoal implements MobGoal {
         });
     }
 
-    /** The game's own raycast, but only when it landed on the block under the feet. */
-    private BlockHitResult crosshairOn(BlockPos target) {
-        HitResult hit = Minecraft.getInstance().hitResult;
-        if (hit == null || hit.getType() != HitResult.Type.BLOCK) {
-            return null;
-        }
-        BlockHitResult block = (BlockHitResult) hit;
-        return block.getBlockPos().equals(target) ? block : null;
+    /**
+     * A raycast from the eye to the block under the feet, and the face it enters by.
+     *
+     * <p>Its own rather than the game's crosshair, which also picks entities. Digging drops the block you
+     * just broke straight down into the shaft, so the crosshair spends much of a descent reporting a
+     * floating lump of dirt sitting exactly where the next swing has to go.
+     */
+    private BlockHitResult aimedAt(MobBody body, BlockPos target) {
+        LocalPlayer player = body.player();
+        BlockHitResult hit = body.level().clip(new ClipContext(
+                player.getEyePosition(), Vec3.atCenterOf(target),
+                ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
+        return hit.getType() == HitResult.Type.BLOCK && hit.getBlockPos().equals(target) ? hit : null;
     }
 
     private Optional<MultiPlayerGameMode> gameMode() {
