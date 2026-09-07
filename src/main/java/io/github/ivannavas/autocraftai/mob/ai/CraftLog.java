@@ -11,8 +11,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import lombok.extern.slf4j.Slf4j;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
 import net.minecraft.resources.Identifier;
-import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.world.item.ItemStack;
 
 /**
@@ -20,6 +20,12 @@ import net.minecraft.world.item.ItemStack;
  *
  * <p>Crafting is otherwise invisible: a number in the inventory changes and a rung quietly ticks over. A
  * strip of what was just made is the one part of the run a viewer can follow without reading the table.
+ *
+ * <h2>Two readers, two queues</h2>
+ * The overlay wants the last few crafts and wants them to stay put; the reward wants the crafts that have
+ * happened since it last asked and wants them gone once it has. Those are different needs, so they get
+ * different queues off the same event rather than one queue with a cursor into it that both would have to
+ * agree about.
  *
  * <h2>Textures are grabbed on the game thread, not served from it</h2>
  * The sprite for an item comes out of the resource pack, and the resource manager belongs to the client.
@@ -43,6 +49,9 @@ public final class CraftLog {
     private static final CraftLog INSTANCE = new CraftLog();
 
     private final Deque<Craft> recent = new ArrayDeque<>();
+
+    /** Crafts the reward has not been told about yet. Emptied by the reading, once a step. */
+    private final Deque<Resource> unscored = new ArrayDeque<>();
     private final Map<String, byte[]> textures = new ConcurrentHashMap<>();
 
     private CraftLog() {
@@ -71,6 +80,11 @@ public final class CraftLog {
                 recent.removeLast();
             }
         }
+        Resource.of(result).ifPresent(made -> {
+            synchronized (unscored) {
+                unscored.addLast(made);
+            }
+        });
         textures.computeIfAbsent(item, this::loadTexture);
         log.debug("Crafted {} x{}", item, result.getCount());
     }
@@ -81,7 +95,19 @@ public final class CraftLog {
         }
     }
 
+    /** What has been made since this was last asked, and start counting again. */
+    public List<Resource> drainCrafted() {
+        synchronized (unscored) {
+            List<Resource> made = List.copyOf(unscored);
+            unscored.clear();
+            return made;
+        }
+    }
+
     public void clear() {
+        synchronized (unscored) {
+            unscored.clear();
+        }
         synchronized (recent) {
             recent.clear();
         }
@@ -112,7 +138,9 @@ public final class CraftLog {
 
     private byte[] read(String path) {
         try {
-            List<Resource> stack =
+            // The pack's own Resource, spelled out: this file already has one of that name and it is
+            // not this one.
+            List<net.minecraft.server.packs.resources.Resource> stack =
                     Minecraft.getInstance().getResourceManager().getResourceStack(Identifier.parse(path));
             if (stack.isEmpty()) {
                 return new byte[0];

@@ -68,17 +68,18 @@ public final class Progression {
     /**
      * How long an objective may run before the planner is asked whether it is still the right one.
      *
-     * <p>Two minutes. Long enough that an objective which is simply taking a while — crossing a desert to
+     * <p>Five minutes. Long enough that an objective which is simply taking a while — crossing a desert to
      * find trees — is left to get on with it, and short enough that a body which has fallen down a hole is
      * not still down there when the session ends.
      */
-    private static final int REVIEW_AFTER_STEPS = 120;
+    private static final int REVIEW_AFTER_STEPS = 520;
 
     private final ObjectivePlanner planner;
     private final List<Phase> fallback;
     private final List<String> achieved = new ArrayList<>();
 
     private Phase current;
+    private Bounds bounds = Bounds.anywhere();
     private int fallbackIndex;
     private int stepsOnCurrent;
 
@@ -119,6 +120,21 @@ public final class Progression {
         return planner.pending() ? PLANNING : FINISHED;
     }
 
+    /**
+     * The heights the plan says to stay between, or {@link Bounds#anywhere()} when it did not say.
+     *
+     * <p>Set with the objective and cleared with it: a band belongs to a plan, and the band that made
+     * sense while sinking a shaft is nonsense the moment the plan is to find a forest.
+     */
+    public Bounds bounds() {
+        return bounds;
+    }
+
+    /** Which way the run is pulling, in a word, for the tables that only need that much. */
+    public String shape() {
+        return current == null ? "NONE" : current.shape();
+    }
+
     /** Why the run is after this, in a sentence, or empty when nobody said. For the overlay only. */
     public String reason() {
         return current == null ? "" : current.reason();
@@ -139,9 +155,20 @@ public final class Progression {
         return current().flatMap(phase -> phase.toolFor(state)).orElseGet(() -> Tool.bestFor(state));
     }
 
-    /** What the step was worth towards the current objective. */
+    /**
+     * What the step was worth towards the plan: the objective, less whatever being at the wrong height
+     * cost.
+     *
+     * <p>The charge is here rather than among the general objectives because the band is not a general
+     * truth about Minecraft — it is this plan's opinion about where this objective should be pursued, and
+     * it goes away when the plan does.
+     */
     public double score(StepContext context) {
-        return current == null ? 0.0 : current.score(context);
+        double towards = current == null ? 0.0 : current.score(context);
+        if (context.player() == null) {
+            return towards;
+        }
+        return towards + bounds.charge(context.player().getBlockY(), context.steps());
     }
 
     /**
@@ -205,12 +232,13 @@ public final class Progression {
     private void adopt(StepContext context) {
         // Taken before the early return, because an answer may be a review's: the planner was asked about
         // the objective in hand and came back with a different one, and that is meant to take effect.
-        Optional<Phase> planned = planner.take();
+        Optional<Plan> planned = planner.take();
         if (planned.isPresent()) {
             if (current != null) {
-                log.info("Planner swapped {} for {}", current.name(), planned.get().name());
+                log.info("Planner swapped {} for {}", current.name(), planned.get().objective().name());
             }
-            current = planned.get();
+            current = planned.get().objective();
+            bounds = planned.get().bounds();
             stepsOnCurrent = 0;
             return;
         }
@@ -224,6 +252,9 @@ public final class Progression {
         // about waiting for a reply that was never sent.
         if (!planner.pending()) {
             current = fallbackIndex < fallback.size() ? fallback.get(fallbackIndex) : null;
+            // The ladder has no opinion about height: it was written before there was a way to have one,
+            // and inventing a band for it would be charging the body against a rule nobody set.
+            bounds = Bounds.anywhere();
             stepsOnCurrent = 0;
         }
     }

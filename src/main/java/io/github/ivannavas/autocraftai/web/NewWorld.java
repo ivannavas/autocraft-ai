@@ -12,6 +12,7 @@ import java.util.stream.Stream;
 
 import lombok.extern.slf4j.Slf4j;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
+import net.minecraft.client.InactivityFpsLimit;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.world.Difficulty;
@@ -44,13 +45,17 @@ import net.minecraft.world.level.levelgen.presets.WorldPresets;
 @Slf4j
 public final class NewWorld {
 
-    /**
-     * Where the request came from and what it is waiting for.
-     *
-     * @param create false to only leave the world, which is how the run is put down without replacing
-     *               it: the game ends up sitting on its title screen with nothing to decide
-     */
-    private record Request(String name, OptionalLong seed, boolean create,
+    /** What a request is asking for. Every one of them starts by leaving whatever is open. */
+    private enum Mode {
+        /** Delete every saved world and generate a new one. */
+        CREATE,
+        /** Walk back into the world already on disk, losing nothing. */
+        RESUME,
+        /** Leave, and stay out: the game sits on its title screen with nothing to decide. */
+        STOP
+    }
+
+    private record Request(Mode mode, String name, OptionalLong seed,
                            CompletableFuture<String> done) {
     }
 
@@ -102,6 +107,19 @@ public final class NewWorld {
     private Step step = Step.IDLE;
     private int waited;
 
+    /** The world being opened, so the answer names it whether it was made or merely reopened. */
+    private String opening;
+
+    /**
+     * When the run went down, or zero while it is up.
+     *
+     * <p>Reported so something outside can act on how long it has been idle — the box powers itself off
+     * after a while — without having to remember across its own restarts.
+     */
+    private volatile long stoppedAt = System.currentTimeMillis();
+
+    private final Settings settings;
+
     /**
      * Where the intent to stay stopped is written down.
      *
@@ -112,9 +130,16 @@ public final class NewWorld {
      */
     private final Path idleMarker;
 
-    public NewWorld(boolean autoOpen, Path directory) {
-        this.autoOpen = autoOpen;
+    public NewWorld(Settings settings, Path directory) {
+        this.settings = settings;
+        this.autoOpen = settings.autoOpen();
         this.idleMarker = directory.resolve("idle");
+    }
+
+    /** How long the run has been down, in seconds; zero while a world is open. */
+    public long stoppedSeconds() {
+        long since = stoppedAt;
+        return since == 0 ? 0 : Math.max(0, (System.currentTimeMillis() - since) / 1000);
     }
 
     /**
@@ -140,7 +165,20 @@ public final class NewWorld {
      * @return a future carrying the name of the world that came up, or failing with why it did not
      */
     public CompletableFuture<String> request(String name, OptionalLong seed) {
-        return submit(new Request(name, seed, true, new CompletableFuture<>()));
+        return submit(new Request(Mode.CREATE, name, seed, new CompletableFuture<>()));
+    }
+
+    /**
+     * Picks the saved world back up, exactly as it was.
+     *
+     * <p>The counterpart to {@link #stop()}, and the reason it earns its own endpoint: stopping is
+     * meant to be reversible, and until now the only way back into the game deleted the world first.
+     * Nothing here touches the disk.
+     *
+     * @return a future carrying the name of the world that came up, or failing with why it did not
+     */
+    public CompletableFuture<String> resume() {
+        return submit(new Request(Mode.RESUME, "", OptionalLong.empty(), new CompletableFuture<>()));
     }
 
     /**
@@ -153,7 +191,7 @@ public final class NewWorld {
      * @return a future that completes once the game is back at its title screen
      */
     public CompletableFuture<String> stop() {
-        return submit(new Request("", OptionalLong.empty(), false, new CompletableFuture<>()));
+        return submit(new Request(Mode.STOP, "", OptionalLong.empty(), new CompletableFuture<>()));
     }
 
     private CompletableFuture<String> submit(Request request) {
@@ -217,28 +255,34 @@ public final class NewWorld {
     private void begin(Minecraft client) {
         Request request = queued.getAndSet(null);
         if (request == null) {
-            resume(client);
+            reopenOnStartup(client);
             return;
         }
         autoOpenTried = true;
         current = request;
         waited = 0;
         // Asking for a world clears the intent to stay stopped; asking to stop sets it.
-        mark(!request.create());
+        mark(request.mode() == Mode.STOP);
         boolean empty = client.level == null && client.getSingleplayerServer() == null;
         if (empty) {
-            if (!request.create()) {
-                log.info("Stop requested with nothing open; already idle");
-                finish("Already sitting at the menu");
-                return;
+            switch (request.mode()) {
+                case STOP -> {
+                    log.info("Stop requested with nothing open; already idle");
+                    idle(client);
+                    finish("Already sitting at the menu");
+                }
+                case RESUME -> {
+                    log.info("Resume requested with nothing open; reopening the saved world");
+                    open(client);
+                }
+                case CREATE -> {
+                    log.info("New world requested with nothing open; going straight to cleaning up");
+                    step = Step.CLEANING;
+                }
             }
-            log.info("New world requested with nothing open; going straight to cleaning up");
-            step = Step.CLEANING;
             return;
         }
-        log.info(request.create()
-                ? "New world requested; leaving the one that is open"
-                : "Stop requested; leaving the world");
+        log.info("{} requested; leaving the world that is open", request.mode());
         // Saving on the way out of a world that is about to be deleted looks wasteful, and is: this is
         // the call that stops the server cleanly, and a clean stop is what closes the file handles.
         client.disconnectWithSavingScreen();
@@ -256,23 +300,92 @@ public final class NewWorld {
      * world deletes the rest — and picking the newest is the same answer in the case where somebody has
      * left an older one behind.
      */
-    private void resume(Minecraft client) {
+    private void reopenOnStartup(Minecraft client) {
         if (!autoOpen || autoOpenTried || !atTitle || client.level != null) {
             return;
         }
         autoOpenTried = true;
         if (stopped()) {
             log.info("The run was stopped on purpose; leaving the game at its menu");
+            idle(client);
             return;
         }
+        open(client);
+    }
+
+    /**
+     * Opens the world already on disk and waits for a player to be standing in it.
+     *
+     * <p>Only ever the most recently played one. There is normally only one — the endpoint that makes a
+     * world deletes the rest — and picking the newest is the same answer in the case where somebody has
+     * left an older one behind.
+     */
+    private void open(Minecraft client) {
         String level = newest(client.getLevelSource().getBaseDir());
         if (level == null) {
-            log.info("Nothing saved to reopen; waiting for a world to be asked for");
+            if (current != null) {
+                fail(client, "There is no saved world to go back to. Make a new one instead.");
+            } else {
+                log.info("Nothing saved to reopen; waiting for a world to be asked for");
+            }
             return;
         }
-        log.info("Reopening the saved world '{}'", level);
+        log.info("Opening the saved world '{}'", level);
+        opening = level;
+        waited = 0;
+        step = Step.CREATING;
         client.createWorldOpenFlows().openWorld(level, () -> {
         });
+    }
+
+    /**
+     * Slows the game right down while there is nothing to watch.
+     *
+     * <p>The title screen is an animated panorama, and left alone it renders as fast as the frame limit
+     * allows — forever. On a small fanless box that is thirty per cent of a core, plus what OBS spends
+     * compositing it and X spends putting it on screen, and it is audible: measured, the host ran
+     * fourteen degrees hotter idling at this menu than with the machine switched off. Nothing is
+     * watching a menu, so it does not need sixty frames a second.
+     *
+     * <p>This is the option a player would set, not a private override, so the game's own limiter keeps
+     * working normally on top of it.
+     */
+    private void idle(Minecraft client) {
+        stoppedAt = System.currentTimeMillis();
+        limit(client, settings.gameIdleFps(), InactivityFpsLimit.AFK);
+    }
+
+    /** Back to the frame rate the stream is worth capturing at. */
+    private void playing(Minecraft client) {
+        stoppedAt = 0;
+        limit(client, settings.gameFps(), InactivityFpsLimit.MINIMIZED);
+    }
+
+    /**
+     * Sets the frame rate, and — the part that actually does the work — which idleness the game is
+     * allowed to throttle for.
+     *
+     * <p>The frame limit alone is not enough: the title screen has a throttle of its own that ignores a
+     * lower setting, so a stopped run sat there rendering its panorama at sixty. The game's own
+     * inactivity limiter is what brings that down, and it wants opposite answers in the two states.
+     * {@code AFK} throttles after a minute without keyboard or mouse — correct at a menu nobody is
+     * touching, and wrong while playing, because the run is driven from code and never produces an
+     * input event, so it would be permanently "away" and stream at ten frames a second.
+     * {@code MINIMIZED} only throttles a window that has been minimised, which never happens on a box
+     * with no one at it.
+     *
+     * <p>Which is why the two are switched with the run rather than configured once: the setting that
+     * makes the machine quiet at the menu is the same setting that ruins the broadcast.
+     */
+    private void limit(Minecraft client, int fps, InactivityFpsLimit inactivity) {
+        if (client.options.framerateLimit().get() != fps) {
+            log.info("Frame limit -> {} fps", fps);
+            client.options.framerateLimit().set(fps);
+        }
+        if (client.options.inactivityFpsLimit().get() != inactivity) {
+            log.info("Throttle when {} ", inactivity);
+            client.options.inactivityFpsLimit().set(inactivity);
+        }
     }
 
     /** @return the directory name of the most recently touched saved world, or null if there is none */
@@ -311,12 +424,15 @@ public final class NewWorld {
             // the client reports itself out of the world, while the screen still says it is saving.
             // That reads as a hung save rather than as a finished one, and it is what goes out on air.
             client.setScreenAndShow(new TitleScreen());
-            if (!current.create()) {
-                log.info("Stopped; the game is at its menu with nothing to decide");
-                finish("Stopped — Minecraft is sitting at the menu");
-                return;
+            switch (current.mode()) {
+                case STOP -> {
+                    log.info("Stopped; the game is at its menu with nothing to decide");
+                    idle(client);
+                    finish("Stopped — Minecraft is sitting at the menu");
+                }
+                case RESUME -> open(client);
+                case CREATE -> step = Step.CLEANING;
             }
-            step = Step.CLEANING;
             return;
         }
         if (++waited > LEAVE_TIMEOUT) {
@@ -393,6 +509,7 @@ public final class NewWorld {
         WorldOptions options = current.seed().isPresent()
                 ? new WorldOptions(current.seed().getAsLong(), true, false)
                 : WorldOptions.defaultWithRandomSeed();
+        opening = null;
         try {
             // The directory id is fixed rather than derived from the name: everything else was just
             // deleted, so there is nothing to collide with, and a stable folder is one less thing that
@@ -415,10 +532,11 @@ public final class NewWorld {
      */
     private void creating(Minecraft client) {
         if (client.player != null && client.level != null) {
-            log.info("New world '{}' is up", current.name());
-            current.done().complete(current.name());
-            current = null;
-            step = Step.IDLE;
+            String name = opening == null ? current.name() : opening;
+            log.info("'{}' is up", name);
+            playing(client);
+            opening = null;
+            finish(name);
             return;
         }
         if (++waited > CREATE_TIMEOUT) {

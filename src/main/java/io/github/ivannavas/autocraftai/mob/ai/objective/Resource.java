@@ -1,6 +1,8 @@
 package io.github.ivannavas.autocraftai.mob.ai.objective;
 
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Predicate;
 
 import net.minecraft.core.component.DataComponents;
@@ -67,6 +69,50 @@ public enum Resource {
     /** Enough that hunting another animal is not worth the time. Two full meals in hand. */
     public static final int ENOUGH_FOOD = 8;
 
+    /**
+     * What each craftable is made of, one step back.
+     *
+     * <p>Written out rather than read off the recipe book, and for the same reason the rest of the
+     * vocabulary is: this is the shape of the plan, not the shape of Minecraft. It is the same five lines
+     * the planner's brief already states in prose, and having them here as well is what lets the run tell
+     * a craft that is on the way to the objective from one that is a detour away from it.
+     */
+    private static final Map<Resource, Set<Resource>> MADE_FROM = Map.of(
+            PLANKS, Set.of(LOG),
+            STICK, Set.of(PLANKS),
+            CRAFTING_TABLE, Set.of(PLANKS),
+            SWORD, Set.of(PLANKS, STICK),
+            PICKAXE, Set.of(PLANKS, STICK));
+
+    /**
+     * Whether having this is a step towards having {@code target} — the thing itself, or something it is
+     * made of, however many crafts down the chain.
+     *
+     * <p>A log contributes to a pickaxe: log to planks to sticks to pickaxe. A sword does not contribute
+     * to anything, which is exactly what makes making one a detour when the plan wanted a pickaxe.
+     */
+    public boolean contributesTo(Resource target) {
+        if (this == target) {
+            return true;
+        }
+        for (Resource ingredient : MADE_FROM.getOrDefault(target, Set.of())) {
+            if (contributesTo(ingredient)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The resource a stack counts as, or empty when it is not one the run has a name for. */
+    public static Optional<Resource> of(ItemStack stack) {
+        for (Resource resource : values()) {
+            if (resource.matches(stack)) {
+                return Optional.of(resource);
+            }
+        }
+        return Optional.empty();
+    }
+
     private final Predicate<ItemStack> test;
     private final double worth;
     private final Predicate<BlockState> inWorld;
@@ -93,6 +139,26 @@ public enum Resource {
      */
     public Optional<Predicate<BlockState>> inWorld() {
         return Optional.ofNullable(inWorld);
+    }
+
+    /**
+     * The resource a block yields, or empty when no resource is made of it.
+     *
+     * <p>The inverse of {@link #inWorld()}, and it exists because the planner keeps reaching for it. Asked
+     * for a target it sometimes answers with a block id — {@code minecraft:oak_log} where {@code LOG} was
+     * wanted — and that is a reasonable thing to say about a resource that is dug out of the ground. The
+     * run already knows oak logs are what {@code LOG} looks like out there, so it can take the answer
+     * rather than throw it away over a vocabulary the model got half right.
+     *
+     * <p>Read off the same predicate the eyes use, so the two can never disagree about what a block is.
+     */
+    public static Optional<Resource> yieldedBy(BlockState state) {
+        for (Resource resource : values()) {
+            if (resource.inWorld != null && resource.inWorld.test(state)) {
+                return Optional.of(resource);
+            }
+        }
+        return Optional.empty();
     }
 
     /** How many of this the inventory holds, counting stack sizes rather than slots. */

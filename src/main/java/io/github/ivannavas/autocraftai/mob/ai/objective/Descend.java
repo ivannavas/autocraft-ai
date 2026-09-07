@@ -26,6 +26,11 @@ public record Descend(int level, String reason) implements Phase {
     }
 
     @Override
+    public String shape() {
+        return "DOWN";
+    }
+
+    @Override
     public String name() {
         return "DIG_TO_" + level;
     }

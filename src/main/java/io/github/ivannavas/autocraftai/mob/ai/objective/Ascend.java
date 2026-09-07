@@ -28,6 +28,11 @@ public record Ascend(int level, String reason) implements Phase {
     }
 
     @Override
+    public String shape() {
+        return "UP";
+    }
+
+    @Override
     public String name() {
         return "CLIMB_TO_" + level;
     }

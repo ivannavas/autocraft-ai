@@ -121,6 +121,7 @@ public final class Control {
                 case QTableServer.BASE + "status" -> require(exchange, method, "GET", this::status);
                 case QTableServer.BASE + "learning/reset" -> require(exchange, method, "POST", this::resetLearning);
                 case QTableServer.BASE + "world/new" -> require(exchange, method, "POST", this::startWorld);
+                case QTableServer.BASE + "world/resume" -> require(exchange, method, "POST", this::resumeWorld);
                 case QTableServer.BASE + "stop" -> require(exchange, method, "POST", this::stopEverything);
                 case QTableServer.BASE + "stream/scene" -> require(exchange, method, "POST", this::stageScene);
                 case QTableServer.BASE + "stream/start" -> require(exchange, method, "POST", this::startStream);
@@ -190,6 +191,9 @@ public final class Control {
                 + ",\"worldBusy\":" + newWorld.busy()
                 // Whether the run is down because it was told to, rather than because something broke.
                 + ",\"stopped\":" + newWorld.stopped()
+                // How long it has been down, so the box can decide it has been long enough to switch
+                // itself off. Kept here rather than in the shutdown script so there is one clock.
+                + ",\"stoppedSeconds\":" + newWorld.stoppedSeconds()
                 // The game's own frame rate. The question "why does it look slow" has two possible
                 // answers and this is the one the panel cannot work out for itself.
                 + ",\"fps\":" + client.getFps()
@@ -243,6 +247,29 @@ public final class Control {
                     + ",\"poll\":\"" + QTableServer.BASE + "status\"}");
         } catch (ExecutionException e) {
             // The common one is "already busy", which is the caller's mistake rather than the server's.
+            String why = String.valueOf(e.getCause().getMessage());
+            reply(exchange, why.contains("already") ? 409 : 500, error(why));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            reply(exchange, 500, error("Interrupted"));
+        }
+    }
+
+    /**
+     * Goes back into the world that is already saved.
+     *
+     * <p>The way back from {@code /stop}, and the reason it is not just {@code /world/new}: that one
+     * deletes every save before it makes anything, so until now "carry on where it left off" and "throw
+     * away the run" were the same button.
+     */
+    private void resumeWorld(HttpExchange exchange) throws IOException {
+        try {
+            String opened = newWorld.resume().get(GRACE_SECONDS, TimeUnit.SECONDS);
+            reply(exchange, 200, "{\"ok\":true,\"message\":" + quote("Back in '" + opened + "'") + "}");
+        } catch (TimeoutException e) {
+            reply(exchange, 202, "{\"ok\":true,\"message\":\"Loading the saved world\""
+                    + ",\"poll\":\"" + QTableServer.BASE + "status\"}");
+        } catch (ExecutionException e) {
             String why = String.valueOf(e.getCause().getMessage());
             reply(exchange, why.contains("already") ? 409 : 500, error(why));
         } catch (InterruptedException e) {

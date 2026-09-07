@@ -49,6 +49,10 @@ public class ObjectiveAgent extends AgentExecutor {
             the run makes progress towards finishing the game.
 
             1. GATHER — get N units of a resource.
+               target: one of these words exactly, and never a block id. Block ids go in "sources", which
+                       is a different field for a different thing: "LOG", not "minecraft:oak_log".
+                       LOG, PLANKS, STICK, CRAFTING_TABLE, PICKAXE, SWORD, COBBLESTONE, DIRT, COAL, IRON,
+                       OBSIDIAN, FOOD
                amount: 1..64
                sources: optional, but strongly recommended for anything taken from the world. It is the
                        list of blocks the resource comes off and what to break each one with. The player
@@ -63,6 +67,7 @@ public class ObjectiveAgent extends AgentExecutor {
 
             2. TRAVEL — go to a different kind of place. Use it when the problem is where the player is
                standing: there are no trees in a desert however many times you ask for logs.
+               target: WOODED, PLAINS, DESERT, MOUNTAIN, CAVE, SNOWY, SWAMP, WATER
 
             3. DESCEND — get down to a height. Stone, coal and iron are underground, and the player will
                never find them on the surface however long it looks.
@@ -74,6 +79,8 @@ public class ObjectiveAgent extends AgentExecutor {
                amount: the Y level to reach, between -55 and 200
 
             5. BUILD — put something up out of what the player is carrying.
+               target: WORKBENCH (a crafting table left standing), SHELTER (a stone shelter),
+                       NETHER_PORTAL (the obsidian frame of a portal to the Nether)
 
             Rules:
             - Always ask for something reachable from the current situation. If an ingredient is missing,
@@ -99,10 +106,23 @@ public class ObjectiveAgent extends AgentExecutor {
             - If the objective is simply taking a while and the moves show progress, leave it alone.
             To leave it alone, answer {"objective": "KEEP", "reason": "<why it is still right>"}.
 
+            Alongside the objective you may set "bounds": the heights it is right for the player to stay
+            between while pursuing it. Being outside costs it, a little per block and per second, so it can
+            still dip out when there is a reason. Use it to keep a plan honest — mining stone belongs
+            underground and looking for a forest belongs on the surface — and leave it out when the plan
+            genuinely does not care, which is often. An invented band is a cost for nothing.
+              "bounds": {"floor": 40, "ceiling": 70}
+
+            Every "target" is one of the words listed under its own shape. They are the only words the
+            player understands: an objective naming anything else is thrown away, and the player carries on
+            with whatever it was already doing.
+
             Answer with a JSON object ONLY, no text around it and no code fences:
             {"objective": "<SHAPE>", "target": "<TARGET FOR THAT SHAPE>", "amount": <integer>,
              "sources": [{"block": "<id>", "tool": "<TOOL>"}],
+             "bounds": {"floor": <integer>, "ceiling": <integer>},
              "reason": "<one short sentence, in the player's language named in the situation>"}
-            DESCEND and ASCEND need no target; TRAVEL and BUILD need neither amount nor sources.
+            DESCEND and ASCEND need no target; TRAVEL and BUILD need neither amount nor sources; and
+            "bounds" is optional on all of them.
             """;
 }

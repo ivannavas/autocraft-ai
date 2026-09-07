@@ -31,8 +31,8 @@ public enum GoalAction {
 
     WANDER {
         @Override
-        public MobGoal create(ActionContext context) {
-            return new RandomStrollGoal();
+        public MobGoal create(ActionContext context, Aim aim) {
+            return new RandomStrollGoal(1.0F, aim.heading());
         }
 
         @Override
@@ -44,11 +44,16 @@ public enum GoalAction {
         public boolean usesSighting() {
             return false;
         }
+
+        @Override
+        public boolean usesGround() {
+            return true;
+        }
     },
 
     APPROACH {
         @Override
-        public MobGoal create(ActionContext context) {
+        public MobGoal create(ActionContext context, Aim aim) {
             return new ApproachSightingGoal(context.sighting());
         }
     },
@@ -56,7 +61,7 @@ public enum GoalAction {
     /** Only against something that can follow you. Running away from a log is not a strategy. */
     FLEE {
         @Override
-        public MobGoal create(ActionContext context) {
+        public MobGoal create(ActionContext context, Aim aim) {
             return new FleeSightingGoal(context.sighting());
         }
 
@@ -68,7 +73,7 @@ public enum GoalAction {
 
     WATCH {
         @Override
-        public MobGoal create(ActionContext context) {
+        public MobGoal create(ActionContext context, Aim aim) {
             return new WatchSightingGoal(context.sighting());
         }
     },
@@ -76,21 +81,35 @@ public enum GoalAction {
     /** Only ever legal against a block: there is nothing to break about a cow. */
     MINE {
         @Override
-        public MobGoal create(ActionContext context) {
-            return new MineSightingGoal(context.sighting(), context.tool());
+        public MobGoal create(ActionContext context, Aim aim) {
+            // The spot is where the placement table said to swing. Without one — nothing legal, or a
+            // rescue that already knows the block it means — the block in view is what gets hit.
+            Sighting at = aim.spot() == null
+                    ? context.sighting() : Sighting.ofBlock(FocusKind.BLOCK, aim.spot());
+            return new MineSightingGoal(at, context.tool());
         }
 
         @Override
         public boolean isApplicable(ActionContext context) {
             return context.sighting().isBlock();
         }
+
+        @Override
+        public boolean usesSpot() {
+            return true;
+        }
     },
 
-    /** Build a step up. Legal whenever the body has something to put down, walled in or not. */
+    /**
+     * Put a block down. Legal whenever the body has something to put down, walled in or not.
+     *
+     * <p>Where it goes is the placement table's call: under the feet to climb out of a hole, across a gap
+     * to bridge it, over the head for a roof. With nothing chosen it pillars, which is what it always did.
+     */
     PLACE {
         @Override
-        public MobGoal create(ActionContext context) {
-            return new PlaceBlockGoal();
+        public MobGoal create(ActionContext context, Aim aim) {
+            return new PlaceBlockGoal(aim.spot());
         }
 
         @Override
@@ -102,6 +121,11 @@ public enum GoalAction {
         public boolean usesSighting() {
             return false;
         }
+
+        @Override
+        public boolean usesSpot() {
+            return true;
+        }
     },
 
     /**
@@ -110,8 +134,8 @@ public enum GoalAction {
      */
     TRAVEL {
         @Override
-        public MobGoal create(ActionContext context) {
-            return new TravelGoal();
+        public MobGoal create(ActionContext context, Aim aim) {
+            return new TravelGoal(aim.heading());
         }
 
         @Override
@@ -123,6 +147,11 @@ public enum GoalAction {
         public boolean usesSighting() {
             return false;
         }
+
+        @Override
+        public boolean usesGround() {
+            return true;
+        }
     },
 
     /**
@@ -131,7 +160,7 @@ public enum GoalAction {
      */
     DIG_DOWN {
         @Override
-        public MobGoal create(ActionContext context) {
+        public MobGoal create(ActionContext context, Aim aim) {
             return new DigDownGoal();
         }
 
@@ -157,7 +186,7 @@ public enum GoalAction {
      */
     ATTACK {
         @Override
-        public MobGoal create(ActionContext context) {
+        public MobGoal create(ActionContext context, Aim aim) {
             return new AttackSightingGoal(context.sighting());
         }
 
@@ -176,7 +205,7 @@ public enum GoalAction {
      */
     EAT {
         @Override
-        public MobGoal create(ActionContext context) {
+        public MobGoal create(ActionContext context, Aim aim) {
             return new EatGoal();
         }
 
@@ -191,7 +220,28 @@ public enum GoalAction {
         }
     };
 
-    public abstract MobGoal create(ActionContext context);
+    /**
+     * Builds the goal that carries this move out.
+     *
+     * @param aim where a block-acting move should act and which way a travelling one should go
+     */
+    public abstract MobGoal create(ActionContext context, Aim aim);
+
+    /**
+     * Whether this move acts on a particular block, and so has a second decision behind it: not only
+     * whether to mine or build but where. See {@link io.github.ivannavas.autocraftai.mob.ai.Spot}.
+     */
+    public boolean usesSpot() {
+        return false;
+    }
+
+    /**
+     * Whether this move takes the body somewhere, and so has a second decision behind it: not only
+     * whether to walk but which way. See {@link Ground}.
+     */
+    public boolean usesGround() {
+        return false;
+    }
 
     /** Whether the action means anything given what is in view and what the run is after. */
     public boolean isApplicable(ActionContext context) {

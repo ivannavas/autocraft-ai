@@ -42,27 +42,61 @@ public record Gather(Resource resource, int amount, List<Source> sources, String
     }
 
     @Override
+    public String shape() {
+        return "GET";
+    }
+
+    @Override
     public String name() {
         return "GET_" + amount + "_" + resource.name();
     }
 
     /**
-     * Reached once the run has held this much at any point, not only while it still is.
+     * Reached when the body is holding this much. Not when it once did.
      *
-     * <p>Measuring the bag as it stands made the first objective unreachable in practice: the crafting
-     * table turns logs into planks as soon as it can, so the log count never got to three at once and
-     * everything downstream stayed frozen behind it — a body with a sword and a crafting table still being
-     * told to go and find wood.
+     * <p>This used to be a running total of everything the run had ever picked up, because measuring the
+     * bag made the objective unreachable: the crafting table turned logs into planks as fast as they were
+     * cut, so three logs were never in hand at once. That fixed the symptom and kept the nonsense — an
+     * objective that reports success over resources that have already been spent has not been met, it has
+     * been accounted around. What the plan wanted was three logs, and the run does not have three logs.
+     *
+     * <p>What makes holding them achievable is the other half of this class: {@link #score} now charges
+     * for the objective's resource leaving the bag, so a craft that eats what the plan is after is a move
+     * the crafting table can learn not to make. The running total is still kept and still shown to the
+     * planner, because "has had thirty logs and holds none" is worth knowing — it is simply not the same
+     * thing as being done.
      */
     @Override
     public boolean isComplete(StepContext context) {
-        return context.obtained().count(resource) >= amount;
+        return context.after().count(resource) >= amount;
     }
 
-    /** Paid per unit picked up, so the objective pays on the way and not only at the end. */
+    /**
+     * Two terms: net progress towards the thing, less whatever was made that the plan has no use for.
+     *
+     * <p>The first is symmetric. What turned up pays and what left costs, at the same rate, because a log
+     * that leaves the bag is a log the objective no longer has. There is no extra sting on the leaving:
+     * the time it took is already charged by the standing cost of a decision, and pricing the undoing
+     * above the doing would be a number picked to make a point.
+     *
+     * <p>The second is about the craft itself. Making something this plan cannot use costs what it was
+     * worth making — a sword is ten points of work that leaves the run no nearer a pickaxe. Planks on the
+     * way to a pickaxe cost nothing, because planks are what a pickaxe is made of; see
+     * {@link Resource#contributesTo}.
+     *
+     * <p>Both can land on one craft, and when they do the craft is worth less than not bothering. Turning
+     * a log into planks while the plan wants logs loses the log (four) and gains planks the plan cannot
+     * use (two): six against the four that cutting the log paid, so the whole round trip is a loss. That
+     * is the point — it was not a neutral detour, it undid the work.
+     */
     @Override
     public double score(StepContext context) {
-        return context.gained(resource) * resource.worth();
+        double towards = context.netChange(resource) * resource.worth();
+        double astray = context.crafted().stream()
+                .filter(made -> !made.contributesTo(resource))
+                .mapToDouble(Resource::worth)
+                .sum();
+        return towards - astray;
     }
 
     /** Whichever blocks the planner named, or failing that whatever the resource looks like in the world. */

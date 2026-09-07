@@ -30,6 +30,17 @@ public interface Phase extends Objective {
     boolean isComplete(StepContext context);
 
     /**
+     * A word for the direction this objective pulls in: {@code GET}, {@code GO}, {@code DOWN}, {@code UP},
+     * {@code BUILD}.
+     *
+     * <p>Coarser than the name on purpose. The placement table needs to know whether the run is trying to
+     * climb or to sink, because that is what decides whether the block worth breaking is the one above the
+     * wall or the one under the feet — and it needs that in a handful of values rather than in the hundreds
+     * that {@link #name()} can take.
+     */
+    String shape();
+
+    /**
      * The kind of block worth noticing while this objective is current, if any. An objective spent at a
      * crafting grid, or one that is about being somewhere rather than having something, wants nothing from
      * the landscape and returns empty.

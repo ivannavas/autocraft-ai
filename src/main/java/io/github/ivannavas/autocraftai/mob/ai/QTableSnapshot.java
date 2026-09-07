@@ -29,7 +29,11 @@ public record QTableSnapshot(
         List<String> interruptActions,
         List<Row> interruptRows,
         List<CraftLog.Craft> crafts,
-        List<PlannerLog.Entry> planner) {
+        List<PlannerLog.Entry> planner,
+        List<String> placementActions,
+        List<Row> placementRows,
+        List<String> positionActions,
+        List<Row> positionRows) {
 
     public QTableSnapshot {
         actions = List.copyOf(actions);
@@ -40,6 +44,10 @@ public record QTableSnapshot(
         interruptRows = List.copyOf(interruptRows);
         crafts = List.copyOf(crafts);
         planner = List.copyOf(planner);
+        placementActions = List.copyOf(placementActions);
+        placementRows = List.copyOf(placementRows);
+        positionActions = List.copyOf(positionActions);
+        positionRows = List.copyOf(positionRows);
     }
 
     /** One state and what it believes each action is worth. */
@@ -51,6 +59,7 @@ public record QTableSnapshot(
 
     public static QTableSnapshot empty(List<String> actions) {
         return new QTableSnapshot(actions, List.of(), 0.0, 0L, "-", "", null, null, null, null, 0L,
-                List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of());
     }
 }

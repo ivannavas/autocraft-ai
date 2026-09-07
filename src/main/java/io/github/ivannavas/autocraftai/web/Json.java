@@ -50,6 +50,10 @@ final class Json {
         out.append("\"planner\":").append(planner(snapshot)).append(',');
         out.append("\"craftActions\":").append(strings(snapshot.craftActions())).append(',');
         out.append("\"craftRows\":").append(rows(snapshot.craftRows())).append(',');
+        out.append("\"positionActions\":").append(strings(snapshot.positionActions())).append(',');
+        out.append("\"positionRows\":").append(rows(snapshot.positionRows())).append(',');
+        out.append("\"placementActions\":").append(strings(snapshot.placementActions())).append(',');
+        out.append("\"placementRows\":").append(rows(snapshot.placementRows())).append(',');
         out.append("\"interruptActions\":").append(strings(snapshot.interruptActions())).append(',');
         out.append("\"interruptRows\":").append(rows(snapshot.interruptRows())).append(',');
         out.append("\"rows\":").append(rows(snapshot));

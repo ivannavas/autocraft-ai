@@ -22,8 +22,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Ascend;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Build;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Descend;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Bounds;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Gather;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Phase;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Plan;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Source;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Structure;
@@ -91,7 +93,7 @@ public final class ClaudePlanner implements ObjectivePlanner {
         return worker;
     });
 
-    private final AtomicReference<Phase> answer = new AtomicReference<>();
+    private final AtomicReference<Plan> answer = new AtomicReference<>();
     private final AtomicBoolean asking = new AtomicBoolean();
     private final AtomicLong silentUntil = new AtomicLong();
 
@@ -169,9 +171,11 @@ public final class ClaudePlanner implements ObjectivePlanner {
             String reply = agent.execute(CONVERSATION, prompt).response();
             Optional<Phase> errand = parse(reply);
             if (errand.isPresent()) {
-                log.info("Next objective: {} - {}", errand.get(), errand.get().reason());
-                PlannerLog.get().answered(errand.get().name(), errand.get().reason(), reply);
-                answer.set(errand.get());
+                Bounds band = bounds(reply);
+                log.info("Next objective: {} ({}) - {}", errand.get(), band, errand.get().reason());
+                PlannerLog.get().answered(errand.get().name(),
+                        band.bind() ? errand.get().reason() + " · " + band : errand.get().reason(), reply);
+                answer.set(new Plan(errand.get(), band));
                 return;
             }
             // Nothing to take, but for two very different reasons, and only one of them is a problem.
@@ -180,8 +184,14 @@ public final class ClaudePlanner implements ObjectivePlanner {
                 PlannerLog.get().kept(reasonIn(reply), reply);
                 return;
             }
-            log.warn("The planner answered something that is not an objective: {}", shorten(reply));
-            PlannerLog.get().failed("not an objective", shorten(reply));
+            // Naming what was wrong with it, because "not an objective" over a hundred characters of
+            // JSON is a puzzle and the shape and the target are almost always where it went astray.
+            String said = object(reply)
+                    .map(node -> node.path("objective").asText("?") + " / " + node.path("target").asText("?"))
+                    .orElse("no JSON");
+            log.warn("The planner answered something that is not an objective ({}): {}",
+                    said, shorten(reply));
+            PlannerLog.get().failed("not an objective: " + said, shorten(reply));
             rest();
         } catch (RuntimeException e) {
             // The message can carry the API's own error body, which is worth seeing; the key is not in it.
@@ -196,6 +206,20 @@ public final class ClaudePlanner implements ObjectivePlanner {
         return object(reply)
                 .map(node -> KEEP.equalsIgnoreCase(node.path("objective").asText("").strip()))
                 .orElse(false);
+    }
+
+    /**
+     * The heights the reply says to stay between, or no opinion when it did not say.
+     *
+     * <p>Optional on purpose. A plan that does not care where the body is should not have a band invented
+     * for it, and a missing field is the planner saying exactly that.
+     */
+    private Bounds bounds(String reply) {
+        return object(reply)
+                .map(node -> node.path("bounds"))
+                .filter(node -> node.has("floor") && node.has("ceiling"))
+                .map(node -> new Bounds(node.path("floor").asInt(), node.path("ceiling").asInt()))
+                .orElseGet(Bounds::anywhere);
     }
 
     /** The sentence that came with a reply, for the overlay. Empty when there was none. */
@@ -228,7 +252,7 @@ public final class ClaudePlanner implements ObjectivePlanner {
         int amount = node.path("amount").asInt(1);
         String reason = node.path("reason").asText("");
         return switch (node.path("objective").asText("").strip().toUpperCase(Locale.ROOT)) {
-            case "GATHER" -> named(Resource.class, target)
+            case "GATHER" -> resource(target)
                     .map(r -> new Gather(r, amount, sources(node.path("sources")), reason));
             case "TRAVEL" -> named(Terrain.class, target).map(t -> new Travel(t, reason));
             case "DESCEND" -> Optional.of(new Descend(amount, reason));
@@ -272,6 +296,26 @@ public final class ClaudePlanner implements ObjectivePlanner {
         return found;
     }
 
+    /**
+     * The resource a target names, whichever way it names it.
+     *
+     * <p>{@code LOG} is what the brief asks for and what it usually gets. {@code minecraft:oak_log} is
+     * what it gets often enough to be worth handling: the model reaches for the block id it just listed
+     * under {@code sources}, which is the same confusion a person would make and a perfectly good answer
+     * to "what am I after". Rather than lose the objective over it, the block is looked up and the
+     * resource it yields is taken — {@code stone} means cobblestone, {@code oak_log} means wood.
+     *
+     * <p>Anything that is neither is still nothing, which is the point of having a vocabulary at all.
+     */
+    private static Optional<Resource> resource(String target) {
+        Optional<Resource> named = named(Resource.class, target);
+        if (named.isPresent()) {
+            return named;
+        }
+        return Source.of(target, Tool.HAND)
+                .flatMap(source -> Resource.yieldedBy(source.block().defaultBlockState()));
+    }
+
     /** The constant of that enum with this name, ignoring case and surrounding space, or empty. */
     private static <E extends Enum<E>> Optional<E> named(Class<E> type, String name) {
         if (name == null) {
@@ -292,7 +336,7 @@ public final class ClaudePlanner implements ObjectivePlanner {
     }
 
     @Override
-    public Optional<Phase> take() {
+    public Optional<Plan> take() {
         return Optional.ofNullable(answer.getAndSet(null));
     }
 

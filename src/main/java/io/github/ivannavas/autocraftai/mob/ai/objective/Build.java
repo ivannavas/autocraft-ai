@@ -27,6 +27,11 @@ public record Build(Structure structure, String reason) implements Phase {
     }
 
     @Override
+    public String shape() {
+        return "BUILD";
+    }
+
+    @Override
     public String name() {
         return "BUILD_" + structure.name();
     }

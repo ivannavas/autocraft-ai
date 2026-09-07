@@ -60,6 +60,11 @@ public enum Rung implements Phase {
     }
 
     @Override
+    public String shape() {
+        return gather.shape();
+    }
+
+    @Override
     public boolean isComplete(StepContext context) {
         return gather.isComplete(context);
     }

@@ -42,7 +42,7 @@ public class AutocraftAiClient implements ClientModInitializer {
 
         // Making a world is several ticks of work — leave, delete, generate — so it rides the client
         // tick like the brain does rather than blocking whichever request handler asked for it.
-        NewWorld newWorld = new NewWorld(settings.autoOpen(), storage);
+        NewWorld newWorld = new NewWorld(settings, storage);
         newWorld.install();
         ClientTickEvents.START_CLIENT_TICK.register(newWorld::tick);
 

@@ -3,7 +3,7 @@ package io.github.ivannavas.autocraftai.mob.ai.objective.planner;
 import java.util.Optional;
 import java.util.function.Supplier;
 
-import io.github.ivannavas.autocraftai.mob.ai.objective.Phase;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Plan;
 
 /**
  * Whatever decides what the run should go after next.
@@ -28,7 +28,7 @@ public interface ObjectivePlanner {
     void consider(Supplier<Situation> situation);
 
     /** The answer to the last request, if one has arrived. Handed over once and then forgotten. */
-    Optional<Phase> take();
+    Optional<Plan> take();
 
     /** Whether an answer is still expected, so a caller can tell "not yet" from "never". */
     boolean pending();
@@ -45,7 +45,7 @@ public interface ObjectivePlanner {
             }
 
             @Override
-            public Optional<Phase> take() {
+            public Optional<Plan> take() {
                 return Optional.empty();
             }
 

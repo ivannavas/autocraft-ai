@@ -550,6 +550,22 @@
   </section>
 
   <section class="block">
+    <div class="section-label" id="t-position">Which way to go</div>
+    <table>
+      <thead><tr id="ground-header"></tr></thead>
+      <tbody id="ground-rows"></tbody>
+    </table>
+  </section>
+
+  <section class="block">
+    <div class="section-label" id="t-placement">Where to dig and build</div>
+    <table>
+      <thead><tr id="spot-header"></tr></thead>
+      <tbody id="spot-rows"></tbody>
+    </table>
+  </section>
+
+  <section class="block">
     <div class="section-label" id="t-planner">The planner</div>
     <div class="talk" id="planner"></div>
   </section>
@@ -596,6 +612,8 @@
   const MAX_INTERRUPT_ROWS = 5;
   /** The crafting table has few situations worth showing: it is a side activity, not the main story. */
   const MAX_CRAFT_ROWS = 6;
+  /** Where to dig is a narrow question, and its states are few enough that a handful covers the run. */
+  const MAX_PLACEMENT_ROWS = 6;
   const GIGABYTE = 1024 ** 3;
   // Where a heap stops being roomy and starts being the reason the game stutters.
   const HEAP_HOT = 0.9;
@@ -618,12 +636,20 @@
       "objective": "Objective", "doing": "Now", "making": "Crafting",
       "goals": "What to do", "crafts": "What to make meanwhile",
       "interrupts": "When it gets stuck", "interrupts.suffix": "times reconsidered",
-      "planner": "The planner",
+      "planner": "The planner", "placement": "Where to dig and build",
+      "position": "Which way to go",
       "head.situation": "Situation", "head.craft": "Objective and bag", "head.stuck": "Stuck on",
+      "head.placement": "Doing what, going where",
+      "head.position": "Going where, been where",
+      "band.IN": "in its band", "band.BELOW": "below its band", "band.ABOVE": "above its band",
+      "band.ANY": "no band set",
+      "trail.FRESH": "new ground", "trail.CIRCLING": "going in circles", "trail.PINNED": "not moving",
       "empty.goals": "Nothing learned yet — join a world.",
       "empty.crafts": "nothing to make so far",
       "empty.interrupts": "not stuck yet",
       "empty.planner": "it has not been asked anything yet",
+      "empty.placement": "it has not dug or built anywhere yet",
+      "empty.position": "it has not been anywhere yet",
       "ago": "%s ago",
       "machine": "Machine", "cpu": "CPU", "memory": "Memory",
       "key.worse": "worse", "key.better": "better", "key.bar": "the bar is how much",
@@ -639,6 +665,8 @@
       "shape.gather": "get %1$s %2$s", "shape.travel": "go to %s",
       "shape.descend": "dig down to height %s", "shape.ascend": "climb to height %s",
       "shape.build": "build %s",
+      "going.GET": "fetching", "going.GO": "travelling", "going.DOWN": "heading down",
+      "going.UP": "heading up", "going.BUILD": "building", "going.NONE": "no objective",
       "tip.cpu": "The game is using %s %% of the CPU",
       "tip.cpu.machine": "the whole machine, %s %%",
       "tip.memory": "The game has %1$s GB of memory and is using %2$s GB",
@@ -676,6 +704,15 @@
     },
     planner: {
       ASKED: "asked", ANSWERED: "answered", KEPT: "kept the objective", FAILED: "no answer",
+    },
+    spot: {
+      AT_SIGHT: "the block in view", ABOVE_SIGHT: "one above it", BELOW_SIGHT: "one below it",
+      UNDER_FOOT: "under its feet", AT_FEET: "where it stands", OVERHEAD: "over its head",
+      AHEAD: "a step ahead",
+    },
+    ground: {
+      STAY: "wherever", ONWARD: "straight on", FRESH: "somewhere new",
+      BACK: "back the way it came", LEFT: "left", RIGHT: "right",
     },
     objective: {
       GATHER_LOGS: "get wood", GET_PLANKS: "get planks",
@@ -752,7 +789,7 @@
       "t-objective": "objective", "t-doing": "doing", "t-making": "making",
       "t-goals": "goals", "t-crafts": "crafts",
       "t-interrupts": "interrupts", "t-interrupts-suffix": "interrupts.suffix",
-      "t-planner": "planner",
+      "t-planner": "planner", "t-placement": "placement", "t-position": "position",
       "t-machine": "machine", "t-cpu": "cpu", "t-memory": "memory",
       "t-key-worse": "key.worse", "t-key-better": "key.better", "t-key-bar": "key.bar",
       "t-key-best": "key.best", "t-key-distance": "key.distance", "t-key-tables": "key.tables",
@@ -823,6 +860,30 @@
       : t("bag.holding", held.split("+").map(r => word("craft", r)).join(", "));
     return `<span class="focus">${objectiveLabel(objective)}</span>` +
            `<span class="qualifier"> · ${holding}</span>` + verdict;
+  }
+
+  /**
+   * The position table is keyed by "<objective shape>|<where in its band>|<how the trail reads>|<flags>":
+   * where the run is trying to get to, whether it is at a height the plan approves of, and whether it has
+   * been walking in circles.
+   */
+  function groundLabel(key, verdict) {
+    const [shape, band, trail, flags] = key.split("|");
+    const going = " · " + t("going." + (shape || "NONE"));
+    const height = band && band !== "ANY" ? " · " + t("band." + band) : "";
+    return `<span class="focus">${t("trail." + (trail || "FRESH"))}</span>` +
+           `<span class="qualifier">${going}${height}${qualifiers(flags)}</span>` + verdict;
+  }
+
+  /**
+   * The placement table is keyed by "<verb>|<objective shape>|<flags>": what it is about to do, which way
+   * the run is trying to go, and what is around it. All three matter, which is why all three are shown.
+   */
+  function spotLabel(key, verdict) {
+    const [action, shape, flags] = key.split("|");
+    const going = " · " + t("going." + (shape || "NONE"));
+    return `<span class="focus">${word("action", action)}</span>` +
+           `<span class="qualifier">${going}${qualifiers(flags)}</span>` + verdict;
   }
 
   /**
@@ -967,6 +1028,20 @@
       actions: data.interruptActions || [], rows: data.interruptRows || [],
       group: "rescue", label: stuckLabel, max: MAX_INTERRUPT_ROWS, current: null,
       empty: "empty.interrupts",
+    });
+
+    renderTable({
+      headId: "ground-header", bodyId: "ground-rows", sideHead: "head.position",
+      actions: data.positionActions || [], rows: data.positionRows || [],
+      group: "ground", label: groundLabel, max: MAX_PLACEMENT_ROWS, current: null,
+      empty: "empty.position",
+    });
+
+    renderTable({
+      headId: "spot-header", bodyId: "spot-rows", sideHead: "head.placement",
+      actions: data.placementActions || [], rows: data.placementRows || [],
+      group: "spot", label: spotLabel, max: MAX_PLACEMENT_ROWS, current: null,
+      empty: "empty.placement",
     });
 
     renderPlanner(data.planner || []);

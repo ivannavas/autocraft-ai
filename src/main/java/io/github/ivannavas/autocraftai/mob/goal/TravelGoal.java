@@ -1,6 +1,7 @@
 package io.github.ivannavas.autocraftai.mob.goal;
 
 import java.util.EnumSet;
+import java.util.OptionalDouble;
 import java.util.Set;
 
 import io.github.ivannavas.autocraftai.mob.MobBody;
@@ -23,6 +24,11 @@ import net.minecraft.world.phys.Vec3;
  * <p>Turning by a fixed angle rather than re-rolling is deliberate. A body that turns randomly whenever it
  * is blocked wanders on the spot in front of a wall; one that turns forty-five degrees and tries again
  * walks along the wall until it ends.
+ *
+ * <p>Which line it sets off on is not this goal's business any more. The position table picks it — see
+ * {@link io.github.ivannavas.autocraftai.mob.ai.Ground} — and a journey that starts towards ground the
+ * body has not covered is the difference between exploring and walking a loop. With nothing chosen it
+ * sets off the way it is already facing, which is what it always did.
  */
 public final class TravelGoal implements MobGoal {
 
@@ -44,11 +50,23 @@ public final class TravelGoal implements MobGoal {
     private static final int FLOOR_SEARCH_DOWN = 4;
     private static final float SPEED = 1.0F;
 
+    private final OptionalDouble told;
+
     private double heading;
     private int ticksRunning;
     private int ticksSinceAim;
     private Vec3 lastAimPosition;
     private boolean stranded;
+
+    /** Sets off whichever way the body is facing. */
+    public TravelGoal() {
+        this(OptionalDouble.empty());
+    }
+
+    /** @param told the heading to set off on, or empty to use whichever way the body is facing */
+    public TravelGoal(OptionalDouble told) {
+        this.told = told == null ? OptionalDouble.empty() : told;
+    }
 
     @Override
     public Set<MobControl> controls() {
@@ -70,9 +88,9 @@ public final class TravelGoal implements MobGoal {
         ticksRunning = 0;
         ticksSinceAim = 0;
         stranded = false;
-        // Set off the way the body is already facing. It was looking at something a moment ago, and
-        // spinning on the spot before walking is the sort of thing that reads as a bug.
-        heading = Math.toRadians(body.player().getYRot());
+        // Whatever was chosen, or the way the body is already facing. It was looking at something a
+        // moment ago, and spinning on the spot before walking is the sort of thing that reads as a bug.
+        heading = told.orElseGet(() -> Math.toRadians(body.player().getYRot()));
         lastAimPosition = body.position();
         aim(body);
     }

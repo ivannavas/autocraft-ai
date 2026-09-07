@@ -20,25 +20,47 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * Builds a step up out of whatever blocks the body is carrying.
+ * Puts one block down, where it is told to.
  *
- * <p>It pillars: jump, and while off the ground put a block on the one just left. Done a few times that is
- * a way over a wall, which is the situation this exists for — the brain can see that it is walled in and
- * carrying blocks, and this is the move that changes that.
+ * <p>It used to only ever pillar — jump, and drop a block where the feet were. That is the right move for
+ * getting out of a hole and the wrong one for everything else, and it was the only one, so building was a
+ * single trick rather than a verb. Now the place comes from
+ * {@link io.github.ivannavas.autocraftai.mob.ai.Spot}, chosen by a table, and this goal is what carries it
+ * out: bridge a gap, cap a hole, wall off a corridor, or still pillar when pillaring is what was asked for.
  *
- * <p>Whether it learns to reach for this while fleeing is not decided here. The goal only makes the move
- * possible; the table decides when it is worth making.
+ * <h2>Two ways to put a block somewhere</h2>
+ * Placing where the body already is means jumping first and dropping the block into the space just left,
+ * and that is what happens when the target is the body's own square. Anywhere else is the ordinary way:
+ * walk until it is in reach, look at the face of something solid beside it, and right-click.
+ *
+ * <p>Walking is part of the move rather than a precondition for it. The table may well pick a spot the body
+ * cannot touch from where it stands, and the honest answer to that is to go there.
  */
 public final class PlaceBlockGoal implements MobGoal {
 
     private static final Set<MobControl> CONTROLS = EnumSet.of(MobControl.MOVE, MobControl.LOOK);
 
-    private static final int GIVE_UP_TICKS = 60;
-    /** How far down to look for the block to build on. */
+    private static final int GIVE_UP_TICKS = 100;
+    /** How far down to look for the block to build on when pillaring. */
     private static final int SUPPORT_SEARCH = 3;
+    /** Kept under the server's reach so a placement is never sent from too far to land. */
+    private static final double REACH_MARGIN = 0.5;
+    private static final float SPEED = 1.0F;
+
+    private final BlockPos target;
 
     private int ticksRunning;
     private boolean placed;
+
+    /** Pillars under the body, which is what this goal did before it could be told anything else. */
+    public PlaceBlockGoal() {
+        this(null);
+    }
+
+    /** @param target where the block goes, or null to pillar under the body wherever it is standing */
+    public PlaceBlockGoal(BlockPos target) {
+        this.target = target == null ? null : target.immutable();
+    }
 
     @Override
     public Set<MobControl> controls() {
@@ -69,27 +91,87 @@ public final class PlaceBlockGoal implements MobGoal {
             return;
         }
         body.player().getInventory().setSelectedSlot(slot);
+
+        if (pillaring(body)) {
+            pillar(body);
+            return;
+        }
+        placeAt(body, target);
+    }
+
+    /** Whether the block is going where the body itself is, which is the one case that needs a jump. */
+    private boolean pillaring(MobBody body) {
+        return target == null || target.equals(body.player().blockPosition());
+    }
+
+    /** Jump, and while off the ground drop a block onto whatever was holding the body up. */
+    private void pillar(MobBody body) {
         // Standing still: the block has to go under the body, not wherever it drifted to.
         body.moveControl().stop();
-
         LocalPlayer player = body.player();
         if (player.onGround()) {
             body.jump();
             return;
         }
-
         BlockPos support = supportBelow(body);
         if (support == null) {
             return;
         }
-        Vec3 top = Vec3.atCenterOf(support).add(0.0, 0.5, 0.0);
-        body.lookControl().lookAt(top);
+        click(body, support, Direction.UP, Vec3.atCenterOf(support).add(0.0, 0.5, 0.0));
+    }
+
+    /** Walk into reach, aim at the face of something solid next to the target, and right-click it. */
+    private void placeAt(MobBody body, BlockPos where) {
+        Direction face = faceToClick(body, where);
+        if (face == null) {
+            // Nothing solid beside it to build off. The table chose a spot that has since become
+            // impossible; give the decision back rather than standing there clicking at air.
+            placed = true;
+            return;
+        }
+        BlockPos against = where.relative(face);
+        Vec3 hit = Vec3.atCenterOf(against).add(
+                face.getOpposite().getStepX() * 0.5,
+                face.getOpposite().getStepY() * 0.5,
+                face.getOpposite().getStepZ() * 0.5);
+
+        body.lookControl().lookAt(hit);
+        if (!withinReach(body, hit)) {
+            body.moveControl().moveTo(Vec3.atBottomCenterOf(where), SPEED);
+            return;
+        }
+        body.moveControl().stop();
+        click(body, against, face.getOpposite(), hit);
+    }
+
+    private void click(MobBody body, BlockPos against, Direction face, Vec3 hit) {
         gameMode().ifPresent(mode -> {
-            mode.useItemOn(player, InteractionHand.MAIN_HAND,
-                    new BlockHitResult(top, Direction.UP, support, false));
-            player.swing(InteractionHand.MAIN_HAND);
+            mode.useItemOn(body.player(), InteractionHand.MAIN_HAND,
+                    new BlockHitResult(hit, face, against, false));
+            body.player().swing(InteractionHand.MAIN_HAND);
         });
         placed = true;
+    }
+
+    /**
+     * Which side of the target has something solid to build against, preferring the floor.
+     *
+     * @return the direction from the target towards that neighbour, or null when it is surrounded by air
+     */
+    private Direction faceToClick(MobBody body, BlockPos where) {
+        if (solid(body, where.below())) {
+            return Direction.DOWN;
+        }
+        for (Direction side : Direction.values()) {
+            if (side != Direction.DOWN && solid(body, where.relative(side))) {
+                return side;
+            }
+        }
+        return null;
+    }
+
+    private boolean solid(MobBody body, BlockPos pos) {
+        return body.level().isLoaded(pos) && body.level().getBlockState(pos).isSolid();
     }
 
     /** The highest solid block under the body, which is the one a new block goes on top of. */
@@ -97,11 +179,21 @@ public final class PlaceBlockGoal implements MobGoal {
         BlockPos feet = body.player().blockPosition();
         for (int drop = 1; drop <= SUPPORT_SEARCH; drop++) {
             BlockPos candidate = feet.below(drop);
-            if (body.level().isLoaded(candidate) && body.level().getBlockState(candidate).isSolid()) {
+            if (solid(body, candidate)) {
                 return candidate;
             }
         }
         return null;
+    }
+
+    private boolean withinReach(MobBody body, Vec3 hit) {
+        double reach = body.player().blockInteractionRange() - REACH_MARGIN;
+        return body.player().getEyePosition().distanceToSqr(hit) <= reach * reach;
+    }
+
+    @Override
+    public void stop(MobBody body) {
+        body.moveControl().stop();
     }
 
     /** Whether the body has something it could put down. Also what makes this action legal at all. */
@@ -125,6 +217,6 @@ public final class PlaceBlockGoal implements MobGoal {
 
     @Override
     public String name() {
-        return "PlaceBlock";
+        return target == null ? "PlaceBlock" : "PlaceBlock" + target.toShortString();
     }
 }

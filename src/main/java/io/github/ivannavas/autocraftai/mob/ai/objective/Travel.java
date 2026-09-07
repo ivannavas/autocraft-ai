@@ -29,6 +29,11 @@ public record Travel(Terrain terrain, String reason) implements Phase {
     }
 
     @Override
+    public String shape() {
+        return "GO";
+    }
+
+    @Override
     public String name() {
         return "GO_" + terrain.name();
     }

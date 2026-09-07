@@ -127,6 +127,27 @@ public final class Settings {
     }
 
     /**
+     * The frame rate the game runs at while a world is open.
+     *
+     * <p>Set from here rather than left to {@code options.txt}, so it is one number in one place and the
+     * game cannot come back from a restart on whatever it happened to save last.
+     */
+    public int gameFps() {
+        return number("game.fps", 60);
+    }
+
+    /**
+     * The frame rate the game drops to when the run is stopped.
+     *
+     * <p>Low on purpose. The title screen is an animated panorama and will happily render it at full
+     * speed forever; on a small box that is a warm, audible machine drawing something nobody is looking
+     * at.
+     */
+    public int gameIdleFps() {
+        return number("game.idle.fps", 10);
+    }
+
+    /**
      * What the browser source in the scene points at.
      *
      * <p>OBS renders this itself rather than picking it off the desktop, so it stays on loopback even when

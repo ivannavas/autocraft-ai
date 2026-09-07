@@ -1,5 +1,7 @@
 package io.github.ivannavas.autocraftai.mob.ai.objective;
 
+import java.util.List;
+
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.phys.Vec3;
 
@@ -35,10 +37,15 @@ public record StepContext(
         int steps,
         int wastedTicks,
         int foodBefore,
-        int foodAfter) {
+        int foodAfter,
+        List<Resource> crafted) {
 
     /** Twenty ticks to the second, which is Minecraft's clock and not this class's opinion. */
     private static final double TICKS_PER_SECOND = 20.0;
+
+    public StepContext {
+        crafted = crafted == null ? List.of() : List.copyOf(crafted);
+    }
 
     /** Points of hunger restored; zero when it only ticked down, which is not this term's business. */
     public int foodGained() {
@@ -59,6 +66,17 @@ public record StepContext(
 
     public int gained(Resource resource) {
         return after.gainedSince(before, resource);
+    }
+
+    /**
+     * How much more of this the body holds than it did, and how much less when it went the other way.
+     *
+     * <p>The signed version of {@link #gained}, for the one objective that has to care about losses:
+     * gathering. Everything else is measured by what turned up, and turning up is the only direction
+     * those things go.
+     */
+    public int netChange(Resource resource) {
+        return after.count(resource) - before.count(resource);
     }
 
     /** Seconds spent swinging at blocks the thing in hand was never going to get a drop out of. */

@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.OptionalDouble;
 import java.util.function.Consumer;
 
 import io.github.ivannavas.autocraftai.mob.MobEngine;
@@ -13,6 +14,7 @@ import io.github.ivannavas.autocraftai.mob.ai.objective.GeneralObjectives;
 import io.github.ivannavas.autocraftai.mob.ai.objective.InventoryCensus;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Objective;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Progression;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.PlannerLog;
 import io.github.ivannavas.autocraftai.mob.ai.objective.StepContext;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Tool;
@@ -44,6 +46,10 @@ import net.minecraft.world.phys.Vec3;
  *       {@link CraftSituation}, not by what is in view, since what is worth making depends on the rung and
  *       the bag rather than on which block happens to be under the crosshair.</li>
  *   <li><b>interrupts</b>: whether a move that is going nowhere should be cut short, and with what.</li>
+ *   <li><b>placement</b>: for the two moves that act on a block, <em>which</em> block — the one in view,
+ *       the one above it, the one under the feet. See {@link Spot}.</li>
+ *   <li><b>position</b>: for the two moves that take the body somewhere, <em>which way</em> — onward,
+ *       back, or towards ground it has not covered. See {@link Ground}.</li>
  * </ul>
  *
  * <p>One table over the cross-product would be {@code 6 x 3 x 6 x 4} columns, and every new goal would
@@ -99,12 +105,15 @@ public final class QLearningBrain {
 
     private final MobEngine engine;
     private final Perception perception = new Perception();
+    private final Territory territory = new Territory();
     private final Progression progression;
 
     private final Table goals;
     private final Table timing;
     private final Table crafting;
     private final Table interrupts;
+    private final Table placement;
+    private final Table position;
     private final List<Table> tables;
 
     /** Where a copy of what the brain knows goes after every decision. No-op until something wants it. */
@@ -131,6 +140,7 @@ public final class QLearningBrain {
     private InventoryCensus obtained = InventoryCensus.empty();
     private InventoryCensus previousStepCensus;
     private int wastedTicks;
+    private List<Resource> craftedThisStep = List.of();
     private int ticksSinceStep;
     private int decisionsSinceSave;
     private int decisionsSinceReport;
@@ -145,8 +155,23 @@ public final class QLearningBrain {
         this.timing = new Table(names(Commitment.values()), directory.resolve("timing.txt"));
         this.crafting = new Table(names(CraftChoice.values()), directory.resolve("crafting.txt"));
         this.interrupts = new Table(names(Interruption.values()), directory.resolve("interrupts.txt"));
-        this.tables = List.of(goals, timing, crafting, interrupts);
+        this.placement = new Table(names(Spot.values()), directory.resolve("placement.txt"));
+        this.position = new Table(names(Ground.values()), directory.resolve("position.txt"));
+        this.tables = List.of(goals, timing, crafting, interrupts, placement, position);
         tables.forEach(Table::load);
+    }
+
+    /** Two lists as one, without either of them having to be growable. */
+    private static <T> List<T> concat(List<T> first, List<T> second) {
+        if (second.isEmpty()) {
+            return first;
+        }
+        if (first.isEmpty()) {
+            return second;
+        }
+        List<T> both = new java.util.ArrayList<>(first);
+        both.addAll(second);
+        return List.copyOf(both);
     }
 
     private static List<String> names(Enum<?>[] values) {
@@ -194,9 +219,14 @@ public final class QLearningBrain {
         // Counted once per step and nowhere else: stepSince is called more than once in a step that ends
         // in an interruption, and accumulating there would count the same gain twice.
         tallyGains(player);
+        // Where the body has been, noted once a step: the position table's whole state is this trail.
+        territory.mark(player.position());
         // Taken here for the same reason as the gains: the goals count it as it happens, and reading it
         // anywhere but once a step would either drop it or charge for it twice.
         wastedTicks += WastedEffort.get().drain();
+        // Same once-a-step rule, same reason: a craft counted twice would be charged twice, and one never
+        // drained would be charged to whatever decision happened to look next.
+        craftedThisStep = concat(craftedThisStep, CraftLog.get().drainCrafted());
         retireFinishedCraft();
         boolean goingNowhere = goingNowhere(player);
         if (stillHolding()) {
@@ -328,8 +358,11 @@ public final class QLearningBrain {
         Commitment chosen = Commitment.values()[timing.choose(timingKey, timing.everything)];
 
         CraftChoice craft = CraftChoice.values()[crafting.choose(craftKey, legalCrafts)];
+        Aim aim = new Aim(
+                chooseSpot(player, action, context, reward, step.steps()),
+                chooseHeading(player, action, context, reward, step.steps()));
 
-        install(action, context);
+        install(action, context, aim);
         installCraft(craft, player);
 
         commitment = chosen;
@@ -341,9 +374,81 @@ public final class QLearningBrain {
         lastPosition = step.positionAfter();
         lastCensus = step.after();
         wastedTicks = 0;
+        craftedThisStep = List.of();
 
         publish(observation.key(), action.name(), chosen.name(), craft.name());
         maintain(climbed > 0.0);
+    }
+
+    /**
+     * Where the move about to be made should act, for the two moves that act on a block.
+     *
+     * <p>Asked after the goal is chosen and not before, because the question only exists once there is a
+     * verb: "which block" means nothing until something is going to be done to one. That is also why this
+     * table is credited here rather than up with the others — its claim is settled against the move that
+     * followed it, and when the next move is not one it has an opinion about, that claim simply ends.
+     *
+     * @return where to act, or null when nothing is possible or the move does not act on a block
+     */
+    private BlockPos chooseSpot(LocalPlayer player, GoalAction action, ActionContext context,
+                                double reward, int steps) {
+        if (!action.usesSpot()) {
+            // Nothing this table chose is going to matter to the move now being made, so its last choice
+            // is settled with no continuation rather than left hanging.
+            placement.learnTerminal(reward);
+            placement.forget();
+            return null;
+        }
+        BlockPos sighted = context.sighting().isBlock() ? context.sighting().blockPos() : null;
+        boolean[] legal = legalSpots(player, action, sighted);
+        String key = Placement.key(action, progression.shape(), context.flags());
+        placement.learn(key, reward, steps, legal);
+
+        int column = placement.choose(key, legal);
+        return column < 0 ? null : Spot.values()[column].resolve(player, sighted);
+    }
+
+    /**
+     * Which way to take the body, for the moves that take it somewhere.
+     *
+     * <p>Keyed on where the run is trying to get to, where the body is relative to the band the plan set,
+     * and how its recent trail reads — which is the whole of what makes this answerable. A body with no
+     * memory of where it has been cannot prefer somewhere else, so {@link Territory} is not decoration
+     * here, it is the state.
+     *
+     * <p>Every direction is always legal. There is no geometry to rule any of them out: a heading is a
+     * suggestion the goal is free to turn away from when it meets a wall, and pretending otherwise would
+     * be this table doing the walking goal's job for it.
+     */
+    private OptionalDouble chooseHeading(LocalPlayer player, GoalAction action, ActionContext context,
+                                         double reward, int steps) {
+        if (!action.usesGround()) {
+            // The move now being made goes nowhere, so whatever this table last chose has no continuation.
+            position.learnTerminal(reward);
+            position.forget();
+            return OptionalDouble.empty();
+        }
+        String key = progression.shape()
+                + '|' + progression.bounds().where(player.getBlockY())
+                + '|' + territory.state()
+                + '|' + context.flags();
+        position.learn(key, reward, steps, position.everything);
+
+        int column = position.choose(key, position.everything);
+        return column < 0 ? OptionalDouble.empty()
+                : Ground.values()[column].headingFor(player, territory);
+    }
+
+    /** Which spots the world allows: you cannot mine air, and a block needs something to rest against. */
+    private boolean[] legalSpots(LocalPlayer player, GoalAction action, BlockPos sighted) {
+        Spot[] spots = Spot.values();
+        boolean[] allowed = new boolean[spots.length];
+        for (int i = 0; i < spots.length; i++) {
+            allowed[i] = action == GoalAction.MINE
+                    ? spots[i].canMine(player, sighted)
+                    : spots[i].canPlace(player, sighted);
+        }
+        return allowed;
     }
 
     /**
@@ -401,6 +506,12 @@ public final class QLearningBrain {
         crafting.learn(CraftSituation.key(progression.stateKey(), step.after()), reward, step.steps(),
                 legalCrafts(context));
         timing.learn(observation.key(), reward + INTERRUPTION_PENALTY, step.steps(), timing.everything);
+        // The rescue picks its own block and its own direction, so whatever those two last chose ends
+        // here.
+        placement.learnTerminal(reward);
+        placement.forget();
+        position.learnTerminal(reward);
+        position.forget();
         goals.forget();
 
         DecisionLog.get().record(lastObservation == null ? null : lastObservation.key(),
@@ -421,6 +532,7 @@ public final class QLearningBrain {
         lastPosition = step.positionAfter();
         lastCensus = step.after();
         wastedTicks = 0;
+        craftedThisStep = List.of();
         publish(observation.key(), rescue.name(), commitment.name(), "NOTHING");
     }
 
@@ -482,7 +594,8 @@ public final class QLearningBrain {
                 steps,
                 wastedTicks,
                 fresh ? player.getFoodData().getFoodLevel() : lastFood,
-                player.getFoodData().getFoodLevel());
+                player.getFoodData().getFoodLevel(),
+                craftedThisStep);
     }
 
     /**
@@ -544,15 +657,19 @@ public final class QLearningBrain {
      * is up, and a choice that has genuinely changed is meant to take effect. What still protects a break
      * is the line below: choosing the same thing on the same block changes nothing at all.
      */
-    private void install(GoalAction action, ActionContext context) {
-        Object target = action.usesSighting() ? context.sighting().target() : null;
+    private void install(GoalAction action, ActionContext context, Aim aim) {
+        // For a move that acts on a block, the block is what identity means: the same verb aimed somewhere
+        // else is a different move and has to replace what is running. A heading is not part of it — a
+        // journey re-aimed every decision would never get anywhere, which is the thing this is here to fix.
+        Object target = action.usesSpot() ? aim.spot()
+                : action.usesSighting() ? context.sighting().target() : null;
         if (installedGoal != null && action == installedAction && Objects.equals(target, installedTarget)) {
             return;
         }
         uninstall();
         installedAction = action;
         installedTarget = target;
-        installedGoal = action.create(context);
+        installedGoal = action.create(context, aim);
         engine.addGoal(GOAL_PRIORITY, installedGoal);
         log.debug("Chose {} on {} while on {}", action, context.sighting().kind(), progression.stateKey());
     }
@@ -627,7 +744,9 @@ public final class QLearningBrain {
                 state, action, timingChoice, craftChoice, interruptionCount,
                 crafting.columns, crafting.table.rows(),
                 interrupts.columns, interrupts.table.rows(), CraftLog.get().recent(),
-                PlannerLog.get().recent()));
+                PlannerLog.get().recent(),
+                placement.columns, placement.table.rows(),
+                position.columns, position.table.rows()));
     }
 
     /**
@@ -680,10 +799,14 @@ public final class QLearningBrain {
         // from whatever the next census finds, so the ladder never claims a pickaxe that is on the floor.
         obtained = InventoryCensus.empty();
         previousStepCensus = null;
+        // A new life is not explained by the last one's wanderings.
+        territory.clear();
         // A tally of the moment, not a record of the run: an episode that ends takes it with it rather
         // than charging the next one for swings it never made.
         wastedTicks = 0;
         WastedEffort.get().clear();
+        craftedThisStep = List.of();
+        CraftLog.get().drainCrafted();
         DecisionLog.get().clear();
         commitment = null;
         stepsRun = 0;

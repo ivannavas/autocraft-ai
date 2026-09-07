@@ -1,6 +1,7 @@
 package io.github.ivannavas.autocraftai.mob.goal;
 
 import java.util.EnumSet;
+import java.util.OptionalDouble;
 import java.util.Set;
 
 import io.github.ivannavas.autocraftai.mob.MobBody;
@@ -20,6 +21,10 @@ import net.minecraft.world.phys.Vec3;
  * <p>The counterpart of vanilla's {@code RandomStrollGoal} minus the pathfinding: the destination is only
  * checked for standing room, and getting there is {@link io.github.ivannavas.autocraftai.mob.MoveControl}'s
  * straight line. A destination behind a wall it cannot hop is given up on after {@link #GIVE_UP_TICKS}.
+ *
+ * <p>Given a heading it leans that way rather than rolling flat: the spot is still picked at random, but
+ * from a box pushed out along the line the position table chose. Still wandering, and no longer wandering
+ * in whichever direction the dice went.
  */
 public final class RandomStrollGoal implements MobGoal {
 
@@ -35,19 +40,28 @@ public final class RandomStrollGoal implements MobGoal {
     private static final int FLOOR_SEARCH_DOWN = 3;
     /** Anything closer than this is not worth walking to. */
     private static final double MIN_DISTANCE = 2.0;
+    /** How far to push the search box along a chosen heading. Two thirds of the box: a lean, not a rail. */
+    private static final int LEAN = 7;
 
     private final float speed;
+    private final OptionalDouble told;
 
     private Vec3 destination;
     private int ticksRunning;
 
     public RandomStrollGoal() {
-        this(1.0F);
+        this(1.0F, OptionalDouble.empty());
     }
 
     /** @param speed fraction of walking speed, in {@code (0, 1]} */
     public RandomStrollGoal(float speed) {
+        this(speed, OptionalDouble.empty());
+    }
+
+    /** @param told the way to lean, or empty to wander evenly in every direction */
+    public RandomStrollGoal(float speed, OptionalDouble told) {
         this.speed = speed;
+        this.told = told == null ? OptionalDouble.empty() : told;
     }
 
     @Override
@@ -92,11 +106,20 @@ public final class RandomStrollGoal implements MobGoal {
         RandomSource random = body.random();
         BlockPos origin = body.player().blockPosition();
 
+        // The box is centred on the body, or pushed out along the chosen line so that most of what it
+        // covers lies that way. Still a box and still random: a lean, not a rail.
+        int leanX = 0;
+        int leanZ = 0;
+        if (told.isPresent()) {
+            leanX = (int) Math.round(-Math.sin(told.getAsDouble()) * LEAN);
+            leanZ = (int) Math.round(Math.cos(told.getAsDouble()) * LEAN);
+        }
+
         for (int attempt = 0; attempt < PLACEMENT_ATTEMPTS; attempt++) {
             BlockPos candidate = origin.offset(
-                    random.nextInt(-HORIZONTAL_RANGE, HORIZONTAL_RANGE + 1),
+                    leanX + random.nextInt(-HORIZONTAL_RANGE, HORIZONTAL_RANGE + 1),
                     random.nextInt(-VERTICAL_RANGE, VERTICAL_RANGE + 1),
-                    random.nextInt(-HORIZONTAL_RANGE, HORIZONTAL_RANGE + 1));
+                    leanZ + random.nextInt(-HORIZONTAL_RANGE, HORIZONTAL_RANGE + 1));
 
             Vec3 spot = findStandingSpot(body, candidate);
             if (spot != null && spot.distanceToSqr(body.position()) >= MIN_DISTANCE * MIN_DISTANCE) {
