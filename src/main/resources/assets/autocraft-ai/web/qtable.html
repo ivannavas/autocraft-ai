@@ -983,7 +983,9 @@
   let latest = null;
   let latestStats = null;
 
-  const stream = new EventSource("/events");
+  // Relative on purpose: everything the mod serves lives under one prefix so a single proxy rule
+  // covers it, and a relative URL is what lets the page work at "/autocraft/" without knowing it is there.
+  const stream = new EventSource("events");
   stream.addEventListener("labels", event => {
     const sent = JSON.parse(event.data);
     // Group by group, so a language that has translated half of them keeps English for the other half

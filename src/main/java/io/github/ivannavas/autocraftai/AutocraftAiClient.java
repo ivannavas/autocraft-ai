@@ -5,7 +5,10 @@ import java.nio.file.Path;
 import io.github.ivannavas.autocraftai.mob.MobEngine;
 import io.github.ivannavas.autocraftai.mob.ai.QLearningBrain;
 import io.github.ivannavas.autocraftai.ui.ClearLearningButton;
+import io.github.ivannavas.autocraftai.web.Control;
+import io.github.ivannavas.autocraftai.web.NewWorld;
 import io.github.ivannavas.autocraftai.web.QTableServer;
+import io.github.ivannavas.autocraftai.web.Settings;
 import lombok.extern.slf4j.Slf4j;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
@@ -35,8 +38,18 @@ public class AutocraftAiClient implements ClientModInitializer {
 
         ClearLearningButton.install(brain);
 
-        // The overlay reads a copy the brain hands over after each decision, never the live table.
-        QTableServer overlay = new QTableServer(brain.actionNames());
+        Settings settings = new Settings(storage);
+
+        // Making a world is several ticks of work — leave, delete, generate — so it rides the client
+        // tick like the brain does rather than blocking whichever request handler asked for it.
+        NewWorld newWorld = new NewWorld(settings.autoOpen(), storage);
+        newWorld.install();
+        ClientTickEvents.START_CLIENT_TICK.register(newWorld::tick);
+
+        // The overlay reads a copy the brain hands over after each decision, never the live table. The
+        // endpoints go on the same port: the panel that drives the run also embeds the page.
+        QTableServer overlay =
+                new QTableServer(brain.actionNames(), settings, new Control(settings, brain, newWorld));
         brain.onSnapshot(overlay::publish);
         overlay.start();
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> overlay.stop());
