@@ -4,6 +4,8 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
 
+import io.github.ivannavas.autocraftai.mob.ai.objective.Plan;
+
 /**
  * What was asked of the planner and what it said back.
  *
@@ -65,26 +67,32 @@ public final class PlannerLog {
      * @param objective the objective's key when the entry is about one, so the panel can name it in the
      *                  player's own language rather than in the one this code is written in; else empty
      * @param text      the rest of the line, which is the planner's own sentence and stays as it wrote it
-     * @param detail    the whole prompt or the whole reply, for a tooltip; never shown up front
+     * @param detail    the whole prompt or the whole reply, shown on request rather than up front
+     * @param plan      the plan an answer amounted to, as the run adopted it — the band, the shopping
+     *                  list, the reserve, the sources and where each is found — or null for every other
+     *                  kind of entry. The reply says the same in the model's words; this is what the run
+     *                  actually took from them, which is the half a viewer cannot check by reading.
      */
-    public record Entry(long at, Kind kind, String objective, String text, String detail) {
+    public record Entry(long at, Kind kind, String objective, String text, String detail, Plan plan) {
     }
 
     /** A question going out, with the line of situation that goes with it. */
     public void asked(String summary, String prompt) {
-        add(new Entry(System.currentTimeMillis(), Kind.ASKED, "", summary, prompt));
+        add(new Entry(System.currentTimeMillis(), Kind.ASKED, "", summary, prompt, null));
     }
 
-    public void answered(String objective, String reason, String reply) {
-        add(new Entry(System.currentTimeMillis(), Kind.ANSWERED, objective, reason, reply));
+    /** An objective coming back, with the whole plan the run made of it. */
+    public void answered(Plan plan, String reason, String reply) {
+        add(new Entry(System.currentTimeMillis(), Kind.ANSWERED, plan.objective().name(), reason, reply,
+                plan));
     }
 
     public void kept(String reason, String reply) {
-        add(new Entry(System.currentTimeMillis(), Kind.KEPT, "", reason, reply));
+        add(new Entry(System.currentTimeMillis(), Kind.KEPT, "", reason, reply, null));
     }
 
     public void failed(String why, String detail) {
-        add(new Entry(System.currentTimeMillis(), Kind.FAILED, "", why, detail));
+        add(new Entry(System.currentTimeMillis(), Kind.FAILED, "", why, detail, null));
     }
 
     /**

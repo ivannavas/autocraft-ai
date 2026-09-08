@@ -503,7 +503,7 @@ public final class NewWorld {
         LevelSettings settings = new LevelSettings(
                 name,
                 GameType.SURVIVAL,
-                new LevelSettings.DifficultySettings(Difficulty.NORMAL, false, false),
+                new LevelSettings.DifficultySettings(Difficulty.EASY, false, false),
                 false,
                 WorldDataConfiguration.DEFAULT);
         WorldOptions options = current.seed().isPresent()

@@ -33,6 +33,18 @@ public interface ObjectivePlanner {
     /** Whether an answer is still expected, so a caller can tell "not yet" from "never". */
     boolean pending();
 
+    /**
+     * Forgets the run so far, for a body that has just arrived in a world.
+     *
+     * <p>A planner remembers what it asked for and why, and that memory is what keeps it from going round
+     * in circles within a run. Across runs it is a liability: a new world starts with an empty bag and no
+     * objectives behind it, and a planner still holding the last world's transcript would reason from a
+     * history that never happened here. Any answer still on its way from the old world is dropped rather
+     * than adopted by the new one.
+     */
+    default void reset() {
+    }
+
     /** Stops whatever is running. Called on the way out of the game. */
     default void close() {
     }

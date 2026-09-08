@@ -1,5 +1,6 @@
 package io.github.ivannavas.autocraftai.mob.ai.objective;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -110,18 +111,6 @@ public interface Phase extends Objective {
     }
 
     /**
-     * Whether pursuing this means going down.
-     *
-     * <p>Asked before the body is allowed to sink a shaft, because that move is the one way it can put
-     * itself somewhere it cannot get out of, and it is only ever a route to things that are down there.
-     * Stone, coal and iron are; wood is not, and a body after wood that starts digging has stopped
-     * looking for wood.
-     */
-    default boolean wantsDepth() {
-        return false;
-    }
-
-    /**
      * What the objective says to break this block with, when it has an opinion about this block.
      *
      * <p>An opinion is all it is: the game's own {@link Tool#bestFor(BlockState)} is right about every
@@ -139,5 +128,32 @@ public interface Phase extends Objective {
      */
     default String reason() {
         return "";
+    }
+
+    /**
+     * Where the thing this objective is after comes from, when the planner said. Empty for every shape but
+     * gathering, and for a gather the planner gave no sources for. Read by the overlay, which shows the
+     * plan as the planner wrote it; the run itself reads the sources through {@link #wanted()} and
+     * {@link #pursuit}.
+     */
+    default List<Source> sources() {
+        return List.of();
+    }
+
+    /**
+     * What the tables should be working on right now, given what is in view and where the body is.
+     *
+     * <p>This is how an objective turns into a folder of tables and a source within it — see
+     * {@link Pursuit}. Most shapes have one answer for the whole objective: a climb is a climb wherever
+     * the body is. A gathering objective with several sources answers with whichever of them is in view,
+     * or the one nearest the body's height when none is, which is what lets an oak and a deepslate ore be
+     * learned about separately while the resource they yield is learned about once.
+     *
+     * @param seen the block in view that the plan is after, or null when none is
+     * @param y    the body's height, for choosing among sources when nothing is in view
+     * @param plan the plan's own band, standing in for any source that has none
+     */
+    default Pursuit pursuit(BlockState seen, int y, Bounds plan) {
+        return new Pursuit(shape(), Pursuit.NO_SOURCE, new Whereabouts(plan, List.of(), Way.all()));
     }
 }

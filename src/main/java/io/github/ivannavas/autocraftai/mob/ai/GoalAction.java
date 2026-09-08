@@ -52,10 +52,20 @@ public enum GoalAction {
         }
     },
 
+    /**
+     * Walk up to what is in view. Not to a plain block: a block under the crosshair is not a thing to go
+     * and stand next to, and a body that could was one that spent a quarter of its decisions walking to
+     * bits of sand. Creatures, items and the plan's own resource are things worth reaching.
+     */
     APPROACH {
         @Override
         public MobGoal create(ActionContext context, Aim aim) {
             return new ApproachSightingGoal(context.sighting());
+        }
+
+        @Override
+        public boolean isApplicable(ActionContext context) {
+            return context.sighting().isValid() && context.sighting().kind() != FocusKind.BLOCK;
         }
     },
 
@@ -72,14 +82,24 @@ public enum GoalAction {
         }
     },
 
+    /** Keep an eye on something alive. Watching a block is standing still with a name. */
     WATCH {
         @Override
         public MobGoal create(ActionContext context, Aim aim) {
             return new WatchSightingGoal(context.sighting());
         }
+
+        @Override
+        public boolean isApplicable(ActionContext context) {
+            return context.sighting().isValid() && context.sighting().isCreature();
+        }
     },
 
-    /** Only ever legal against a block: there is nothing to break about a cow. */
+    /**
+     * Only ever legal against a block the plan is after. There is nothing to break about a cow, and
+     * nothing to be had from the block that happens to be under the crosshair: walls are the passage
+     * layer's business now, and a shaft is {@link #DIG_DOWN}'s.
+     */
     MINE {
         @Override
         public MobGoal create(ActionContext context, Aim aim) {
@@ -92,7 +112,7 @@ public enum GoalAction {
 
         @Override
         public boolean isApplicable(ActionContext context) {
-            return context.sighting().isBlock();
+            return context.sighting().isBlock() && context.sighting().kind() == FocusKind.RESOURCE;
         }
 
         @Override

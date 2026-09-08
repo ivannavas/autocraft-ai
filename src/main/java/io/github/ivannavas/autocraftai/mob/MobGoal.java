@@ -52,6 +52,19 @@ public interface MobGoal {
         return 0;
     }
 
+    /**
+     * Whether this goal has finished what it was for, as opposed to having stopped because it could not.
+     *
+     * <p>The difference the brain needs and could not see. A block placed, a mouthful eaten and a target
+     * reached all leave a goal that is not running, and so did a goal that gave up — and the brain charged
+     * both as seconds spent on nothing and cut the move short. A move that ends because it succeeded is
+     * over the moment it succeeds, costs nothing for the seconds it did not use, and the tables get to
+     * choose again at once. A goal that never finishes on its own — walking, watching — leaves this false.
+     */
+    default boolean isDone() {
+        return false;
+    }
+
     default void start(MobBody body) {
     }
 

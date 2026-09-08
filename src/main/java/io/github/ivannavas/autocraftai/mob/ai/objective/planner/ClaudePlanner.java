@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -33,6 +34,8 @@ import io.github.ivannavas.autocraftai.mob.ai.objective.Structure;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Terrain;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Tool;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Travel;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Way;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Whereabouts;
 import io.github.ivannavas.sprout.annotation.Agent;
 import io.github.ivannavas.sprout.anthropic.executor.AnthropicModelExecutor;
 import io.github.ivannavas.sprout.impl.InMemoryConversationStore;
@@ -56,6 +59,10 @@ import lombok.extern.slf4j.Slf4j;
  * wood arrived, and asks for wood again. Sprout caches the prefix, so the growing transcript costs almost
  * nothing to re-send.
  *
+ * <p>A run is a world. Arriving in a new one starts a new conversation — see {@link #reset()} — because
+ * the last world's transcript is a history of objectives this body never had, and a reply still in the air
+ * from that world is dropped rather than adopted as the first plan of this one.
+ *
  * <h2>Two questions</h2>
  * The same call answers both of them, and which one it is comes from the {@link Situation}: with no
  * objective in it the planner is being asked what to do next, and with one it is being asked whether that
@@ -75,7 +82,7 @@ public final class ClaudePlanner implements ObjectivePlanner {
     private static final String API_URL = "https://api.anthropic.com/v1/messages";
     private static final int MAX_TOKENS = 1024;
     private static final int TIMEOUT_SECONDS = 30;
-    /** One transcript for the session, so the planner remembers what it has already asked for. */
+    /** One transcript per world, so the planner remembers what it has already asked for in this one. */
     private static final String CONVERSATION = "run";
     /** How long to leave a failing planner alone before asking it again. */
     private static final long RETRY_AFTER_MILLIS = 60_000L;
@@ -97,6 +104,12 @@ public final class ClaudePlanner implements ObjectivePlanner {
     private final AtomicReference<Plan> answer = new AtomicReference<>();
     private final AtomicBoolean asking = new AtomicBoolean();
     private final AtomicLong silentUntil = new AtomicLong();
+    /**
+     * Which world this is, counted from the first. Names the conversation, and is captured by every
+     * request on its way out so that a reply landing after the world it was asked about is gone can be
+     * recognised and thrown away.
+     */
+    private final AtomicLong world = new AtomicLong();
 
     private ClaudePlanner(ObjectiveAgent agent) {
         this.agent = agent;
@@ -168,8 +181,14 @@ public final class ClaudePlanner implements ObjectivePlanner {
     }
 
     private void ask(String prompt) {
+        long asked = world.get();
         try {
-            String reply = agent.execute(CONVERSATION, prompt).response();
+            String reply = agent.execute(conversation(asked), prompt).response();
+            if (world.get() != asked) {
+                // The world this was about has been left. Whatever it says is about somewhere else.
+                log.info("Dropping a plan that arrived after its world was left");
+                return;
+            }
             Optional<Phase> errand = parse(reply);
             if (errand.isPresent()) {
                 // Built before it is logged: an empty list is filled in from the objective, and the line
@@ -179,11 +198,7 @@ public final class ClaudePlanner implements ObjectivePlanner {
                         plan.objective(), plan.bounds(), plan.needs(),
                         plan.reserved().isEmpty() ? "" : ", holding back " + plan.reserved().kept(),
                         plan.objective().reason());
-                PlannerLog.get().answered(plan.objective().name(),
-                        plan.bounds().bind()
-                                ? plan.objective().reason() + " · " + plan.bounds()
-                                : plan.objective().reason(),
-                        reply);
+                PlannerLog.get().answered(plan, plan.objective().reason(), reply);
                 answer.set(plan);
                 return;
             }
@@ -335,7 +350,39 @@ public final class ClaudePlanner implements ObjectivePlanner {
         if (listed.isArray()) {
             for (JsonNode entry : listed) {
                 Tool tool = named(Tool.class, entry.path("tool").asText("")).orElse(null);
-                Source.of(entry.path("block").asText(""), tool).ifPresent(found::add);
+                Source.of(entry.path("block").asText(""), tool)
+                        .map(source -> source.with(whereabouts(entry, source.where())))
+                        .ifPresent(found::add);
+            }
+        }
+        return found;
+    }
+
+    /**
+     * Where a source is and how to reach it, as the entry says — with whatever it left unsaid filled in
+     * from what the run always assumed about the resource.
+     *
+     * <p>Filled in piecewise rather than all or nothing: a planner that named a band and forgot the ways
+     * has still said something worth keeping, and the ways it forgot are the same ones the resource has
+     * always had. A name outside the vocabulary is dropped, as everywhere else in a reply.
+     */
+    private static Whereabouts whereabouts(JsonNode entry, Whereabouts assumed) {
+        JsonNode band = entry.path("band");
+        Bounds where = band.has("floor") && band.has("ceiling")
+                ? new Bounds(band.path("floor").asInt(), band.path("ceiling").asInt()) : assumed.band();
+        List<Terrain> terrain = names(Terrain.class, entry.path("terrain"));
+        List<Way> ways = names(Way.class, entry.path("ways"));
+        return new Whereabouts(where,
+                terrain.isEmpty() ? assumed.terrain() : terrain,
+                ways.isEmpty() ? assumed.ways() : EnumSet.copyOf(ways));
+    }
+
+    /** The constants of an enum a JSON array names, in order, with anything unrecognised dropped. */
+    private static <E extends Enum<E>> List<E> names(Class<E> type, JsonNode listed) {
+        List<E> found = new ArrayList<>();
+        if (listed.isArray()) {
+            for (JsonNode entry : listed) {
+                named(type, entry.asText("")).ifPresent(found::add);
             }
         }
         return found;
@@ -378,6 +425,20 @@ public final class ClaudePlanner implements ObjectivePlanner {
     private static String shorten(String text) {
         String flat = text == null ? "" : text.replace('\n', ' ').strip();
         return flat.length() <= 200 ? flat : flat.substring(0, 200) + "...";
+    }
+
+    /** The transcript for a world: the first is {@code run}, the next {@code run-1}, and so on. */
+    private static String conversation(long world) {
+        return world == 0 ? CONVERSATION : CONVERSATION + '-' + world;
+    }
+
+    @Override
+    public void reset() {
+        world.incrementAndGet();
+        answer.set(null);
+        // A key that failed in the last world is not going to work in this one either, but a network
+        // that was down may well be back, and the first question of a run is the one worth asking.
+        silentUntil.set(0L);
     }
 
     @Override

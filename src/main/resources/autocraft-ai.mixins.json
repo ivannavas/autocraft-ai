@@ -4,7 +4,8 @@
   "mixins": [],
   "client": [
     "KeyboardInputMixin",
-    "MouseHandlerMixin"
+    "MouseHandlerMixin",
+    "MultiPlayerGameModeMixin"
   ],
   "injectors": {
     "defaultRequire": 1

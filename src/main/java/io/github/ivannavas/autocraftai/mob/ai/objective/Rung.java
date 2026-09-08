@@ -1,5 +1,6 @@
 package io.github.ivannavas.autocraftai.mob.ai.objective;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -39,7 +40,14 @@ public enum Rung implements Phase {
     GET_PICKAXE(Resource.PICKAXE, 1),
 
     /** With a pickaxe in hand, stone is the first thing worth digging for. */
-    GATHER_STONE(Resource.COBBLESTONE, 8);
+    /** Twelve: three for the stone pickaxe, eight for the furnace, and one to spare. */
+    GATHER_STONE(Resource.COBBLESTONE, 12),
+
+    /** The pickaxe that iron ore will actually yield to. */
+    GET_STONE_PICKAXE(Resource.STONE_PICKAXE, 1),
+
+    /** The furnace, so the raw iron the pickaxe digs up can become the iron tools are made of. */
+    GET_FURNACE(Resource.FURNACE, 1);
 
     private final Gather gather;
 
@@ -47,9 +55,23 @@ public enum Rung implements Phase {
         this.gather = Gather.of(resource, required);
     }
 
-    /** The ladder in order, as the plain objectives everything else deals in. */
+    /** Where iron is commonest, and where the ladder sends the body once it has a pick that mines it. */
+    private static final int IRON_DEPTH = 16;
+
+    /**
+     * The ladder in order, as the plain objectives everything else deals in.
+     *
+     * <p>Three steps past the last rung that are not rungs, because an enum constant has to be a gather
+     * and these are not: a descent to the height iron is thickest at, the raw ore mined there, and then
+     * the ingot — which the crafting layer smelts from the ore, once there is a furnace and some fuel.
+     * Without them a run with nobody to ask stopped at a stone pickaxe and stood on the grass holding it.
+     */
     public static List<Phase> ladder() {
-        return List.of(values());
+        List<Phase> steps = new ArrayList<>(List.of(values()));
+        steps.add(new Descend(IRON_DEPTH, ""));
+        steps.add(Gather.of(Resource.RAW_IRON, 1));
+        steps.add(Gather.of(Resource.IRON, 1));
+        return List.copyOf(steps);
     }
 
     public Resource resource() {
@@ -81,11 +103,6 @@ public enum Rung implements Phase {
     }
 
     @Override
-    public boolean wantsDepth() {
-        return gather.wantsDepth();
-    }
-
-    @Override
     public String shape() {
         return gather.shape();
     }
@@ -103,5 +120,11 @@ public enum Rung implements Phase {
     @Override
     public Optional<Predicate<BlockState>> wanted() {
         return gather.wanted();
+    }
+
+    /** The resource's own folder, shared with every planned objective for the same thing. */
+    @Override
+    public Pursuit pursuit(BlockState seen, int y, Bounds plan) {
+        return gather.pursuit(seen, y, plan);
     }
 }

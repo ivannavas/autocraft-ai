@@ -60,6 +60,14 @@ public final class Obs implements AutoCloseable {
     /** obs-websocket says everything went fine with exactly this. */
     private static final int OK = 100;
 
+    /** How long to wait for the buffer to actually come up after OBS says it accepted the request. */
+    private static final int START_ATTEMPTS = 20;
+    private static final long START_POLL_MILLIS = 250;
+
+    /** How long to wait for a saved replay to appear on disk. Encoding a minute takes a moment. */
+    private static final int SAVE_ATTEMPTS = 60;
+    private static final long SAVE_POLL_MILLIS = 250;
+
     /** How many times to look for a removed source before deciding OBS is not going to let it go. */
     private static final int REMOVE_ATTEMPTS = 20;
     private static final long REMOVE_POLL_MILLIS = 100;
@@ -170,6 +178,19 @@ public final class Obs implements AutoCloseable {
         fit(scene, overlay, 0, overlayTop, overlayWidth, overlayHeight, "OBS_BOUNDS_SCALE_INNER");
 
         call("SetCurrentProgramScene", JSON.createObjectNode().put("sceneName", scene));
+
+        // Recording is not optional the way broadcasting is: the clips are the point, and the stream is
+        // one thing that can be done with the same scene. So the buffer comes up with the scene rather
+        // than with the broadcast, and a restart that rebuilds one rebuilds the other.
+        //
+        // A buffer that will not start is reported and not thrown: the scene is built and on air by
+        // this point, and refusing to admit that because the recording half failed would take a
+        // working broadcast down over a directory permission.
+        try {
+            buffer();
+        } catch (ObsException e) {
+            log.warn("Scene is up but the replay buffer is not: {}", e.getMessage());
+        }
         return scene;
     }
 
@@ -220,6 +241,8 @@ public final class Obs implements AutoCloseable {
         JsonNode scene = call("GetCurrentProgramScene", JSON.createObjectNode());
         return "{\"connected\":true"
                 + ",\"streaming\":" + stream.path("outputActive").asBoolean(false)
+                // The buffer is the thing that is always meant to be running; the broadcast is not.
+                + ",\"buffering\":" + buffering()
                 + ",\"durationMs\":" + stream.path("outputDuration").asLong(0)
                 + ",\"droppedFrames\":" + stream.path("outputSkippedFrames").asLong(0)
                 + ",\"totalFrames\":" + stream.path("outputTotalFrames").asLong(0)
@@ -262,6 +285,109 @@ public final class Obs implements AutoCloseable {
         String uri = shot(width);
         int comma = uri.indexOf(',');
         return comma < 0 ? new byte[0] : Base64.getDecoder().decode(uri.substring(comma + 1));
+    }
+
+    /**
+     * Makes sure OBS is holding the last stretch of video in memory, ready to be written out.
+     *
+     * <p>A replay buffer rather than a recording. What is wanted is a minute either side of something
+     * interesting and nothing else, and recording continuously would mean writing gigabytes an hour to
+     * throw nearly all of it away — on a box whose disk also holds the world. The buffer keeps its
+     * window in memory and drops what falls out of it, so the discarding is not a job anyone has to do.
+     *
+     * <p>Settings before start, because OBS reads them when the output is created: changing the length
+     * of a running buffer does nothing until it is stopped and started again.
+     *
+     * @return false if it was already running, which is the state that was wanted either way
+     */
+    public boolean buffer() throws ObsException {
+        String directory = settings.clipsDir();
+        if (!directory.isBlank()) {
+            profile("SimpleOutput", "FilePath", directory);
+        }
+        profile("SimpleOutput", "RecRB", "true");
+        profile("SimpleOutput", "RecRBTime", Integer.toString(settings.clipSeconds()));
+
+        if (buffering()) {
+            return false;
+        }
+        call("StartReplayBuffer", JSON.createObjectNode());
+
+        // Accepting the request is not the same as starting. OBS answers "ok" and then fails on its
+        // own thread — a directory it cannot write to says only "Recording stopped because of bad
+        // output path", in its log, seconds later. Reporting success on the strength of the reply
+        // meant the run believed it was recording for as long as nobody looked.
+        for (int attempt = 0; attempt < START_ATTEMPTS; attempt++) {
+            try {
+                Thread.sleep(START_POLL_MILLIS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new ObsException("Interrupted waiting for the replay buffer");
+            }
+            if (buffering()) {
+                log.info("Replay buffer running: the last {}s are kept in memory",
+                        settings.clipSeconds());
+                return true;
+            }
+        }
+        throw new ObsException("OBS accepted the replay buffer but it never started. Its log will say "
+                + "why; a recording path it cannot write to is the usual one — check that "
+                + settings.clipsDir() + " exists and that OBS is allowed to write there (a Flatpak "
+                + "needs 'flatpak override --filesystem=' for anything outside home).");
+    }
+
+    public boolean buffering() throws ObsException {
+        // 604 comes back when the output does not exist yet, which is "not running" rather than a fault.
+        try {
+            return call("GetReplayBufferStatus", JSON.createObjectNode())
+                    .path("outputActive").asBoolean(false);
+        } catch (ObsException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Writes the buffer out and returns where it landed.
+     *
+     * <p>Saving is asynchronous: the request is accepted long before the file is closed, and asking OBS
+     * where the last replay went straight afterwards returns the one before it. So this waits for the
+     * answer to change, which is the only signal there is that this save — rather than the last one —
+     * is on disk.
+     *
+     * @return the path OBS wrote, or empty if it never appeared
+     */
+    public String save() throws ObsException {
+        String previous = lastReplay();
+        call("SaveReplayBuffer", JSON.createObjectNode());
+        for (int attempt = 0; attempt < SAVE_ATTEMPTS; attempt++) {
+            try {
+                Thread.sleep(SAVE_POLL_MILLIS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return "";
+            }
+            String now = lastReplay();
+            if (!now.isBlank() && !now.equals(previous)) {
+                return now;
+            }
+        }
+        return "";
+    }
+
+    private String lastReplay() {
+        try {
+            return call("GetLastReplayBufferReplay", JSON.createObjectNode())
+                    .path("savedReplayPath").asText("");
+        } catch (ObsException e) {
+            return "";
+        }
+    }
+
+    private void profile(String category, String name, String value) throws ObsException {
+        call("SetProfileParameter", JSON.createObjectNode()
+                .put("parameterCategory", category)
+                .put("parameterName", name)
+                .put("parameterValue", value));
     }
 
     private List<String> scenes() throws ObsException {

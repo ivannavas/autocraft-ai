@@ -1,5 +1,10 @@
 package io.github.ivannavas.autocraftai.mob.ai.objective;
 
+import java.util.EnumSet;
+import java.util.List;
+
+import net.minecraft.world.level.block.state.BlockState;
+
 /**
  * Get up to a height.
  *
@@ -56,6 +61,13 @@ public record Ascend(int level, String reason) implements Phase {
     public double score(StepContext context) {
         double climbed = context.positionAfter().y - context.positionBefore().y;
         return Math.max(0.0, climbed) * PER_BLOCK;
+    }
+
+    /** On foot and by climbing, and never by digging: the way out of a hole is not a deeper hole. */
+    @Override
+    public Pursuit pursuit(BlockState seen, int y, Bounds plan) {
+        return new Pursuit(shape(), Pursuit.NO_SOURCE,
+                new Whereabouts(plan, List.of(), EnumSet.of(Way.WALK, Way.CLIMB)));
     }
 
     @Override

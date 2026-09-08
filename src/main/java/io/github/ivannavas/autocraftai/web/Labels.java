@@ -10,6 +10,7 @@ import io.github.ivannavas.autocraftai.mob.ai.CraftChoice;
 import io.github.ivannavas.autocraftai.mob.ai.FocusKind;
 import io.github.ivannavas.autocraftai.mob.ai.GoalAction;
 import io.github.ivannavas.autocraftai.mob.ai.Ground;
+import io.github.ivannavas.autocraftai.mob.ai.Passage;
 import io.github.ivannavas.autocraftai.mob.ai.Perception;
 import io.github.ivannavas.autocraftai.mob.ai.Spot;
 import io.github.ivannavas.autocraftai.mob.ai.Swim;
@@ -17,6 +18,8 @@ import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Rung;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Structure;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Terrain;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Tool;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Way;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.PlannerLog;
 import net.minecraft.client.Minecraft;
 import net.minecraft.locale.Language;
@@ -58,14 +61,25 @@ final class Labels {
     private static final List<String> TEXT = List.of(
             "objective", "doing", "making",
             "goals", "crafts", "planner", "placement", "position",
-            "water",
+            "water", "timing", "head.timing", "empty.timing", "empty.folders", "pursuit",
+            "passage", "head.passage", "empty.passage",
+            "want.UP", "want.DOWN", "want.FLAT", "want.TOWARD",
+            "ahead.NONE", "ahead.STEP", "ahead.WALL", "ahead.GAP", "ahead.LEAVES", "ahead.SOFT",
+            "ahead.HARD",
+            "above.OPEN", "above.CEILING", "qualifier.breakable", "qualifier.diggable",
+            "head.block", "head.tool", "head.terrain", "head.ways",
+            "plan", "plan.band", "plan.anyheight", "plan.needs", "plan.reserve", "plan.sources",
+            "plan.nothing", "plan.ladder", "plan.none", "plan.active",
+            "pursuits", "folder.live", "folder.states", "folder.decisions", "folder.random",
+            "folder.GO", "folder.DOWN", "folder.UP", "folder.BUILD", "folder.THREAT", "folder.IDLE",
+            "shared", "planner.prompt", "planner.reply", "planner.plan",
             "head.placement", "head.position", "head.water",
             "depth.WADING", "depth.SWIMMING", "depth.SUBMERGED",
             "air.FULL", "air.LOW", "air.EMPTY",
             "breath.ABOVE", "breath.NEAR", "breath.FAR", "breath.NONE",
             "shore.NEAR", "shore.FAR", "shore.NONE",
             "band.IN", "band.BELOW", "band.ABOVE", "band.ANY",
-            "trail.FRESH", "trail.CIRCLING", "trail.PINNED",
+            "trail.FRESH", "trail.CIRCLING", "trail.PINNED", "terrain.IN", "terrain.OUT",
             "head.situation", "head.craft",
             "empty.goals", "empty.crafts", "empty.planner", "empty.placement",
             "empty.position", "empty.water",
@@ -99,6 +113,9 @@ final class Labels {
         groups.put("spot", enums("spot", Spot.values()));
         groups.put("ground", enums("ground", Ground.values()));
         groups.put("swim", enums("swim", Swim.values()));
+        groups.put("passage", enums("passage", Passage.values()));
+        groups.put("way", enums("way", Way.values()));
+        groups.put("tool", enums("tool", Tool.values()));
         // The seven fixed rungs, plus the two states that are not an objective at all.
         Map<String, String> objectives = enums("objective", Rung.values());
         objectives.putAll(words("objective.", List.of("PLANNING", "DONE")));

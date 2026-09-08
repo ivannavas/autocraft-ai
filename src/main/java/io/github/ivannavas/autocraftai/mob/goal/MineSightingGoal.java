@@ -72,8 +72,14 @@ public final class MineSightingGoal implements MobGoal {
 
     private static final Set<MobControl> CONTROLS = EnumSet.of(MobControl.MOVE, MobControl.LOOK);
 
-    /** Kept under the server's reach so a block is never swung at from too far to land. */
-    private static final double REACH_MARGIN = 0.5;
+    /**
+     * How far under the server's own reach to stop and swing. Generous on purpose: the client will let a
+     * block be broken at the very edge of reach and the server, stricter, quietly drops the breaks, and a
+     * body that stood at 3.8 blocks tore a log apart on its screen for four seconds while the server put
+     * it straight back. Standing about a block closer than the client allows makes the break one the
+     * server agrees with.
+     */
+    private static final double REACH_MARGIN = 1.6;
     /** A block that has not given way in this long is not going to; let the brain choose again. */
     private static final int GIVE_UP_TICKS = 300;
     /** In reach and getting nowhere for this long: something is wrong that standing there will not fix. */
@@ -93,6 +99,8 @@ public final class MineSightingGoal implements MobGoal {
     private boolean breaking;
     private boolean equipped;
     private boolean blocked;
+    /** What the last swing hit instead of the block, while in reach of it; null when the line is clear. */
+    private BlockPos occluder;
 
     public MineSightingGoal(Sighting sighting, Tool tool) {
         this.sighting = sighting;
@@ -125,6 +133,32 @@ public final class MineSightingGoal implements MobGoal {
      */
     public boolean gaveUp() {
         return blocked;
+    }
+
+    /** The block this is after. */
+    public BlockPos target() {
+        return target;
+    }
+
+    /**
+     * The block in the way of the one this is after, or null when nothing is or the body is not yet close
+     * enough to tell. What the passage layer reads to know that the leaves, and not the log, are the
+     * problem.
+     */
+    public BlockPos occluder() {
+        return occluder;
+    }
+
+    /**
+     * Another go, because the world has changed. Everything the attempt had counted against itself is
+     * dropped: the leaves that were in the way are gone, and a goal that gave up on a block it could not
+     * see should not stay given up once it can. Only ever called by whatever changed the world.
+     */
+    public void retry() {
+        blocked = false;
+        ticksRunning = 0;
+        ticksStalled = 0;
+        advance.reset();
     }
 
     /** Only once the block is actually coming apart — before that there is no progress worth protecting. */
@@ -162,6 +196,7 @@ public final class MineSightingGoal implements MobGoal {
         if (!withinReach(body, centre)) {
             body.moveControl().moveTo(centre, SPEED);
             advance.walking(body);
+            occluder = null;
             return;
         }
 
@@ -180,7 +215,7 @@ public final class MineSightingGoal implements MobGoal {
     }
 
     private boolean withinReach(MobBody body, Vec3 centre) {
-        double reach = body.player().blockInteractionRange() - REACH_MARGIN;
+        double reach = Math.max(2.5, body.player().blockInteractionRange() - REACH_MARGIN);
         return body.player().getEyePosition().distanceToSqr(centre) <= reach * reach;
     }
 
@@ -194,7 +229,8 @@ public final class MineSightingGoal implements MobGoal {
             return;
         }
         equipped = true;
-        int slot = tool.hotbarSlot(body.player().getInventory());
+        // The tool for this block in particular: the one that will get it to drop, when there is one.
+        int slot = tool.hotbarSlotFor(body.player().getInventory(), body.level().getBlockState(target));
         if (slot >= 0) {
             body.player().getInventory().setSelectedSlot(slot);
         }
@@ -259,7 +295,9 @@ public final class MineSightingGoal implements MobGoal {
         BlockHitResult hit = body.level().clip(new ClipContext(
                 player.getEyePosition(), Vec3.atCenterOf(target),
                 ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
-        return hit.getType() == HitResult.Type.BLOCK && hit.getBlockPos().equals(target) ? hit : null;
+        boolean aimed = hit.getType() == HitResult.Type.BLOCK && hit.getBlockPos().equals(target);
+        occluder = !aimed && hit.getType() == HitResult.Type.BLOCK ? hit.getBlockPos().immutable() : null;
+        return aimed ? hit : null;
     }
 
     private Optional<MultiPlayerGameMode> gameMode() {

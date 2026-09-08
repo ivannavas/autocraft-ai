@@ -7,8 +7,10 @@ import java.util.Set;
 import io.github.ivannavas.autocraftai.mob.MobBody;
 import io.github.ivannavas.autocraftai.mob.MobControl;
 import io.github.ivannavas.autocraftai.mob.MobGoal;
+import io.github.ivannavas.autocraftai.mob.ai.Placed;
 import io.github.ivannavas.autocraftai.mob.ai.objective.InventoryCensus;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Reserve;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.client.player.LocalPlayer;
@@ -16,7 +18,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Inventory;
-import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -90,6 +91,12 @@ public final class PlaceBlockGoal implements MobGoal {
         return !placed && ticksRunning < GIVE_UP_TICKS;
     }
 
+    /** The block is down (or there was nowhere to put it): either way this move has run its course. */
+    @Override
+    public boolean isDone() {
+        return placed;
+    }
+
     /**
      * Walking to where the block goes, and nothing else: the placement itself ends the goal, so a body
      * that is neither getting to the spot nor putting anything down is a body waiting for something that
@@ -150,7 +157,7 @@ public final class PlaceBlockGoal implements MobGoal {
 
     /** Walk into reach, aim at the face of something solid next to the target, and right-click it. */
     private void placeAt(MobBody body, BlockPos where) {
-        Direction face = faceToClick(body, where);
+        Direction face = open(body, where) ? faceToClick(body, where) : null;
         if (face == null) {
             // Nothing solid beside it to build off. The table chose a spot that has since become
             // impossible; give the decision back rather than standing there clicking at air.
@@ -174,6 +181,8 @@ public final class PlaceBlockGoal implements MobGoal {
 
     private void click(MobBody body, BlockPos against, Direction face, Vec3 hit) {
         gameMode().ifPresent(mode -> {
+            // Noted before the click, with what is in the hand now: after it the stack may be gone.
+            Placed.get().mark(against.relative(face), body.player().getMainHandItem());
             mode.useItemOn(body.player(), InteractionHand.MAIN_HAND,
                     new BlockHitResult(hit, face, against, false));
             body.player().swing(InteractionHand.MAIN_HAND);
@@ -200,6 +209,11 @@ public final class PlaceBlockGoal implements MobGoal {
 
     private boolean solid(MobBody body, BlockPos pos) {
         return body.level().isLoaded(pos) && body.level().getBlockState(pos).isSolid();
+    }
+
+    /** Whether a block could go here: air, or something a placed block pushes aside, like a snow layer. */
+    private boolean open(MobBody body, BlockPos pos) {
+        return body.level().isLoaded(pos) && body.level().getBlockState(pos).canBeReplaced();
     }
 
     /** The highest solid block under the body, which is the one a new block goes on top of. */
@@ -249,8 +263,9 @@ public final class PlaceBlockGoal implements MobGoal {
                 : InventoryCensus.of(inventory);
         for (int slot = 0; slot < Inventory.SELECTION_SIZE; slot++) {
             ItemStack stack = inventory.getItem(slot);
-            if (!stack.isEmpty() && stack.getItem() instanceof BlockItem
-                    && reserve.allowsPlacing(stack, held)) {
+            // Building material only. A log is a block too, and a body that could place one did, four
+            // times in a row, the moment placing stopped costing anything: see Resource#buildsWith.
+            if (Resource.buildsWith(stack) && reserve.allowsPlacing(stack, held)) {
                 return slot;
             }
         }

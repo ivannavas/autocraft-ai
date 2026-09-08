@@ -55,6 +55,24 @@ public record InventoryCensus(Map<Resource, Integer> counts) {
         return new InventoryCensus(total);
     }
 
+    /**
+     * This total with some of it taken back off, floored at nothing.
+     *
+     * <p>The one way the total goes down, and it is not a loss: it is a gain that was never one. A body
+     * that breaks a block it placed itself has the block back in the bag, and {@link #plusGains} counted
+     * that as getting it, so this uncounts it. What it means by "got three logs" is three logs from the
+     * world, not one log three times.
+     */
+    public InventoryCensus less(Map<Resource, Integer> amounts) {
+        if (amounts.isEmpty()) {
+            return this;
+        }
+        Map<Resource, Integer> total = new EnumMap<>(counts);
+        amounts.forEach((resource, amount) ->
+                total.merge(resource, -amount, (held, taken) -> Math.max(0, held + taken)));
+        return new InventoryCensus(total);
+    }
+
     /** How many more of this the body holds than the given earlier census. Never negative. */
     public int gainedSince(InventoryCensus earlier, Resource resource) {
         return Math.max(0, count(resource) - earlier.count(resource));

@@ -22,6 +22,14 @@ import net.minecraft.world.item.ItemStack;
  * full of nothing. This holds it down until the mouthful is finished, and then stops, so a decision to eat
  * costs one item rather than the whole larder.
  *
+ * <h2>It has to hold the button, not click it</h2>
+ * {@code useItem} starts the mouthful and vanilla ends it on the very next tick, because
+ * {@code Minecraft.handleKeybinds} releases whatever is in use the moment the use key is not down — and
+ * no key is ever down here. The first version of this goal called {@code useItem} once, saw the item no
+ * longer in use a tick later, and reported the mouthful eaten; the body starved with a bag full of food it
+ * had "eaten" fourteen times. So every tick of the mouthful the goal asks the body to keep the button held,
+ * and {@code MultiPlayerGameModeMixin} keeps the release from happening while it does.
+ *
  * <h2>It claims no controls</h2>
  * You can walk and eat, and eating needs neither the legs nor the eyes, so the engine never sees this as a
  * rival to anything. In practice the brain installs it as the move of the moment and the body stands still
@@ -79,8 +87,9 @@ public final class EatGoal implements MobGoal {
             }
             player.getInventory().setSelectedSlot(slot);
             // The same right-click a player makes. The server answers by starting the animation, and from
-            // then on the item eats itself down as long as nothing interrupts it.
+            // then on the item eats itself down as long as the button stays held.
             gameMode().ifPresent(mode -> mode.useItem(player, InteractionHand.MAIN_HAND));
+            body.holdUse();
             started = true;
             return;
         }
@@ -89,7 +98,15 @@ public final class EatGoal implements MobGoal {
         // the body's hand. Either way this decision is over; whether to eat again is the brain's to make.
         if (!player.isUsingItem()) {
             eaten = true;
+            return;
         }
+        body.holdUse();
+    }
+
+    /** The mouthful is down: the move is complete, not stuck, and the brain need not wait on it. */
+    @Override
+    public boolean isDone() {
+        return eaten;
     }
 
     @Override

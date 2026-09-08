@@ -1,5 +1,7 @@
 package io.github.ivannavas.autocraftai.mob.ai.objective;
 
+import java.util.EnumSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -94,6 +96,13 @@ public record Build(Structure structure, String reason) implements Phase {
             }
         }
         return found;
+    }
+
+    /** One folder for building, the structure as the source: a portal frame and a workbench go up differently. */
+    @Override
+    public Pursuit pursuit(BlockState seen, int y, Bounds plan) {
+        return new Pursuit(shape(), structure.name(),
+                new Whereabouts(plan, List.of(), EnumSet.of(Way.WALK, Way.CLIMB)));
     }
 
     @Override

@@ -51,16 +51,38 @@ public class ObjectiveAgent extends AgentExecutor {
             1. GATHER — get N units of a resource.
                target: one of these words exactly, and never a block id. Block ids go in "sources", which
                        is a different field for a different thing: "LOG", not "minecraft:oak_log".
-                       LOG, PLANKS, STICK, CRAFTING_TABLE, PICKAXE, SWORD, COBBLESTONE, DIRT, COAL, IRON,
-                       OBSIDIAN, FOOD
+                       LOG, PLANKS, STICK, CRAFTING_TABLE, PICKAXE, STONE_PICKAXE, SWORD, COBBLESTONE,
+                       DIRT, SAND, GRAVEL, COAL, IRON, OBSIDIAN, FOOD
+                       PICKAXE is the first, wooden one. STONE_PICKAXE is the one that mines iron: iron
+                       ore gives nothing to a wooden pickaxe, so IRON always comes after STONE_PICKAXE.
+                       DIRT, SAND and GRAVEL are all just blocks to build with: ask for whichever the
+                       biome actually has (sand in a desert, dirt in grassland), never for dirt in a
+                       desert.
                amount: 1..64
                sources: optional, but strongly recommended for anything taken from the world. It is the
                        list of blocks the resource comes off and what to break each one with. The player
                        will look for exactly those blocks, so name them all — wood comes off several kinds
                        of tree, iron off both stone and deepslate — using real Minecraft block ids.
                        Tools: HAND, PICKAXE, AXE, SHOVEL, SWORD, HOE.
-                       Example: "sources": [{"block": "minecraft:oak_log", "tool": "AXE"},
-                                            {"block": "minecraft:birch_log", "tool": "AXE"}]
+                       Each source also says where that block is and how to move to reach it. The player
+                       learns how to find each source separately, and this is what it learns against:
+                         band: the heights the block is found between. Trees: around the surface the
+                               player is on. Stone: below the surface. Iron: 0 to 72 in stone, -64 to 0
+                               in deepslate. Diamonds: -64 to 16.
+                         terrain: the kinds of place it is common in, using the TRAVEL words below, e.g.
+                               ["WOODED"] for logs, ["MOUNTAIN", "CAVE"] for coal. Leave it out when it is
+                               found everywhere.
+                         ways: how the player may move to reach it. WALK is always allowed. Add DIG when
+                               sinking a shaft is a sensible route (stone, ores, anything underground) and
+                               CLIMB when finding a way up or down helps (slopes, ledges, stacking blocks
+                               under its feet). Never DIG for anything on the surface: a player digging
+                               for wood is a player in a hole.
+                       Example: "sources": [
+                         {"block": "minecraft:oak_log", "tool": "AXE",
+                          "band": {"floor": 60, "ceiling": 100}, "terrain": ["WOODED"], "ways": ["WALK"]},
+                         {"block": "minecraft:iron_ore", "tool": "PICKAXE",
+                          "band": {"floor": 0, "ceiling": 72}, "terrain": ["MOUNTAIN", "CAVE"],
+                          "ways": ["WALK", "DIG", "CLIMB"]}]
                        Anything that is crafted rather than found (planks, sticks, pickaxe, sword, table)
                        has no sources, and neither does FOOD: it comes off animals, and the player gets it
                        by hunting rather than by looking for a block.
@@ -88,6 +110,8 @@ public class ObjectiveAgent extends AgentExecutor {
             - Crafting needs the whole recipe: planks come from logs, sticks from planks, and the pickaxe
               and the sword need a crafting table standing, planks and sticks.
             - Mining stone needs a pickaxe, and reaching the stone needs digging down.
+            - Mining iron needs a STONE_PICKAXE (3 COBBLESTONE + 2 STICK at a crafting table). A plan for
+              IRON without a stone pickaxe in the bag is a plan for the stone pickaxe first.
             - "Obtained over the whole run" is a running total: do not ask again for something that already
               adds up, unless the next step needs more of it.
             - Small, justified amounts: what the next step needs, not a warehouse.
@@ -110,7 +134,8 @@ public class ObjectiveAgent extends AgentExecutor {
             while pursuing it. Being outside costs it, a little per block and per second, so it can still
             dip out when there is a reason. Set one for almost every plan — most objectives belong at a
             height, and saying so is what stops the player pursuing a good objective from a place it can
-            never be reached from.
+            never be reached from. For a GATHER with sources, each source's own "band" is what the player
+            follows while it looks for that source; "bounds" is what it falls back on.
               "bounds": {"floor": 40, "ceiling": 70}
             - Wood, animals, food, dirt and anything else on the surface: keep the player on the surface.
               The situation says what height it is at now, and near that is usually right — something like
@@ -154,7 +179,8 @@ public class ObjectiveAgent extends AgentExecutor {
 
             Answer with a JSON object ONLY, no text around it and no code fences:
             {"objective": "<SHAPE>", "target": "<TARGET FOR THAT SHAPE>", "amount": <integer>,
-             "sources": [{"block": "<id>", "tool": "<TOOL>"}],
+             "sources": [{"block": "<id>", "tool": "<TOOL>", "band": {"floor": <integer>, "ceiling": <integer>},
+                          "terrain": ["<TERRAIN>"], "ways": ["<WAY>"]}],
              "bounds": {"floor": <integer>, "ceiling": <integer>},
              "needs": [{"item": "<RESOURCE>", "amount": <integer>}],
              "reserve": [{"item": "<RESOURCE>", "amount": <integer>}],

@@ -3,11 +3,14 @@ package io.github.ivannavas.autocraftai.mob.ai;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.function.Predicate;
 
 import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Terrain;
 import io.github.ivannavas.autocraftai.mob.goal.EatGoal;
 import net.minecraft.client.Minecraft;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.Mth;
@@ -144,6 +147,11 @@ public final class Perception {
             if (!level.isLoaded(pos) || !kind.test(level.getBlockState(pos))) {
                 continue;
             }
+            // Never one of its own. A block the body put down is a resource it already has, and seeing
+            // it as one to be gathered is how it came to dig its own pillar out from under itself.
+            if (Placed.get().isOurs(level, pos)) {
+                continue;
+            }
             double distance = Vec3.atCenterOf(pos).distanceToSqr(from);
             if (distance < bestDistance) {
                 bestDistance = distance;
@@ -223,6 +231,84 @@ public final class Perception {
                 && level.getFluidState(under).isEmpty()
                 && level.getBlockState(below).isSolid()
                 && level.getFluidState(below).isEmpty();
+    }
+
+    /** How far out the loaded world is searched for a kind of place, in blocks. Eight chunks, as loaded. */
+    private static final int TERRAIN_SCAN = 128;
+    /** How far apart the samples along each direction are. A biome smaller than this is not worth the trip. */
+    private static final int TERRAIN_STEP = 16;
+    /** How many directions are tried. Sixteen is a compass with half-points, and enough. */
+    private static final int TERRAIN_RAYS = 16;
+
+    /**
+     * The way to the nearest place of one of these kinds that the loaded world already contains, as a yaw
+     * in radians, or empty when none is in range.
+     *
+     * <p>The game keeps eight chunks of biome loaded in every direction, which is a hundred and twenty
+     * eight blocks of map the body was not reading. Told to find a forest it wandered until it stumbled
+     * into one, and on the first run it never did; the forest was two hundred blocks off and the position
+     * table was learning which way to turn from a reward that could not see it. This looks. It is a fact
+     * about the map, not a lesson, so it is not learned: where the forest is is not a matter of opinion.
+     *
+     * <p>Nearest first, so a scan stops at the first ring that has one; the direction is the ring's, which
+     * for a body outside the biome is the way in.
+     */
+    public static OptionalDouble bearingTo(LocalPlayer player, List<Terrain> kinds) {
+        if (kinds.isEmpty()) {
+            return OptionalDouble.empty();
+        }
+        Level level = player.level();
+        Vec3 here = player.position();
+        for (int radius = TERRAIN_STEP; radius <= TERRAIN_SCAN; radius += TERRAIN_STEP) {
+            for (int ray = 0; ray < TERRAIN_RAYS; ray++) {
+                double heading = ray * (2.0 * Math.PI / TERRAIN_RAYS);
+                int x = (int) Math.floor(here.x - Math.sin(heading) * radius);
+                int z = (int) Math.floor(here.z + Math.cos(heading) * radius);
+                if (!level.hasChunk(x >> 4, z >> 4)) {
+                    continue;
+                }
+                String biome = level.getBiome(new BlockPos(x, player.getBlockY(), z)).getRegisteredName();
+                if (kinds.stream().anyMatch(kind -> kind.matches(biome))) {
+                    return OptionalDouble.of(heading);
+                }
+            }
+        }
+        return OptionalDouble.empty();
+    }
+
+    /** How far under the surface a wanted block is looked for: a trunk under its canopy, an ore in a cliff. */
+    private static final int SURFACE_DEPTH = 8;
+
+    /**
+     * The way to the nearest place in the loaded map where one of the wanted blocks stands at or just
+     * under the surface, as a yaw in radians, or empty when the map shows none.
+     *
+     * <p>The kind of place is not enough. Plains have oaks, and a body on plains looking for oak is in
+     * the right kind of place and may still be eighty blocks from the nearest tree, with eyes that reach
+     * eight. It walked at random for eight minutes that way. The heightmap says where the surface is at
+     * every loaded column, and a few blocks under the surface is where a trunk is; sampling the columns
+     * along sixteen rays is a few hundred block reads, once a decision, and it turns a search into a walk.
+     */
+    public static OptionalDouble bearingToBlock(LocalPlayer player, Predicate<BlockState> wanted) {
+        Level level = player.level();
+        Vec3 here = player.position();
+        for (int radius = TERRAIN_STEP / 2; radius <= TERRAIN_SCAN; radius += TERRAIN_STEP / 2) {
+            for (int ray = 0; ray < TERRAIN_RAYS; ray++) {
+                double heading = ray * (2.0 * Math.PI / TERRAIN_RAYS);
+                int x = (int) Math.floor(here.x - Math.sin(heading) * radius);
+                int z = (int) Math.floor(here.z + Math.cos(heading) * radius);
+                if (!level.hasChunk(x >> 4, z >> 4)) {
+                    continue;
+                }
+                int top = level.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z) - 1;
+                for (int y = top; y > top - SURFACE_DEPTH; y--) {
+                    if (wanted.test(level.getBlockState(new BlockPos(x, y, z)))) {
+                        return OptionalDouble.of(heading);
+                    }
+                }
+            }
+        }
+        return OptionalDouble.empty();
     }
 
     /**

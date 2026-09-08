@@ -7,6 +7,7 @@ import java.util.Set;
 import io.github.ivannavas.autocraftai.mob.MobBody;
 import io.github.ivannavas.autocraftai.mob.MobControl;
 import io.github.ivannavas.autocraftai.mob.MobGoal;
+import lombok.extern.slf4j.Slf4j;
 import net.minecraft.core.BlockPos;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.entity.Pose;
@@ -49,6 +50,7 @@ import net.minecraft.world.phys.Vec3;
  * can go, {@link io.github.ivannavas.autocraftai.mob.MoveControl} already holds the jump that keeps its
  * head up, and a line across a lake is the same line. Lava is not water, and stays a wall.
  */
+@Slf4j
 public final class TravelGoal implements MobGoal {
 
     private static final Set<MobControl> CONTROLS = EnumSet.of(MobControl.MOVE, MobControl.LOOK);
@@ -213,6 +215,10 @@ public final class TravelGoal implements MobGoal {
             }
         }
         // Every way out is a cliff, a wall or unloaded chunk. Hand the decision back rather than shove.
+        // Said in the log, because a body standing with a clear view and nowhere to go is the one failure
+        // nothing else records, and where it happened is the only clue to why.
+        log.info("Travel stranded at {}: nothing walkable along bearing {} or any detour",
+                body.player().blockPosition().toShortString(), Math.round(Math.toDegrees(bearing)));
         stranded = true;
     }
 

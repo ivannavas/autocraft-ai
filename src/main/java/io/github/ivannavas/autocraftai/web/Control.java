@@ -83,11 +83,13 @@ public final class Control {
     private final Settings settings;
     private final QLearningBrain brain;
     private final NewWorld newWorld;
+    private final Clips clips;
 
-    public Control(Settings settings, QLearningBrain brain, NewWorld newWorld) {
+    public Control(Settings settings, QLearningBrain brain, NewWorld newWorld, Clips clips) {
         this.settings = settings;
         this.brain = brain;
         this.newWorld = newWorld;
+        this.clips = clips;
     }
 
     /**
@@ -189,6 +191,12 @@ public final class Control {
                 + ",\"player\":" + (player == null ? "null" : quote(player))
                 + ",\"health\":" + (inWorld ? String.format(Locale.ROOT, "%.1f", client.player.getHealth()) : "null")
                 + ",\"food\":" + (inWorld ? client.player.getFoodData().getFoodLevel() : 0)
+                // Where it is, for whoever is reading a run back without the game on screen.
+                + ",\"x\":" + (inWorld ? client.player.getBlockX() : 0)
+                + ",\"y\":" + (inWorld ? client.player.getBlockY() : 0)
+                + ",\"z\":" + (inWorld ? client.player.getBlockZ() : 0)
+                + ",\"biome\":" + (inWorld ? quote(client.level.getBiome(client.player.blockPosition())
+                        .getRegisteredName()) : "null")
                 + ",\"world\":" + quote(newWorld.state())
                 + ",\"worldBusy\":" + newWorld.busy()
                 // Whether the run is down because it was told to, rather than because something broke.
@@ -199,6 +207,9 @@ public final class Control {
                 // The game's own frame rate. The question "why does it look slow" has two possible
                 // answers and this is the one the panel cannot work out for itself.
                 + ",\"fps\":" + client.getFps()
+                // Clips written this session. The buffer state itself lives on /stream/status,
+                // which is where anything needing an OBS connection belongs.
+                + ",\"clips\":" + clips.count()
                 + ",\"overlayPort\":" + QTableServer.PORT
                 + ",\"settings\":" + settings.describe()
                 + "}");

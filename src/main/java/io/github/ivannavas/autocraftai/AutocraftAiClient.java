@@ -5,6 +5,7 @@ import java.nio.file.Path;
 import io.github.ivannavas.autocraftai.mob.MobEngine;
 import io.github.ivannavas.autocraftai.mob.ai.QLearningBrain;
 import io.github.ivannavas.autocraftai.ui.ClearLearningButton;
+import io.github.ivannavas.autocraftai.web.Clips;
 import io.github.ivannavas.autocraftai.web.Control;
 import io.github.ivannavas.autocraftai.web.NewWorld;
 import io.github.ivannavas.autocraftai.web.QTableServer;
@@ -46,10 +47,16 @@ public class AutocraftAiClient implements ClientModInitializer {
         newWorld.install();
         ClientTickEvents.START_CLIENT_TICK.register(newWorld::tick);
 
+        // Every objective reached is worth a minute of video, and nothing in between is. The brain
+        // announces the moment; OBS has been holding that minute in memory the whole time.
+        Clips clips = new Clips(settings);
+        brain.progression().onReached(clips::reached);
+
         // The overlay reads a copy the brain hands over after each decision, never the live table. The
         // endpoints go on the same port: the panel that drives the run also embeds the page.
         QTableServer overlay =
-                new QTableServer(brain.actionNames(), settings, new Control(settings, brain, newWorld));
+                new QTableServer(brain.actionNames(), settings,
+                        new Control(settings, brain, newWorld, clips));
         brain.onSnapshot(overlay::publish);
         overlay.start();
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> overlay.stop());

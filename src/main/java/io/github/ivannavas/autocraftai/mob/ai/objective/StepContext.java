@@ -1,6 +1,7 @@
 package io.github.ivannavas.autocraftai.mob.ai.objective;
 
 import java.util.List;
+import java.util.Map;
 
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.phys.Vec3;
@@ -38,6 +39,13 @@ import net.minecraft.world.phys.Vec3;
  *
  * <p>{@link #resourceInSight()} is the eyes' answer, passed through because nothing else can see: whether
  * the body ended the step somewhere that has what the plan is after.
+ *
+ * <p>{@link #placed()} and {@link #reclaimed()} are what the two censuses get wrong on their own. A block
+ * that went from the bag into the world under the body's own feet reads to them as a loss, and taking it
+ * back up reads as a find, and a body that was charged for the one and paid for the other learned to do
+ * both in a loop. Both are counted where they happen — see
+ * {@link io.github.ivannavas.autocraftai.mob.ai.Placed} — and {@link #netChange} nets them out, so that
+ * placed is not lost and reclaimed is not gained.
  */
 public record StepContext(
         LocalPlayer player,
@@ -56,6 +64,8 @@ public record StepContext(
         int airBefore,
         int airAfter,
         List<Resource> crafted,
+        Map<Resource, Integer> placed,
+        Map<Resource, Integer> reclaimed,
         boolean pinned,
         boolean resourceInSight) {
 
@@ -64,6 +74,18 @@ public record StepContext(
 
     public StepContext {
         crafted = crafted == null ? List.of() : List.copyOf(crafted);
+        placed = placed == null ? Map.of() : Map.copyOf(placed);
+        reclaimed = reclaimed == null ? Map.of() : Map.copyOf(reclaimed);
+    }
+
+    /** How many of this the body put down in the world over the step. */
+    public int placed(Resource resource) {
+        return placed.getOrDefault(resource, 0);
+    }
+
+    /** How many of its own placed blocks of this the body took back up over the step. */
+    public int reclaimed(Resource resource) {
+        return reclaimed.getOrDefault(resource, 0);
     }
 
     /** Points of hunger restored; zero when it only ticked down, which is not this term's business. */
@@ -100,14 +122,16 @@ public record StepContext(
     }
 
     /**
-     * How much more of this the body holds than it did, and how much less when it went the other way.
+     * How much more of this the body holds than it did, and how much less when it went the other way —
+     * counting what it put down in the world as still its own, and what it took back up as never gone.
      *
-     * <p>The signed version of {@link #gained}, for the one objective that has to care about losses:
-     * gathering. Everything else is measured by what turned up, and turning up is the only direction
-     * those things go.
+     * <p>The signed version of {@link #gained}, for the objectives that have to care about losses:
+     * gathering, and the shopping list. A block placed is a metre away and a swing from being in the bag
+     * again; charging it as spent taught the body to fetch it straight back, and paying for the fetch
+     * taught it to do that for ever.
      */
     public int netChange(Resource resource) {
-        return after.count(resource) - before.count(resource);
+        return after.count(resource) - before.count(resource) + placed(resource) - reclaimed(resource);
     }
 
     /** Seconds spent swinging at blocks the thing in hand was never going to get a drop out of. */

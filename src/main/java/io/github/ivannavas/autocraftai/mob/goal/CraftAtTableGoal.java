@@ -8,6 +8,7 @@ import io.github.ivannavas.autocraftai.mob.MobBody;
 import io.github.ivannavas.autocraftai.mob.MobControl;
 import io.github.ivannavas.autocraftai.mob.MobGoal;
 import io.github.ivannavas.autocraftai.mob.ai.CraftLog;
+import io.github.ivannavas.autocraftai.mob.ai.Placed;
 import io.github.ivannavas.autocraftai.mob.ai.Recipes;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
 import net.minecraft.client.Minecraft;
@@ -184,7 +185,9 @@ public final class CraftAtTableGoal implements CraftingGoal {
         body.moveControl().stop();
         body.lookControl().lookAt(Vec3.atCenterOf(ground.above()));
         body.player().getInventory().setSelectedSlot(slot);
-        // Clicking the top face of the ground block is what puts the table on top of it.
+        // Clicking the top face of the ground block is what puts the table on top of it. The table is the
+        // body's own once it stands there: it left the bag, and it was not lost.
+        Placed.get().mark(ground.above(), body.player().getMainHandItem());
         use(body, ground, Direction.UP, Vec3.atCenterOf(ground).add(0.0, 0.5, 0.0));
         advance.progress();
     }
@@ -201,10 +204,12 @@ public final class CraftAtTableGoal implements CraftingGoal {
         for (Direction side : Direction.Plane.HORIZONTAL) {
             BlockPos ground = feet.relative(side).below();
             BlockPos above = ground.above();
+            // Room above means nothing that would stop the table going in, not only air: a snow layer,
+            // grass or a flower gives way to a placed block, and a taiga is nothing but snow layers.
             if (level.isLoaded(ground)
                     && level.getBlockState(ground).isSolid()
-                    && level.getBlockState(above).isAir()
-                    && level.getBlockState(above.above()).isAir()) {
+                    && level.getBlockState(above).canBeReplaced()
+                    && level.getBlockState(above.above()).canBeReplaced()) {
                 return ground;
             }
         }
@@ -238,7 +243,10 @@ public final class CraftAtTableGoal implements CraftingGoal {
                 best = pos.immutable();
             }
         }
-        return best;
+        // None in sight, but the body may have set one up earlier and walked off mining. It knows where
+        // its own went; walk back to the nearest that is still standing rather than stand here stuck.
+        return best != null ? best
+                : Placed.get().nearestOwn(level, player.position(), Blocks.CRAFTING_TABLE);
     }
 
     private static int hotbarSlotWithTable(LocalPlayer player) {

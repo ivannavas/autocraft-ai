@@ -60,6 +60,48 @@ public enum Tool {
         return -1;
     }
 
+    /**
+     * The hotbar slot best suited to this block: one of these that the block will actually drop for, or
+     * failing that any of these, or -1.
+     *
+     * <p>Tier is the whole difference. A wooden pickaxe is a pickaxe and iron ore does not care: it gives
+     * nothing to anything below stone. Asking for "a pickaxe" put the wooden one in the hand in front of
+     * iron and booked the swings as wasted, when the stone one was two slots along.
+     */
+    public int hotbarSlotFor(Inventory inventory, BlockState state) {
+        int any = -1;
+        for (int slot = 0; slot < Inventory.SELECTION_SIZE; slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            if (!matches(stack)) {
+                continue;
+            }
+            if (stack.isCorrectToolForDrops(state)) {
+                return slot;
+            }
+            if (any < 0) {
+                any = slot;
+            }
+        }
+        return any;
+    }
+
+    /**
+     * Whether something in the hotbar will get this block to drop — or nothing is needed, as with wood
+     * and dirt. The question every legality check about breaking a block should be asking, rather than
+     * whether what happens to be in the hand right now would do.
+     */
+    public static boolean canHarvest(Inventory inventory, BlockState state) {
+        if (!state.requiresCorrectToolForDrops()) {
+            return true;
+        }
+        for (int slot = 0; slot < Inventory.SELECTION_SIZE; slot++) {
+            if (inventory.getItem(slot).isCorrectToolForDrops(state)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** What the game itself says should break this block. {@link #HAND} when nothing in particular. */
     public static Tool bestFor(BlockState state) {
         if (state.is(BlockTags.MINEABLE_WITH_PICKAXE)) {

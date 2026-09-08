@@ -1,5 +1,6 @@
 package io.github.ivannavas.autocraftai.mob.ai.objective;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -61,20 +62,25 @@ public record Gather(Resource resource, int amount, List<Source> sources, String
         return Map.of(resource, amount);
     }
 
-    /** Told where the resource comes from, seeing one of those blocks is not a decision. */
+    /**
+     * Told where the resource comes from, seeing one of those blocks is not a decision — for what grows on
+     * the surface. Not for what is underground. A stone block glimpsed in a hillside while the body stands
+     * on a snowy surface is not the way to cobblestone: the reachable route is to dig down to it, and
+     * fixating on the exposed face means fighting the dig for the same second every second. Wood on sight,
+     * stone by the shaft.
+     */
     @Override
     public boolean minesWhatItSees() {
-        return true;
+        // Ore glimpsed underground is worth breaking on sight and is reachable — it is exposed in a cave
+        // or shaft wall. What must not fixate is the bulk block sought from the surface: cobblestone,
+        // dirt, sand, gravel, which are dug for, not stared at through a snow layer. That set is exactly
+        // the buildables.
+        return !resource.buildable();
     }
 
     @Override
     public Optional<Resource> scores() {
         return Optional.of(resource);
-    }
-
-    @Override
-    public boolean wantsDepth() {
-        return resource.underground();
     }
 
     @Override
@@ -133,6 +139,29 @@ public record Gather(Resource resource, int amount, List<Source> sources, String
                 .mapToDouble(Resource::worth)
                 .sum();
         return towards - astray;
+    }
+
+    /**
+     * The resource's own folder, and within it the source in view — or, with nothing in view, the source
+     * whose band is nearest the body's height, so a body at the surface looks for the ore that is found
+     * near the surface and a body at bedrock for the one found there. Ties go to the first the planner
+     * listed, which is the one it thought of first. With no sources at all, the folder alone, and what the
+     * run always assumed about where the resource is.
+     */
+    @Override
+    public Pursuit pursuit(BlockState seen, int y, Bounds plan) {
+        Source chosen = null;
+        if (seen != null) {
+            chosen = sources.stream().filter(source -> source.matches(seen)).findFirst().orElse(null);
+        }
+        if (chosen == null && !sources.isEmpty()) {
+            chosen = sources.stream()
+                    .min(Comparator.comparingInt(source -> source.where().band().outside(y)))
+                    .orElse(null);
+        }
+        Whereabouts where = chosen == null ? Whereabouts.of(resource) : chosen.where();
+        return new Pursuit(resource.name(), chosen == null ? Pursuit.NO_SOURCE : chosen.name(),
+                where.within(plan));
     }
 
     /** Whichever blocks the planner named, or failing that whatever the resource looks like in the world. */

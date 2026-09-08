@@ -1,7 +1,11 @@
 package io.github.ivannavas.autocraftai.mob;
 
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -19,6 +23,14 @@ public final class MoveControl {
 
     /** Horizontal distance at which the destination counts as reached. */
     private static final double ARRIVAL_DISTANCE = 0.6;
+    /** How far ahead the next step is checked for something that kills. About one stride. */
+    private static final double LOOK_AHEAD = 0.9;
+    /**
+     * A drop of this many blocks is not taken. Four is what the walking goals will aim down and costs a
+     * half-heart; from five up it is a fall, and a body that walks off one at two hearts is a body that
+     * dies. The same line {@code Obstruction} draws, so the two never disagree about what a step is.
+     */
+    private static final int DROP = 5;
 
     private final MobBody body;
 
@@ -81,10 +93,18 @@ public final class MoveControl {
             return;
         }
 
+        double distance = Math.sqrt(distanceSqr);
+        // The one thing a straight line must not do is walk into what kills. Lava, a cactus and a long
+        // drop are all a stride away before anything higher up has had a chance to notice them; the step
+        // is simply not taken, the destination stays, and standing still with somewhere to be is what the
+        // passage layer reads as a body that needs a way round.
+        if (deadlyAhead(player, dx / distance, dz / distance)) {
+            return;
+        }
+
         // Decompose the world direction into the (strafe, forward) pair the movement code expects. This is
         // the inverse of the rotation LivingEntity applies to the input vector: with yaw y, forward points
         // at (-sin y, cos y) and left at (cos y, sin y).
-        double distance = Math.sqrt(distanceSqr);
         float yaw = player.getYRot() * Mth.DEG_TO_RAD;
         float sin = Mth.sin(yaw);
         float cos = Mth.cos(yaw);
@@ -99,5 +119,39 @@ public final class MoveControl {
         if (player.isInWater() || (player.horizontalCollision && player.onGround())) {
             body.setJumping(true);
         }
+    }
+
+    /**
+     * Whether the next stride lands on, in or over something that kills: lava at the feet or where the
+     * feet would land, a cactus, or a fall of {@link #DROP} or more. Only asked with the feet on the
+     * ground; a body already in the air or the water is past the point where not stepping helps.
+     */
+    private static boolean deadlyAhead(LocalPlayer player, double nx, double nz) {
+        if (!player.onGround()) {
+            return false;
+        }
+        Level level = player.level();
+        BlockPos feet = BlockPos.containing(player.getX() + nx * LOOK_AHEAD, player.getY(),
+                player.getZ() + nz * LOOK_AHEAD);
+        if (!level.isLoaded(feet)) {
+            return false;
+        }
+        if (burns(level, feet) || burns(level, feet.below()) || burns(level, feet.above())) {
+            return true;
+        }
+        // A drop: nothing solid and nothing to swim in for DROP blocks under where the feet would be.
+        for (int down = 0; down < DROP; down++) {
+            BlockPos pos = feet.below(down);
+            if (!level.isLoaded(pos) || level.getBlockState(pos).isSolid()
+                    || !level.getFluidState(pos).isEmpty()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean burns(Level level, BlockPos pos) {
+        return level.getFluidState(pos).is(FluidTags.LAVA) || level.getBlockState(pos).is(Blocks.CACTUS)
+                || level.getBlockState(pos).is(Blocks.MAGMA_BLOCK);
     }
 }

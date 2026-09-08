@@ -28,6 +28,7 @@ public final class MobBody {
     private boolean jumping;
     private boolean sneaking;
     private boolean sprinting;
+    private boolean holdingUse;
 
     /** Points the body at the player of the tick about to run and drops the previous tick's commands. */
     void beginTick(LocalPlayer player) {
@@ -37,6 +38,7 @@ public final class MobBody {
         this.jumping = false;
         this.sneaking = false;
         this.sprinting = false;
+        this.holdingUse = false;
     }
 
     /** Runs the two controls in the order that makes movement follow the new facing, not the old one. */
@@ -101,6 +103,22 @@ public final class MobBody {
     /** Asked for by a goal rather than by walking into something. Lasts the tick, like every command. */
     public void jump() {
         this.jumping = true;
+    }
+
+    /**
+     * Keeps the use button down this tick.
+     *
+     * <p>Eating, drinking and drawing a bow are not a click but a hold: the game lets go of the item the
+     * first tick it sees the use key up. A goal that started using something says so every tick it wants
+     * to go on, and the mixin on the release honours it. Lasts the tick, like every command.
+     */
+    public void holdUse() {
+        this.holdingUse = true;
+    }
+
+    /** Whether a goal wants the use button kept down this tick. Read by the release mixin. */
+    public boolean isHoldingUse() {
+        return holdingUse;
     }
 
     public void setSneaking(boolean sneaking) {

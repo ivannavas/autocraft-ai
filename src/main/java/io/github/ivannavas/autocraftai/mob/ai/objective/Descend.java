@@ -1,5 +1,9 @@
 package io.github.ivannavas.autocraftai.mob.ai.objective;
 
+import java.util.List;
+
+import net.minecraft.world.level.block.state.BlockState;
+
 /**
  * Get down to a depth.
  *
@@ -23,11 +27,6 @@ public record Descend(int level, String reason) implements Phase {
     public Descend {
         level = Math.max(FLOOR, Math.min(CEILING, level));
         reason = reason == null ? "" : reason.strip();
-    }
-
-    @Override
-    public boolean wantsDepth() {
-        return true;
     }
 
     @Override
@@ -59,6 +58,12 @@ public record Descend(int level, String reason) implements Phase {
     public double score(StepContext context) {
         double dropped = context.positionBefore().y - context.positionAfter().y;
         return Math.max(0.0, dropped) * PER_BLOCK;
+    }
+
+    /** Every way there is: a descent is the one objective a shaft is always a route to. */
+    @Override
+    public Pursuit pursuit(BlockState seen, int y, Bounds plan) {
+        return new Pursuit(shape(), Pursuit.NO_SOURCE, new Whereabouts(plan, List.of(), Way.all()));
     }
 
     @Override

@@ -33,6 +33,7 @@ public final class ApproachSightingGoal implements MobGoal {
     private final double arrivalDistance;
 
     private int ticksRunning;
+    private boolean arrived;
     private final Advance advance = new Advance();
 
     public ApproachSightingGoal(Sighting sighting) {
@@ -55,6 +56,12 @@ public final class ApproachSightingGoal implements MobGoal {
         return canUse(body) && ticksRunning < GIVE_UP_TICKS;
     }
 
+    /** Arrived: within arm's length of something that is still there. Not the same as having lost it. */
+    @Override
+    public boolean isDone() {
+        return arrived;
+    }
+
     /**
      * Walking to something and not getting any closer to it. Arriving is not this: the goal stops the
      * moment it is within arm's length, and a goal that has stopped is the brain's business rather than
@@ -68,6 +75,7 @@ public final class ApproachSightingGoal implements MobGoal {
     @Override
     public void start(MobBody body) {
         ticksRunning = 0;
+        arrived = false;
         advance.reset();
     }
 
@@ -77,6 +85,7 @@ public final class ApproachSightingGoal implements MobGoal {
         body.moveControl().moveTo(sighting.position(), SPEED);
         body.lookControl().lookAt(sighting.eyePosition());
         advance.walking(body);
+        arrived = sighting.isValid() && distanceTo(body) <= arrivalDistance;
     }
 
     @Override

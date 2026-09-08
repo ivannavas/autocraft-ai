@@ -36,10 +36,13 @@ final class Json {
     }
 
     static String of(QTableSnapshot snapshot) {
-        StringBuilder out = new StringBuilder(256 + snapshot.rows().size() * 64);
+        StringBuilder out = new StringBuilder(1024);
         out.append('{');
         out.append("\"phase\":").append(string(snapshot.phase())).append(',');
         out.append("\"phaseReason\":").append(string(snapshot.phaseReason())).append(',');
+        out.append("\"pursuit\":").append(string(snapshot.pursuit())).append(',');
+        out.append("\"activeFolder\":").append(string(snapshot.activeFolder())).append(',');
+        out.append("\"plan\":").append(plan(snapshot.plan())).append(',');
         out.append("\"currentState\":").append(string(snapshot.currentState())).append(',');
         out.append("\"currentAction\":").append(string(snapshot.currentAction())).append(',');
         out.append("\"currentTiming\":").append(string(snapshot.currentTiming())).append(',');
@@ -48,19 +51,68 @@ final class Json {
         out.append("\"decisions\":").append(snapshot.decisions()).append(',');
         out.append("\"stalls\":").append(snapshot.stalls()).append(',');
         out.append("\"actions\":").append(strings(snapshot.actions())).append(',');
+        out.append("\"timingActions\":").append(strings(snapshot.timingActions())).append(',');
+        out.append("\"placementActions\":").append(strings(snapshot.placementActions())).append(',');
+        out.append("\"positionActions\":").append(strings(snapshot.positionActions())).append(',');
         out.append("\"crafts\":").append(crafts(snapshot)).append(',');
         out.append("\"plannerRevision\":").append(PlannerLog.get().revision()).append(',');
         out.append("\"craftActions\":").append(strings(snapshot.craftActions())).append(',');
         out.append("\"craftRows\":").append(rows(snapshot.craftRows())).append(',');
-        out.append("\"positionActions\":").append(strings(snapshot.positionActions())).append(',');
-        out.append("\"positionRows\":").append(rows(snapshot.positionRows())).append(',');
-        out.append("\"placementActions\":").append(strings(snapshot.placementActions())).append(',');
-        out.append("\"placementRows\":").append(rows(snapshot.placementRows())).append(',');
         out.append("\"waterActions\":").append(strings(snapshot.waterActions())).append(',');
         out.append("\"waterRows\":").append(rows(snapshot.waterRows())).append(',');
-        out.append("\"rows\":").append(rows(snapshot));
+        out.append("\"passageActions\":").append(strings(snapshot.passageActions())).append(',');
+        out.append("\"passageRows\":").append(rows(snapshot.passageRows())).append(',');
+        out.append("\"folders\":").append(folders(snapshot.folders()));
         out.append('}');
         return out.toString();
+    }
+
+    /** Every folder of tables, in the order they were opened. */
+    private static String folders(List<QTableSnapshot.Folder> folders) {
+        StringJoiner joiner = new StringJoiner(",", "[", "]");
+        folders.forEach(folder -> joiner.add("{\"name\":" + string(folder.name())
+                + ",\"epsilon\":" + number(folder.epsilon())
+                + ",\"decisions\":" + folder.decisions()
+                + ",\"goals\":" + rows(folder.goals())
+                + ",\"timing\":" + rows(folder.timing())
+                + ",\"placement\":" + rows(folder.placement())
+                + ",\"position\":" + rows(folder.position()) + "}"));
+        return joiner.toString();
+    }
+
+    /**
+     * A plan as the page draws it, or {@code null} when there is none: between orders, and on every line
+     * of the planner's conversation that is not an answer.
+     */
+    private static String plan(QTableSnapshot.PlanView plan) {
+        if (plan == null) {
+            return "null";
+        }
+        return "{\"objective\":" + string(plan.objective())
+                + ",\"reason\":" + string(plan.reason())
+                + ",\"floor\":" + (plan.banded() ? String.valueOf(plan.floor()) : "null")
+                + ",\"ceiling\":" + (plan.banded() ? String.valueOf(plan.ceiling()) : "null")
+                + ",\"needs\":" + amounts(plan.needs())
+                + ",\"reserve\":" + amounts(plan.reserve())
+                + ",\"sources\":" + sources(plan.sources()) + "}";
+    }
+
+    private static String amounts(List<QTableSnapshot.Amount> amounts) {
+        StringJoiner joiner = new StringJoiner(",", "[", "]");
+        amounts.forEach(amount -> joiner.add(
+                "{\"item\":" + string(amount.item()) + ",\"amount\":" + amount.amount() + "}"));
+        return joiner.toString();
+    }
+
+    private static String sources(List<QTableSnapshot.SourceView> sources) {
+        StringJoiner joiner = new StringJoiner(",", "[", "]");
+        sources.forEach(source -> joiner.add("{\"block\":" + string(source.block())
+                + ",\"tool\":" + string(source.tool())
+                + ",\"floor\":" + (source.banded() ? String.valueOf(source.floor()) : "null")
+                + ",\"ceiling\":" + (source.banded() ? String.valueOf(source.ceiling()) : "null")
+                + ",\"terrain\":" + strings(source.terrain())
+                + ",\"ways\":" + strings(source.ways()) + "}"));
+        return joiner.toString();
     }
 
     /**
@@ -79,6 +131,7 @@ final class Json {
                 + ",\"objective\":" + string(entry.objective())
                 + ",\"text\":" + string(entry.text())
                 + ",\"detail\":" + string(entry.detail())
+                + ",\"plan\":" + plan(entry.plan() == null ? null : QTableSnapshot.PlanView.of(entry.plan()))
                 + ",\"ago\":" + Math.max(0L, now - entry.at()) + "}"));
         return joiner.toString();
     }
@@ -91,10 +144,6 @@ final class Json {
                         + ",\"count\":" + craft.count()
                         + ",\"age\":" + Math.max(0, now - craft.at()) + "}"));
         return joiner.toString();
-    }
-
-    private static String rows(QTableSnapshot snapshot) {
-        return rows(snapshot.rows());
     }
 
     private static String rows(java.util.List<QTableSnapshot.Row> source) {

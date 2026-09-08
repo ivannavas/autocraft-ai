@@ -17,10 +17,16 @@ import java.util.Locale;
  */
 public enum Terrain {
 
-    /** Anywhere with trees in it, which is anywhere the run can start. */
+    /**
+     * Anywhere with trees in it, which is anywhere the run can start. Not a bamboo jungle: it has the word
+     * and hardly a tree, and what it has are thirty blocks up behind a wall of bamboo.
+     */
     WOODED("forest", "taiga", "jungle", "grove", "wooded", "birch", "woodland"),
 
-    /** Open, flat and safe to cross. */
+    /**
+     * Open, flat and safe to cross. Not the snowy kind: snowy plains have the word and none of the
+     * trees or the animals, and a body told oak grows on plains spent eight minutes on them finding out.
+     */
     PLAINS("plains", "meadow", "savanna", "sunflower"),
 
     DESERT("desert", "badlands", "mesa"),
@@ -53,6 +59,12 @@ public enum Terrain {
             return false;
         }
         String lower = biome.toLowerCase(Locale.ROOT);
+        if (this == PLAINS && SNOWY.words.stream().anyMatch(lower::contains)) {
+            return false;
+        }
+        if (this == WOODED && lower.contains("bamboo")) {
+            return false;
+        }
         return words.stream().anyMatch(lower::contains);
     }
 }

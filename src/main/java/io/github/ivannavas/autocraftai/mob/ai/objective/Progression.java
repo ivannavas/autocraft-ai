@@ -3,15 +3,21 @@ package io.github.ivannavas.autocraftai.mob.ai.objective;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.function.Predicate;
 
+import io.github.ivannavas.autocraftai.mob.ai.FocusKind;
+import io.github.ivannavas.autocraftai.mob.ai.Sighting;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.ClaudePlanner;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.ObjectivePlanner;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.Situation;
 import lombok.extern.slf4j.Slf4j;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.block.state.BlockState;
 
 /**
@@ -22,9 +28,10 @@ import net.minecraft.world.level.block.state.BlockState;
  * only reward large enough to be worth a long detour for.
  *
  * <h2>The objectives are decided as the run goes</h2>
- * There is no fixed list any more. When the run has no objective — at the start, and every time one is
- * reached — the {@link ObjectivePlanner} is asked for the next one, and it is asked with the situation the
- * body is actually in: the biome, the bag, the time of day, what the run has already got hold of. That is
+ * There is no fixed list any more. When the run has no objective — on arriving in a world, and every time
+ * one is reached — the {@link ObjectivePlanner} is asked for the next one, and it is asked with the
+ * situation the body is actually in: the biome, the bag, the time of day, what the run has already got
+ * hold of. That is
  * the whole point of asking rather than scripting. A script cannot know it is midnight in a cave with two
  * hearts left, and so it asks for stone anyway; and a script that only knows how to want <em>things</em>
  * cannot tell a body standing in a desert that the problem is the desert.
@@ -99,6 +106,21 @@ public final class Progression {
     private final List<String> achieved = new ArrayList<>();
 
     /**
+     * Told the name of each objective the moment it is reached. No-op until something wants it.
+     *
+     * <p>This is the only instant worth keeping a recording of, which is what listens: everything
+     * either side of it is a run wandering about, and the clip is the payoff. Called on the game
+     * thread, so whatever listens has to get out of the way quickly.
+     */
+    private Consumer<String> onReached = name -> {
+    };
+
+    /** Hands every later completion to {@code listener}. */
+    public void onReached(Consumer<String> listener) {
+        this.onReached = listener;
+    }
+
+    /**
      * What a broken reserve costs, as a multiple of what the thing itself is worth.
      *
      * <p>The mask is what actually stops a reserved item being spent, so this is for the ways round it the
@@ -108,12 +130,27 @@ public final class Progression {
     private static final double RESERVE_WEIGHT = 3.0;
 
     private Phase current;
+    /** The plan the current objective came in, whole, for the overlay; null between orders. */
+    private Plan plan;
+    /** What the tables are working on, as of the last look: which folder, which source, and where it is. */
+    private Pursuit active = Pursuit.DONE;
+    /** The plan's own band, which stands in for any source that came without one of its own. */
     private Bounds bounds = Bounds.anywhere();
     private Map<Resource, Integer> needs = Map.of();
     private Reserve reserved = Reserve.none();
     private boolean wasSomewhereUseful;
     private int fallbackIndex;
     private int stepsOnCurrent;
+    /**
+     * The height to climb to in order to break out of a trap, or {@link Integer#MIN_VALUE} when not
+     * escaping. Set when the body is pinned and no planner is coming to say what the planner would —
+     * climb out of the hole. Cleared the moment the body has climbed to it.
+     */
+    private int escapeTo = Integer.MIN_VALUE;
+    /** Which way the last escape went, so a body still pinned after one tries the other next. */
+    private boolean escapedUp;
+    /** How far "out of here" is: enough to clear a ravine wall or drop out of a tree's crown. */
+    private static final int ESCAPE_RISE = 12;
 
     public Progression(ObjectivePlanner planner, List<Phase> fallback) {
         this.planner = planner;
@@ -141,6 +178,15 @@ public final class Progression {
     }
 
     /**
+     * The whole plan the objective came in — band, shopping list, reserve, sources — or empty between
+     * orders. For the overlay, which shows the plan as the run took it; nothing in the run reads it back
+     * from here, since every part of it was already unpacked into the fields around it.
+     */
+    public Optional<Plan> plan() {
+        return Optional.ofNullable(plan);
+    }
+
+    /**
      * Which objective we are on, as it appears in the observation key. It belongs in the state because the
      * right move depends on it: the same tree is worth chopping while the run is after wood and worth
      * walking past while it is after stone.
@@ -153,13 +199,52 @@ public final class Progression {
     }
 
     /**
-     * The heights the plan says to stay between, or {@link Bounds#anywhere()} when it did not say.
+     * The heights to stay between right now, or {@link Bounds#anywhere()} when nobody has an opinion.
      *
-     * <p>Set with the objective and cleared with it: a band belongs to a plan, and the band that made
-     * sense while sinking a shaft is nonsense the moment the plan is to find a forest.
+     * <p>The source in play comes first: the planner said where each block lives, and a body looking for
+     * deepslate ore should be charged for being at the surface even if the plan as a whole was vaguer. The
+     * plan's own band stands in when the source has none, and goes with the plan when the plan does.
      */
     public Bounds bounds() {
-        return bounds;
+        return active.where().band();
+    }
+
+    /**
+     * Works out what the tables should be learning in now, and remembers it.
+     *
+     * <p>Called once a decision, after the eyes have looked. A hostile in view is a pursuit of its own
+     * whatever the objective; otherwise the objective says, given which of its blocks is in view and how
+     * high the body is — see {@link Phase#pursuit}. Everything this class answers about height and about
+     * which ways are open is answered for the pursuit chosen here until the next look.
+     */
+    public Pursuit focus(LocalPlayer player, Sighting sighting) {
+        Pursuit errand = current == null ? idle() : current.pursuit(seen(player, sighting),
+                player.getBlockY(), bounds);
+        if (sighting.kind() == FocusKind.HOSTILE && sighting.entity() != null) {
+            active = Pursuit.threat(EntityType.getKey(sighting.entity().getType()).getPath(),
+                    errand.where());
+        } else {
+            active = errand;
+        }
+        return active;
+    }
+
+    /** What the tables are working on, as of the last {@link #focus}. */
+    public Pursuit active() {
+        return active;
+    }
+
+    /** The block the plan is after, if that is what is in view, for choosing among sources. */
+    private static BlockState seen(LocalPlayer player, Sighting sighting) {
+        if (sighting.kind() != FocusKind.RESOURCE || !sighting.isBlock()) {
+            return null;
+        }
+        BlockPos pos = sighting.blockPos();
+        return player.level().isLoaded(pos) ? player.level().getBlockState(pos) : null;
+    }
+
+    private Pursuit idle() {
+        return planner.pending() ? Pursuit.PLANNING : Pursuit.DONE;
     }
 
     /**
@@ -199,14 +284,52 @@ public final class Progression {
      * as one number so the move that answers them does not have to know which it was.
      */
     public OptionalInt heightWanted(int y) {
+        // Escaping a trap comes before everything: while it holds, the one thing worth wanting is up and
+        // out. Cleared here the moment the body reaches it, so a normal objective takes over again.
+        if (escapeTo != Integer.MIN_VALUE) {
+            // Reached, whichever way it was: cleared when the body is at the escape height or past it in
+            // the direction it set off.
+            if (escapedUp ? y >= escapeTo : y <= escapeTo) {
+                escapeTo = Integer.MIN_VALUE;
+            } else {
+                return OptionalInt.of(escapeTo);
+            }
+        }
         if (current != null) {
             OptionalInt named = current.height();
             if (named.isPresent()) {
                 return named.getAsInt() == y ? OptionalInt.empty() : named;
             }
         }
-        return bounds.bind() && !bounds.contains(y)
-                ? OptionalInt.of(bounds.nearestEdge(y)) : OptionalInt.empty();
+        // The band's edge is only somewhere to head for if the planner said the body may climb or
+        // scramble its way there; told to dig, it gets down by digging and the band charges the rest.
+        Bounds band = bounds();
+        return band.bind() && !band.contains(y) && active.where().allows(Way.CLIMB)
+                ? OptionalInt.of(band.nearestEdge(y)) : OptionalInt.empty();
+    }
+
+    /**
+     * Starts the run over for a world the body has just arrived in, and asks the planner about it at once.
+     *
+     * <p>Everything {@link #restart()} keeps, this drops as well: the objectives achieved, the rung of the
+     * ladder, and the planner's memory of the conversation so far. A death is a setback in the same run
+     * and the record of it stands; a new world is a new run, and a plan carried into it from the last one
+     * — which is what used to happen, since nothing here noticed the world had changed — is a body
+     * working towards wood it gathered somewhere else.
+     *
+     * <p>Asked now rather than at the first decision, so the answer is that much closer to being there
+     * when the first decision comes, and so the log says in so many words that the world was entered and
+     * the planner consulted. The first census stands in for the running total, which is exactly what the
+     * total would be seeded from a second later.
+     */
+    public void arrive(LocalPlayer player) {
+        restart();
+        achieved.clear();
+        fallbackIndex = 0;
+        planner.reset();
+        log.info("Arrived in a world; asking the planner what to do first");
+        planner.consider(() -> Situation.of(player, InventoryCensus.of(player.getInventory()), achieved, ""));
+        active = idle();
     }
 
     /**
@@ -218,6 +341,10 @@ public final class Progression {
      */
     public void restart() {
         current = null;
+        plan = null;
+        active = idle();
+        escapeTo = Integer.MIN_VALUE;
+        escapedUp = false;
         wasSomewhereUseful = false;
         bounds = Bounds.anywhere();
         needs = Map.of();
@@ -234,16 +361,11 @@ public final class Progression {
      * move that still does anything is the one that made it. A body cannot learn its way out of a place
      * its learning cannot reach.
      *
-     * <p>Down is a route when what the plan wants is down there, or when the plan wants the body lower
-     * than it is. Otherwise it is not offered.
+     * <p>Down is a route when the planner said the source in play may be dug towards — see
+     * {@link Way#DIG} — or when the band wants the body lower than it is. Otherwise it is not offered.
      */
     public boolean worthDigging(int y) {
-        return current != null && (current.wantsDepth() || y > bounds.ceiling());
-    }
-
-    /** Which way the run is pulling, in a word, for the tables that only need that much. */
-    public String shape() {
-        return current == null ? "NONE" : current.shape();
+        return active.where().allows(Way.DIG) || y > bounds().ceiling();
     }
 
     /** Why the run is after this, in a sentence, or empty when nobody said. For the overlay only. */
@@ -282,9 +404,10 @@ public final class Progression {
         // charged for, and "at the right height" is true exactly when there is no band to be at odds with.
         OptionalInt y = context.player() == null
                 ? OptionalInt.empty() : OptionalInt.of(context.player().getBlockY());
-        total += arrived(context, y.isPresent() ? bounds.contains(y.getAsInt()) : !bounds.bind());
+        Bounds band = bounds();
+        total += arrived(context, y.isPresent() ? band.contains(y.getAsInt()) : !band.bind());
         if (y.isPresent()) {
-            total += bounds.charge(y.getAsInt(), context.steps());
+            total += band.charge(y.getAsInt(), context.steps());
         }
         return total;
     }
@@ -307,10 +430,12 @@ public final class Progression {
             }
             log.info("Reached {}", current.name());
             achieved.add(current.name());
+            onReached.accept(current.name());
             if (fallbackIndex < fallback.size() && current == fallback.get(fallbackIndex)) {
                 fallbackIndex++;
             }
             current = null;
+            plan = null;
             stepsOnCurrent = 0;
             bonus += ADVANCE_BONUS;
         }
@@ -340,6 +465,20 @@ public final class Progression {
         String objective = current.toString();
         planner.consider(() ->
                 Situation.of(context.player(), context.obtained(), achieved, objective));
+        // A pinned body whose planner cannot answer — no key, or the API turned it away — has no rescue
+        // coming, so it rescues itself the one way that gets out of a hole: climb. The planner, when it is
+        // there, does this better and this yields to it (any real answer clears the escape). Only when
+        // pinned, not merely slow: a body making its way across a desert is not trapped.
+        if (context.pinned() && !planner.pending() && context.player() != null) {
+            // Up first — a hole is the common trap — but a body still pinned after climbing was not in a
+            // hole: it is stuck up high, on a tree or a ledge, and down is the way out. So each pinned
+            // rescue that finds the last one did not work flips direction.
+            escapedUp = !escapedUp;
+            int y = context.player().getBlockY();
+            escapeTo = escapedUp ? y + ESCAPE_RISE : y - ESCAPE_RISE;
+            log.info("No planner to ask; heading {} to y{} to break out of the trap",
+                    escapedUp ? "up" : "down", escapeTo);
+        }
     }
 
     /**
@@ -358,10 +497,12 @@ public final class Progression {
                 log.info("Planner swapped {} for {}", current.name(), planned.get().objective().name());
             }
             current = planned.get().objective();
+            plan = planned.get();
             bounds = planned.get().bounds();
             needs = planned.get().needs();
             reserved = planned.get().reserved();
             stepsOnCurrent = 0;
+            refocus(context);
             return;
         }
         if (current != null) {
@@ -374,6 +515,7 @@ public final class Progression {
         // about waiting for a reply that was never sent.
         if (!planner.pending()) {
             current = fallbackIndex < fallback.size() ? fallback.get(fallbackIndex) : null;
+            plan = current == null ? null : Plan.of(current);
             // The ladder has no opinion about height: it was written before there was a way to have one,
             // and inventing a band for it would be charging the body against a rule nobody set. Its rungs
             // do know what they take, though, which is what the crafting table keys on.
@@ -384,7 +526,21 @@ public final class Progression {
             // same or the run learns different lessons depending on whether the network was up.
             reserved = current == null ? Reserve.none() : Reserve.fromCrafts(current.reserved());
             stepsOnCurrent = 0;
+            refocus(context);
         }
+    }
+
+    /**
+     * Brings the pursuit into line with a plan that has just changed, before the eyes have looked again.
+     *
+     * <p>Without this the step scored right after a new plan arrives would be charged against the old
+     * plan's band, and the ways open to the body would be the old plan's until the next decision. With
+     * nothing in view yet the objective answers for its likeliest source, which {@link #focus} refines the
+     * moment there is a view.
+     */
+    private void refocus(StepContext context) {
+        int y = context.player() == null ? 0 : context.player().getBlockY();
+        active = current == null ? idle() : current.pursuit(null, y, bounds);
     }
 
     /**
@@ -439,7 +595,10 @@ public final class Progression {
         }
         double total = 0.0;
         for (Resource resource : reserved.kept().keySet()) {
-            int deeper = reserved.shortfall(resource, context.after().count(resource))
+            // A block put down in the world is still held, as far as a reserve is concerned: it is not
+            // spent, it is a metre away. Only what actually left counts against the line.
+            int deeper = reserved.shortfall(resource,
+                            context.after().count(resource) + context.placed(resource))
                     - reserved.shortfall(resource, context.before().count(resource));
             total -= Math.max(0, deeper) * resource.worth() * RESERVE_WEIGHT;
         }

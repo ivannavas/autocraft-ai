@@ -161,7 +161,8 @@ public final class DigDownGoal implements MobGoal {
             return;
         }
         equippedFor = target.immutable();
-        int slot = Tool.bestFor(body.level().getBlockState(target)).hotbarSlot(body.player().getInventory());
+        BlockState state = body.level().getBlockState(target);
+        int slot = Tool.bestFor(state).hotbarSlotFor(body.player().getInventory(), state);
         if (slot >= 0) {
             body.player().getInventory().setSelectedSlot(slot);
         }

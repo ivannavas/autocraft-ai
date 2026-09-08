@@ -7,6 +7,7 @@ import java.util.Set;
 import io.github.ivannavas.autocraftai.mob.MobBody;
 import io.github.ivannavas.autocraftai.mob.MobControl;
 import io.github.ivannavas.autocraftai.mob.MobGoal;
+import io.github.ivannavas.autocraftai.mob.ai.Placed;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Reserve;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Tool;
 import net.minecraft.client.Minecraft;
@@ -216,6 +217,7 @@ public final class ReachBandGoal implements MobGoal {
         Vec3 top = Vec3.atCenterOf(support).add(0.0, 0.5, 0.0);
         body.lookControl().lookAt(top);
         gameMode().ifPresent(mode -> {
+            Placed.get().mark(support.above(), player.getMainHandItem());
             mode.useItemOn(player, InteractionHand.MAIN_HAND,
                     new BlockHitResult(top, Direction.UP, support, false));
             player.swing(InteractionHand.MAIN_HAND);

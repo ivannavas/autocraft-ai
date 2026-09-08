@@ -32,7 +32,9 @@
     --load: #a8a69c;
 
     --row-height: 26px;
-    --state-column: 290px;
+    /* Wider than it was: every key now carries its source, and the verdict on the end of the label is
+       the one part that must not be the part that gets cut. */
+    --state-column: 360px;
     --bar-track: 76px;
   }
 
@@ -52,6 +54,7 @@
 
   .panel {
     display: inline-block;
+    max-width: 100%;
     background: rgba(var(--surface), var(--panel-alpha));
     border: 1px solid var(--border);
     border-radius: 10px;
@@ -59,105 +62,317 @@
     box-shadow: 0 2px 18px rgba(0, 0, 0, 0.45);
   }
 
-  /* --- header ------------------------------------------------------------------------------- */
+  /* --- what is happening right now ------------------------------------------------------------ */
 
-  .head {
+  /* One line, deliberately. The two or three things worth glancing at fit on a single row; the reason
+     gets a row of its own because it is a sentence, not a field. */
+  .now {
     display: flex;
     align-items: baseline;
-    justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 12px;
-  }
-
-  .title {
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-  }
-
-  .phase {
-    font-size: 11px;
-    color: var(--text-secondary);
-  }
-
-  .phase b {
-    color: var(--text-primary);
-    font-weight: 600;
-  }
-
-  .tiles {
-    display: flex;
-    gap: 20px;
-    margin-bottom: 12px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--gridline);
-  }
-
-  .tile-label {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-muted);
-  }
-
-  .tile-value {
-    font-size: 19px;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .tile-value .unit {
-    font-size: 11px;
-    font-weight: 400;
-    color: var(--text-secondary);
-    margin-left: 2px;
-  }
-
-  /* --- crafting strip ------------------------------------------------------------------------ */
-
-  .crafts {
-    display: flex;
-    align-items: center;
     flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 12px;
-    padding-bottom: 10px;
+    gap: 4px 18px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
     border-bottom: 1px solid var(--gridline);
+    font-size: 12px;
+  }
+
+  .now-item {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  .now-label {
     font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
     color: var(--text-muted);
   }
 
-  .crafts-label {
+  .now-value {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .now-reason {
+    flex-basis: 100%;
+    color: var(--text-muted);
+    font-style: italic;
+    line-height: 1.4;
+  }
+
+  /* --- the compact view --------------------------------------------------------------------------
+   *
+   * What goes out on the stream: the objective and the move being made, and nothing else. The tables
+   * are the interesting part to whoever is running this, and unreadable clutter to whoever is
+   * watching a video of a game — a viewer wants to know what it is trying to do, not to audit it.
+   *
+   * The same page in both places on purpose. One document, one event stream, one set of words to
+   * translate; the view only decides what is drawn.
+   */
+  body.compact {
+    padding: 0;
+  }
+
+  body.compact .block,
+  body.compact .load,
+  body.compact .foot {
+    display: none;
+  }
+
+  body.compact .panel {
+    display: block;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+    padding: 14px 22px;
+    /* Nearly opaque, unlike the panel view. This band sits over the game's own health and hotbar, and
+       at the alpha that reads well behind a table the two show through each other and neither is
+       legible. Covering them costs nothing: the strip says what the run is doing, which is the same
+       question the HUD answers less clearly. */
+    background: rgba(var(--surface), 0.94);
+  }
+
+  body.compact .now {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: 0;
+    /* Bigger than the panel's: this is read at a glance, at video bitrates, on a phone. */
+    font-size: 20px;
+    gap: 6px 34px;
+  }
+
+  body.compact .now-label {
+    font-size: 12px;
+  }
+
+  body.compact .now-reason {
+    font-size: 14px;
+  }
+
+  /* --- sections ------------------------------------------------------------------------------ */
+
+  /* The generous gap is the whole point of this layout: tables stacked tight read as one confusing
+     table with odd rows in the middle of it. */
+  .block + .block {
+    margin-top: 26px;
+    padding-top: 18px;
+    border-top: 1px solid var(--gridline);
+  }
+
+  .section-label {
+    font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    margin-right: 2px;
+    color: var(--text-muted);
+    margin: 0 0 10px;
   }
 
-  .craft {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    padding: 2px 5px 2px 3px;
-    border-radius: 4px;
-    background: rgba(255, 255, 255, 0.05);
+  .section-label b {
     color: var(--text-secondary);
+    font-weight: 600;
   }
 
-  /* The one that just happened, so a glance catches the moment rather than only the tally. */
-  .craft.fresh {
+  /* A smaller heading inside a section, for the four tables of one folder and the two shared ones. */
+  .sub-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin: 0 0 8px;
+  }
+
+  .empty-line {
+    color: var(--text-muted);
+    padding: 4px 0 2px;
+  }
+
+  /* --- the plan ------------------------------------------------------------------------------- */
+
+  .plan {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .plan-head {
+    font-size: 13px;
+  }
+
+  .plan-head b {
+    font-weight: 600;
+  }
+
+  .plan-band {
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .plan-reason {
+    color: var(--text-muted);
+    font-style: italic;
+    line-height: 1.4;
+  }
+
+  /* The shopping list and the reserve, side by side while they fit and one under the other when not. */
+  .plan-lists {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 22px;
+  }
+
+  .plan-list {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .plan-term {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-right: 4px;
+  }
+
+  .chip {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  .chip b {
+    color: var(--text-primary);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The sources: one row per block the planner named, with where it said the block lives. Sized to its
+     words rather than to the bar tracks, unlike every learned table. */
+  table.sources {
+    width: auto;
+    table-layout: auto;
+    margin-top: 2px;
+  }
+
+  table.sources th {
+    text-align: left;
+    padding: 0 18px 6px 0;
+  }
+
+  table.sources td {
+    height: auto;
+    padding: 3px 18px 3px 0;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  table.sources td.block {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  table.sources tr.sought td {
+    color: var(--text-primary);
+  }
+
+  /* The source being looked for right now. The same ring the live row of a table wears. */
+  table.sources tr.sought td:first-child {
+    box-shadow: inset 2px 0 0 var(--text-secondary);
+    padding-left: 8px;
+  }
+
+  .badge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 6px;
+    border-radius: 3px;
     background: rgba(57, 135, 229, 0.20);
     box-shadow: inset 0 0 0 1px var(--positive);
     color: var(--text-primary);
+    font-size: 10px;
+    font-weight: 400;
   }
 
-  .craft img {
-    width: 16px;
-    height: 16px;
-    /* Sixteen-pixel art: smoothing it would turn every sprite to mush. */
-    image-rendering: pixelated;
+  /* --- the folders ---------------------------------------------------------------------------- */
+
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
   }
 
-  /* --- table -------------------------------------------------------------------------------- */
+  .tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .tab:hover {
+    color: var(--text-primary);
+  }
+
+  /* The folder on screen. A ring, like the preferred move: identity, not a value. */
+  .tab.shown {
+    border-color: rgba(255, 255, 255, 0.28);
+    color: var(--text-primary);
+  }
+
+  /* The folder in play. A dot in the positive, since "this is where the learning is landing now" is the
+     one piece of good news a tab can carry. */
+  .tab .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--positive);
+  }
+
+  .tab .n {
+    color: var(--text-muted);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .folder-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    margin-bottom: 14px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .folder-meta b {
+    color: var(--text-secondary);
+    font-weight: 600;
+  }
+
+  /* The tables of one folder, side by side while the panel is wide enough and stacked when it is not.
+     The goal table is the widest thing on the page and takes a row to itself; the three narrower ones
+     share the rows below. */
+  .tables {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 22px 44px;
+  }
+
+  /* --- learned tables ------------------------------------------------------------------------- */
 
   table {
     border-collapse: collapse;
@@ -171,7 +386,6 @@
 
   th {
     font-size: 10px;
-    padding-bottom: 8px;
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -204,6 +418,8 @@
   td.state {
     padding-left: 0;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
   }
@@ -294,133 +510,109 @@
     padding: 18px 0 14px;
   }
 
-  /* --- machine load -------------------------------------------------------------------------- */
+  /* --- the planner's decisions ------------------------------------------------------------------ */
 
-  /* --- one block per learned table ------------------------------------------------------------ */
+  /* One card per line of the conversation, newest first. The verb down the left, the plan in the
+     middle, the age on the right, and the whole prompt or reply folded under it for whoever wants to
+     check the run's reading against the model's words. */
+  .entry {
+    padding: 10px 0;
+    border-top: 1px solid var(--gridline);
+  }
 
-  /* The generous gap is the whole point of this layout: three tables stacked tight read as one
-     confusing table with odd rows in the middle of it. */
-  /* --- what is happening right now ------------------------------------------------------------ */
+  .entry:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
 
-  /* One line, deliberately. The five-tile block this replaces was the bulk of what made the panel feel
-     crowded; the two things worth glancing at fit on a single row. */
-  .now {
+  .entry-head {
     display: flex;
     align-items: baseline;
-    flex-wrap: wrap;
-    gap: 4px 18px;
-    margin-bottom: 16px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid var(--gridline);
-    font-size: 12px;
+    gap: 12px;
   }
 
-  /* --- the compact view --------------------------------------------------------------------------
-   *
-   * What goes out on the stream: the objective and the move being made, and nothing else. The tables
-   * are the interesting part to whoever is running this, and unreadable clutter to whoever is
-   * watching a video of a game — a viewer wants to know what it is trying to do, not to audit it.
-   *
-   * The same page in both places on purpose. One document, one event stream, one set of words to
-   * translate; the view only decides what is drawn.
-   */
-  body.compact {
-    padding: 0;
+  .talk-kind {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    white-space: nowrap;
+    min-width: 96px;
   }
 
-  body.compact .block,
-  body.compact .load,
-  body.compact .foot {
-    display: none;
+  .talk-kind.answered { color: var(--positive); }
+  .talk-kind.failed { color: var(--negative); }
+
+  .entry-title {
+    flex: 1;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
   }
 
-  body.compact .panel {
-    display: block;
-    border-radius: 0;
-    border-left: 0;
-    border-right: 0;
-    border-bottom: 0;
-    padding: 14px 22px;
-    /* Nearly opaque, unlike the panel view. This band sits over the game's own health and hotbar, and
-       at the alpha that reads well behind a table the two show through each other and neither is
-       legible. Covering them costs nothing: the strip says what the run is doing, which is the same
-       question the HUD answers less clearly. */
-    background: rgba(var(--surface), 0.94);
+  .entry-title b {
+    font-weight: 600;
   }
 
-  body.compact .now {
-    margin-bottom: 0;
-    padding-bottom: 0;
-    border-bottom: 0;
-    /* Bigger than the panel's: this is read at a glance, at video bitrates, on a phone. */
-    font-size: 20px;
-    gap: 6px 34px;
+  .entry-title .reason {
+    color: var(--text-secondary);
+    font-style: italic;
   }
 
-  body.compact .now-label {
-    font-size: 12px;
+  .talk-ago {
+    color: var(--text-muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
 
-  body.compact .now-reason {
-    font-size: 14px;
-  }
-
-  .now-item {
-    display: flex;
-    align-items: baseline;
+  /* The plan under an answer, indented to the width of the verb so it hangs under the title. */
+  .entry .plan {
+    margin: 8px 0 0 108px;
     gap: 6px;
   }
 
-  .now-label {
+  details.raw {
+    margin: 6px 0 0 108px;
+  }
+
+  details.raw summary {
+    cursor: pointer;
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--text-muted);
+    list-style: none;
   }
 
-  .now-value {
-    color: var(--text-primary);
-    font-weight: 600;
+  details.raw summary::before {
+    content: "▸ ";
   }
 
-  /* Why this objective and not another. Its own row — it is a sentence, not a field, and wedging it in
-     beside the three values is what would make the line feel crowded again. */
-  .now-reason {
-    flex-basis: 100%;
-    color: var(--text-muted);
-    font-style: italic;
-    line-height: 1.4;
+  details[open].raw summary::before {
+    content: "▾ ";
   }
 
-  .block + .block {
-    margin-top: 26px;
-    padding-top: 18px;
-    border-top: 1px solid var(--gridline);
-  }
-
-  .section-label {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-muted);
-    margin: 0 0 10px;
-  }
-
-  .section-label b {
+  details.raw pre {
+    margin: 6px 0 0;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.35);
     color: var(--text-secondary);
-    font-weight: 600;
+    font: 11px/1.45 ui-monospace, Consolas, "Cascadia Mono", monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 360px;
+    overflow: auto;
   }
+
+  /* --- machine load -------------------------------------------------------------------------- */
 
   .load {
-    margin-top: 24px;
-    padding-top: 14px;
-    border-top: 1px solid var(--gridline);
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 6px 14px;
-    margin-top: 10px;
-    padding-top: 9px;
+    margin-top: 24px;
+    padding-top: 14px;
     border-top: 1px solid var(--gridline);
     font-size: 10px;
     color: var(--text-muted);
@@ -470,14 +662,6 @@
   }
 
   /* --- footer ------------------------------------------------------------------------------- */
-
-  /* One muted line under the title carrying what the panel is, so the table does not have to be guessed
-     at from its column headings alone. */
-  .intro {
-    font-size: 11px;
-    color: var(--text-muted);
-    margin: -6px 0 12px;
-  }
 
   .foot {
     display: flex;
@@ -529,94 +713,38 @@
   }
 
   .offline { color: var(--negative); }
-
-  /* The planner's conversation. Two columns so the verbs line up down the left and the eye can skim
-     what happened without reading every line of it. */
-  .talk {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 6px 12px;
-    align-items: baseline;
-    font-size: 12px;
-  }
-
-  .talk-kind {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-muted);
-    white-space: nowrap;
-  }
-
-  .talk-kind.answered { color: var(--positive); }
-  .talk-kind.failed { color: var(--negative); }
-
-  .talk-text {
-    color: var(--text-primary);
-    overflow-wrap: anywhere;
-  }
-
-  .talk-ago {
-    color: var(--text-muted);
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .talk-empty { color: var(--text-muted); }
 </style>
 </head>
 <body>
 <div class="panel">
   <div class="now">
     <span class="now-item"><span class="now-label" id="t-objective">Objective</span><span class="now-value" id="phase">—</span></span>
+    <span class="now-item"><span class="now-label" id="t-pursuit">Working on</span><span class="now-value" id="working">—</span></span>
     <span class="now-item"><span class="now-label" id="t-doing">Now</span><span class="now-value" id="doing">—</span></span>
     <span class="now-item"><span class="now-label" id="t-making">Crafting</span><span class="now-value" id="making">—</span></span>
     <span class="now-reason" id="phase-reason" hidden></span>
   </div>
 
   <section class="block">
-    <div class="section-label" id="t-goals">What to do</div>
-    <table>
-      <thead><tr id="goal-header"></tr></thead>
-      <tbody id="goal-rows"></tbody>
-    </table>
+    <div class="section-label" id="t-plan">The plan</div>
+    <div class="plan" id="plan"></div>
   </section>
 
   <section class="block">
-    <div class="section-label" id="t-crafts">What to make meanwhile</div>
-    <table>
-      <thead><tr id="craft-header"></tr></thead>
-      <tbody id="craft-rows"></tbody>
-    </table>
+    <div class="section-label" id="t-pursuits">What it has learned, pursuit by pursuit</div>
+    <div class="tabs" id="tabs"></div>
+    <div class="folder-meta" id="folder-meta"></div>
+    <div class="tables" id="folder"></div>
   </section>
 
   <section class="block">
-    <div class="section-label" id="t-position">Which way to go</div>
-    <table>
-      <thead><tr id="ground-header"></tr></thead>
-      <tbody id="ground-rows"></tbody>
-    </table>
-  </section>
-
-  <section class="block">
-    <div class="section-label" id="t-placement">Where to dig and build</div>
-    <table>
-      <thead><tr id="spot-header"></tr></thead>
-      <tbody id="spot-rows"></tbody>
-    </table>
-  </section>
-
-  <section class="block">
-    <div class="section-label" id="t-water">When it is in the water</div>
-    <table>
-      <thead><tr id="water-header"></tr></thead>
-      <tbody id="water-rows"></tbody>
-    </table>
+    <div class="section-label" id="t-shared">Learned once, for every pursuit</div>
+    <div class="tables" id="shared"></div>
   </section>
 
   <section class="block">
     <div class="section-label" id="t-planner">The planner</div>
-    <div class="talk" id="planner"></div>
+    <div id="planner"></div>
   </section>
 
   <div class="load">
@@ -648,7 +776,7 @@
       <span class="sep">·</span>
       <span id="t-key-distance">distance: close / mid / far</span>
       <span class="sep">·</span>
-      <span id="t-key-tables">duration and crafting have tables of their own</span>
+      <span id="t-key-tables">each pursuit has a folder of tables of its own</span>
     </span>
     <span class="tally"><span id="tally">—</span> <span class="sep">·</span> <span id="status">connecting…</span></span>
   </div>
@@ -664,17 +792,6 @@
   const COMPACT = new URLSearchParams(location.search).get("view") === "compact";
   document.body.classList.toggle("compact", COMPACT);
 
-  /**
-   * How many rows each table draws.
-   *
-   * Nothing is trimmed in the full view. It is read on a desktop by the one person who wants to know
-   * exactly what the run has learned, and a table that quietly stops at twelve rows is worse than a
-   * long one — it hides the very states that only turn up after hours of play. The compact view draws
-   * no tables at all, so its numbers never apply.
-   */
-  const MAX_ROWS = Infinity;
-  const MAX_CRAFT_ROWS = Infinity;
-  const MAX_PLACEMENT_ROWS = Infinity;
   const GIGABYTE = 1024 ** 3;
   // Where a heap stops being roomy and starts being the reason the game stutters.
   const HEAP_HOT = 0.9;
@@ -687,21 +804,44 @@
    * then, and what it keeps saying for any key that language has no translation for. A panel in the wrong
    * language is a nuisance; a panel of blanks is useless.
    *
-   * The wire format stays in the enum names the q-table is keyed by: those are what is written to disk,
+   * The wire format stays in the enum names the q-tables are keyed by: those are what is written to disk,
    * and translating them at the source would orphan every saved table. Every lookup falls back to the raw
    * name, so a constant added tomorrow shows up readable rather than blank.
    */
   const DEFAULTS = {
     locale: "en-US",
     text: {
-      "objective": "Objective", "doing": "Now", "making": "Crafting",
+      "objective": "Objective", "pursuit": "Working on", "doing": "Now", "making": "Crafting",
       "goals": "What to do", "crafts": "What to make meanwhile",
-      "planner": "The planner", "placement": "Where to dig and build",
-      "position": "Which way to go", "water": "When it is in the water",
+      "timing": "How long to hold it", "planner": "The planner",
+      "placement": "Where to dig and build", "position": "Which way to go",
+      "water": "When it is in the water", "passage": "When the terrain is in the way",
+      "head.passage": "Wants to go where, what is in the way",
+      "empty.passage": "nothing has been in its way yet",
+      "want.UP": "wants up", "want.DOWN": "wants down", "want.FLAT": "wants on",
+      "want.TOWARD": "wants the block",
+      "ahead.NONE": "clear ahead", "ahead.STEP": "a step ahead", "ahead.WALL": "a wall ahead",
+      "ahead.GAP": "a drop ahead", "ahead.LEAVES": "leaves in the way",
+      "ahead.SOFT": "soft blocks in the way", "ahead.HARD": "hard blocks in the way",
+      "above.OPEN": "open above", "above.CEILING": "ceiling above",
+      "qualifier.breakable": "can break it", "qualifier.diggable": "can dig down",
+      "plan": "The plan", "plan.band": "height", "plan.anyheight": "any height",
+      "plan.needs": "needs", "plan.reserve": "keeps back", "plan.sources": "where it comes from",
+      "plan.nothing": "nothing", "plan.ladder": "from the fixed ladder, nobody planned it",
+      "plan.none": "no plan yet", "plan.active": "looking for this one now",
+      "pursuits": "What it has learned, pursuit by pursuit", "folder.live": "in play",
+      "folder.states": "%s situations", "folder.decisions": "%s decisions",
+      "folder.random": "%s %% at random",
+      "folder.GO": "travelling", "folder.DOWN": "getting down", "folder.UP": "getting up",
+      "folder.BUILD": "building", "folder.THREAT": "threats", "folder.IDLE": "between orders",
+      "shared": "Learned once, for every pursuit",
+      "planner.prompt": "what it was told", "planner.reply": "what it answered",
+      "planner.plan": "what the run made of it",
       "head.situation": "Situation", "head.craft": "What it is short of",
-      "head.placement": "Doing what, going where",
-      "head.position": "Going where, been where",
+      "head.timing": "Move, in which situation",
+      "head.placement": "Doing what, where", "head.position": "Looking for what, been where",
       "head.water": "How deep, how much air",
+      "head.block": "block", "head.tool": "tool", "head.terrain": "terrain", "head.ways": "ways",
       "depth.WADING": "wading", "depth.SWIMMING": "swimming", "depth.SUBMERGED": "underwater",
       "air.FULL": "air fine", "air.LOW": "air running out", "air.EMPTY": "no air left",
       "breath.ABOVE": "air overhead", "breath.NEAR": "air close by", "breath.FAR": "air far off",
@@ -710,7 +850,10 @@
       "band.IN": "in its band", "band.BELOW": "below its band", "band.ABOVE": "above its band",
       "band.ANY": "no band set",
       "trail.FRESH": "new ground", "trail.CIRCLING": "going in circles", "trail.PINNED": "not moving",
+      "terrain.IN": "right kind of place", "terrain.OUT": "wrong kind of place",
       "empty.goals": "Nothing learned yet — join a world.",
+      "empty.folders": "No folder opened yet — it opens the first one at its first decision.",
+      "empty.timing": "no durations learned yet",
       "empty.crafts": "nothing to make so far",
       "empty.planner": "it has not been asked anything yet",
       "empty.placement": "it has not dug or built anywhere yet",
@@ -720,7 +863,7 @@
       "machine": "Machine", "cpu": "CPU", "memory": "Memory",
       "key.worse": "worse", "key.better": "better", "key.bar": "the bar is how much",
       "key.best": "preferred move", "key.distance": "distance: close / mid / far",
-      "key.tables": "duration and crafting have tables of their own",
+      "key.tables": "each pursuit has a folder of tables of its own",
       "status.connecting": "connecting…", "status.live": "live",
       "status.offline": "Minecraft is not open",
       "tally.decisions": "%s decisions", "tally.random": "%s %% at random",
@@ -733,8 +876,6 @@
       "shape.gather": "get %1$s %2$s", "shape.travel": "go to %s",
       "shape.descend": "dig down to height %s", "shape.ascend": "climb to height %s",
       "shape.build": "build %s",
-      "going.GET": "fetching", "going.GO": "travelling", "going.DOWN": "heading down",
-      "going.UP": "heading up", "going.BUILD": "building", "going.NONE": "no objective",
       "tip.cpu": "The game is using %s %% of the CPU",
       "tip.cpu.machine": "the whole machine, %s %%",
       "tip.memory": "The game has %1$s GB of memory and is using %2$s GB",
@@ -751,13 +892,17 @@
     },
     distance: { NONE: "", CLOSE: "close", NEAR: "mid", FAR: "far" },
     health: { LOW: "low health", MID: "half health", HIGH: "full health" },
+    // Durations are a number and a unit; there is nothing in them to translate.
+    timing: { SHORT: "1 s", MEDIUM: "4 s", LONG: "10 s" },
     craft: {
       NOTHING: "nothing", PLANKS: "planks", STICK: "sticks",
       CRAFTING_TABLE: "a crafting table", SWORD: "a sword", PICKAXE: "a pickaxe",
+      STONE_PICKAXE: "a stone pickaxe", FURNACE: "a furnace", IRON: "iron (smelting)",
     },
     resource: {
       LOG: "logs", PLANKS: "planks", STICK: "sticks", CRAFTING_TABLE: "crafting table",
-      PICKAXE: "pickaxe", SWORD: "sword", COBBLESTONE: "cobblestone", DIRT: "dirt",
+      PICKAXE: "pickaxe", STONE_PICKAXE: "stone pickaxe", SWORD: "sword", COBBLESTONE: "cobblestone",
+      DIRT: "dirt", SAND: "sand", GRAVEL: "gravel", FURNACE: "furnace", RAW_IRON: "raw iron",
       COAL: "coal", IRON: "iron", OBSIDIAN: "obsidian", FOOD: "food",
     },
     terrain: {
@@ -779,19 +924,28 @@
       STAY: "wherever", ONWARD: "straight on", FRESH: "somewhere new",
       BACK: "back the way it came", LEFT: "left", RIGHT: "right",
     },
+    swim: {
+      CARRY_ON: "carry on", SURFACE: "get air", SHORE: "get to land", PILLAR: "stack a block",
+    },
+    passage: {
+      CARRY_ON: "carry on", BREAK_AHEAD: "break through", BREAK_ABOVE: "break the ceiling",
+      PILLAR: "stack a block", DIG: "dig one down", AROUND: "go round", BACK: "turn back",
+    },
+    way: { WALK: "walk", DIG: "dig", CLIMB: "climb" },
+    tool: {
+      HAND: "bare hands", PICKAXE: "pickaxe", AXE: "axe", SHOVEL: "shovel", SWORD: "sword", HOE: "hoe",
+    },
     objective: {
       GATHER_LOGS: "get wood", GET_PLANKS: "get planks",
       GET_CRAFTING_TABLE: "get a crafting table", GET_STICKS: "get sticks",
       GET_SWORD: "get a sword", GET_PICKAXE: "get a pickaxe", GATHER_STONE: "get stone",
+      GET_STONE_PICKAXE: "get a stone pickaxe",
       PLANNING: "deciding what to do next", DONE: "all done",
     },
   };
 
   /** The words in use. Replaced once, when the game says which language it is in. */
   let L = DEFAULTS;
-
-  /** Durations are a number and a unit; there is nothing in them to translate. */
-  const DURATION = { SHORT: "1s", MEDIUM: "4s", LONG: "10s" };
 
   /**
    * Minecraft's format strings, which is what arrives in a translation: %s in order, %1$s by position,
@@ -811,11 +965,19 @@
   /** One of our own phrases, with its arguments filled in. */
   const t = (key, ...args) => format(L.text[key] ?? DEFAULTS.text[key] ?? key, ...args);
 
+  /** Whether the language in use has a word for this key at all, for the labels that are optional. */
+  const has = key => (L.text[key] ?? DEFAULTS.text[key]) !== undefined;
+
   /** One enum name in words. Falls back to a readable version of the name itself. */
   const word = (group, key) =>
     (L[group] ?? {})[key] ?? String(key).toLowerCase().replace(/_/g, " ");
 
-  // Objectives are no longer a fixed list: Claude names them, and there are four shapes it can name.
+  /** Everything here is written by a model or read off a block; none of it may become markup. */
+  const escape = text => String(text)
+    .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+
+  // Objectives are no longer a fixed list: Claude names them, and there are five shapes it can name.
   // The seven old rungs keep the names they always had, so all of it has to read the same here.
   const SHAPES = [
     [/^GET_(\d+)_(\w+)$/, m => t("shape.gather", m[1], word("resource", m[2]))],
@@ -836,6 +998,30 @@
     return word("objective", key);
   };
 
+  /**
+   * A folder's name in words. A folder is a resource — LOG, IRON — or one of the handful of pursuits
+   * that are not about a thing: travelling, climbing, building, threats, being between orders.
+   */
+  const folderLabel = name => has("folder." + name) ? t("folder." + name) : word("resource", name);
+
+  // A source is a block id or a mob id — oak_log, deepslate_iron_ore, zombie — shown as words, and not at
+  // all when the key has none ("-").
+  const sourceWords = source => !source || source === "-" ? "" : source.replaceAll("_", " ");
+  const sourceOf = source => sourceWords(source) ? " · " + sourceWords(source) : "";
+
+  /** "LOG/oak_log" as words: the folder, and the source within it when there is one. */
+  const pursuitLabel = label => {
+    const [name, source] = String(label ?? "").split("/");
+    if (!name) {
+      return "—";
+    }
+    return folderLabel(name) + (sourceWords(source) ? " · " + sourceWords(source) : "");
+  };
+
+  /** "y 40..70", or the word for no band at all. */
+  const bandLabel = (floor, ceiling) =>
+    floor === null || floor === undefined ? t("plan.anyheight") : `y ${floor}..${ceiling}`;
+
   // One decimal is enough until it rounds a real opinion down to "0.0", which reads as "knows nothing"
   // and is the opposite of what a small positive value means.
   const figure = value => Math.abs(value) < 0.05 ? value.toFixed(2) : value.toFixed(1);
@@ -851,10 +1037,8 @@
   /** Writes the words that sit in the markup rather than being drawn each frame. */
   function applyLabels() {
     const fixed = {
-      "t-objective": "objective", "t-doing": "doing", "t-making": "making",
-      "t-goals": "goals", "t-crafts": "crafts",
-      "t-planner": "planner", "t-placement": "placement", "t-position": "position",
-      "t-water": "water",
+      "t-objective": "objective", "t-pursuit": "pursuit", "t-doing": "doing", "t-making": "making",
+      "t-plan": "plan", "t-pursuits": "pursuits", "t-shared": "shared", "t-planner": "planner",
       "t-machine": "machine", "t-cpu": "cpu", "t-memory": "memory",
       "t-key-worse": "key.worse", "t-key-better": "key.better", "t-key-bar": "key.bar",
       "t-key-best": "key.best", "t-key-distance": "key.distance", "t-key-tables": "key.tables",
@@ -862,18 +1046,6 @@
     for (const [id, key] of Object.entries(fixed)) {
       el(id).textContent = t(key);
     }
-  }
-
-  // The table on screen is the goal table. Timing and crafting are learned in their own tables and shown
-  // as the choice of the moment rather than as more columns.
-  // The state key is "<context>|<subject>|<distance>|<health>|<flags>". The context is the rung or THREAT,
-  // which the goal table's own rows do not need repeating on every line; the rest is what varies.
-  function stateLabel(key, verdict) {
-    const [, focus, distance, health, flags] = key.split("|");
-    const near = word("distance", distance);
-    return `<span class="focus">${word("focus", focus)}</span>` +
-           `<span class="qualifier">${near ? " · " + near : ""} · ${word("health", health)}` +
-           `${qualifiers(flags)}</span>` + verdict;
   }
 
   /**
@@ -885,6 +1057,98 @@
   const qualifiers = flags =>
     QUALIFIERS.filter(([letter]) => flags && flags.includes(letter))
       .map(([, key]) => " · " + t(key)).join("");
+
+  /**
+   * The goal table's key is "<source>|<subject>|<distance>|<health>|<flags>". The folder the table lives
+   * in already says what the run is after; the source is which tree, ore or mob within that.
+   */
+  function stateLabel(key, verdict) {
+    const [source, focus, distance, health, flags] = key.split("|");
+    const near = word("distance", distance);
+    return `<span class="focus">${word("focus", focus)}</span>` +
+           `<span class="qualifier">${sourceOf(source)}${near ? " · " + near : ""} · ${word("health", health)}` +
+           `${qualifiers(flags)}</span>` + verdict;
+  }
+
+  /**
+   * The timing table's key is the goal table's with the move on the end: "<state>/<ACTION>". The move
+   * leads, because "how long to flee" and "how long to mine" are the different questions, and the
+   * situation follows as the qualifier.
+   */
+  function timingLabel(key, verdict) {
+    const slash = key.lastIndexOf("/");
+    const state = slash < 0 ? key : key.slice(0, slash);
+    const action = slash < 0 ? "" : key.slice(slash + 1);
+    const [source, focus, distance, health, flags] = state.split("|");
+    const near = word("distance", distance);
+    return `<span class="focus">${word("action", action)}</span>` +
+           `<span class="qualifier"> · ${word("focus", focus)}${sourceOf(source)}` +
+           `${near ? " · " + near : ""} · ${word("health", health)}${qualifiers(flags)}</span>` + verdict;
+  }
+
+  // The crafting table is keyed by "<what is short>|<what is held>": what the plan still needs and what
+  // is already in the bag, which is what actually decides a craft.
+  function craftLabel(key, verdict) {
+    const [short, held] = key.split("|");
+    const wanted = !short || short === "-"
+      ? t("needs.nothing")
+      : t("needs.short", short.split("+").map(r => word("resource", r)).join(", "));
+    const holding = !held || held === "-"
+      ? t("bag.empty")
+      : t("bag.holding", held.split("+").map(r => word("resource", r)).join(", "));
+    return `<span class="focus">${wanted}</span>` +
+           `<span class="qualifier"> · ${holding}</span>` + verdict;
+  }
+
+  /**
+   * The position table is keyed by "<source>|<where in its band>|<terrain>|<how the trail reads>|<flags>":
+   * which source it is looking for, whether it is at a height and in a kind of place the planner said the
+   * source is found, and whether it has been walking in circles.
+   */
+  function groundLabel(key, verdict) {
+    const [source, band, terrain, trail, flags] = key.split("|");
+    const height = band && band !== "ANY" ? " · " + t("band." + band) : "";
+    const place = terrain && terrain !== "ANY" ? " · " + t("terrain." + terrain) : "";
+    return `<span class="focus">${t("trail." + (trail || "FRESH"))}</span>` +
+           `<span class="qualifier">${sourceOf(source)}${height}${place}${qualifiers(flags)}</span>` + verdict;
+  }
+
+  /**
+   * The water table is keyed by "<how deep>|<how much air>|<where air is>|<where land is>". How deep and
+   * how much air is the danger; the other two are what can be done about it, which is why a row with no
+   * way out in it reads so differently from one with the shore next door.
+   */
+  function waterLabel(key, verdict) {
+    const [depth, air, breath, shore] = key.split("|");
+    const left = t("air." + (air || "FULL"));
+    const ways = [t("breath." + (breath || "NONE")), t("shore." + (shore || "NONE"))].join(" · ");
+    return `<span class="focus">${t("depth." + (depth || "SWIMMING"))} · ${left}</span>` +
+           `<span class="qualifier"> · ${ways}</span>` + verdict;
+  }
+
+  /**
+   * The passage table is keyed by "<wants>|<ahead>|<above>|<flags>": which way the body is trying to go,
+   * what is in front of it, whether there is room over its head, and what it could do about it — B
+   * carrying blocks, T able to break what is ahead, D able to dig down.
+   */
+  function passageLabel(key, verdict) {
+    const [wants, ahead, above, flags] = key.split("|");
+    const can = [["B", "qualifier.blocks"], ["T", "qualifier.breakable"], ["D", "qualifier.diggable"]]
+      .filter(([letter]) => flags && flags.includes(letter))
+      .map(([, k]) => " · " + t(k)).join("");
+    return `<span class="focus">${t("want." + (wants || "FLAT"))} · ${t("ahead." + (ahead || "NONE"))}</span>` +
+           `<span class="qualifier"> · ${t("above." + (above || "OPEN"))}${can}</span>` + verdict;
+  }
+
+  /**
+   * The placement table is keyed by "<source>|<verb>|<flags>": what it is working on, what it is about to
+   * do to it, and what is around it. All three matter, which is why all three are shown.
+   */
+  function spotLabel(key, verdict) {
+    const [source, action, flags] = key.split("|");
+    return `<span class="focus">${word("action", action)}</span>` +
+           `<span class="qualifier">${sourceOf(source)}${qualifiers(flags)}</span>` + verdict;
+  }
 
   // Three things a row can be saying, and they are not the same. It has found something worth doing; or
   // the best it knows is an untried column and all it has really learned is what hurt; or it knows nothing.
@@ -908,90 +1172,176 @@
            `<div class="track">${bar}</div></td>`;
   }
 
-  // The crafting table is keyed by "<objective>|<what is held>": what the run is after and what is already
-  // in the bag, which is what actually decides a craft.
-  function craftLabel(key, verdict) {
-    const [short, held] = key.split("|");
-    const wanted = !short || short === "-"
-      ? t("needs.nothing")
-      : t("needs.short", short.split("+").map(r => word("resource", r)).join(", "));
-    const holding = !held || held === "-"
-      ? t("bag.empty")
-      : t("bag.holding", held.split("+").map(r => word("resource", r)).join(", "));
-    return `<span class="focus">${wanted}</span>` +
-           `<span class="qualifier"> · ${holding}</span>` + verdict;
-  }
-
   /**
-   * The position table is keyed by "<objective shape>|<where in its band>|<how the trail reads>|<flags>":
-   * where the run is trying to get to, whether it is at a height the plan approves of, and whether it has
-   * been walking in circles.
+   * One learned table, as markup. Every table on the page is the same shape — situations down the side,
+   * columns across, a diverging bar per cell — so they are one function rather than six that drift
+   * apart. Returned as a string rather than written into a fixed element, because how many there are is
+   * decided by the data: four per folder, and as many folders as the run has opened.
+   *
+   * Nothing is trimmed. The page is read on a desktop by the one person who wants to know exactly what
+   * the run has learned, and a table that quietly stops at twelve rows hides the very states that only
+   * turn up after hours of play.
    */
-  function groundLabel(key, verdict) {
-    const [shape, band, trail, flags] = key.split("|");
-    const going = " · " + t("going." + (shape || "NONE"));
-    const height = band && band !== "ANY" ? " · " + t("band." + band) : "";
-    return `<span class="focus">${t("trail." + (trail || "FRESH"))}</span>` +
-           `<span class="qualifier">${going}${height}${qualifiers(flags)}</span>` + verdict;
-  }
+  function tableHtml(spec) {
+    const { title, sideHead, actions, rows, group, label, current, empty } = spec;
+    const head = `<thead><tr><th class="state-head">${t(sideHead)}</th>` +
+      actions.map(a => `<th class="action-head">${word(group, a)}</th>`).join("") + "</tr></thead>";
 
-  /**
-   * The water table is keyed by "<how deep>|<how much air>|<where air is>|<where land is>". How deep and
-   * how much air is the danger; the other two are what can be done about it, which is why a row with no
-   * way out in it reads so differently from one with the shore next door.
-   */
-  function waterLabel(key, verdict) {
-    const [depth, air, breath, shore] = key.split("|");
-    const left = t("air." + (air || "FULL"));
-    const ways = [t("breath." + (breath || "NONE")), t("shore." + (shore || "NONE"))].join(" · ");
-    return `<span class="focus">${t("depth." + (depth || "SWIMMING"))} · ${left}</span>` +
-           `<span class="qualifier"> · ${ways}</span>` + verdict;
-  }
-
-  /**
-   * The placement table is keyed by "<verb>|<objective shape>|<flags>": what it is about to do, which way
-   * the run is trying to go, and what is around it. All three matter, which is why all three are shown.
-   */
-  function spotLabel(key, verdict) {
-    const [action, shape, flags] = key.split("|");
-    const going = " · " + t("going." + (shape || "NONE"));
-    return `<span class="focus">${word("action", action)}</span>` +
-           `<span class="qualifier">${going}${qualifiers(flags)}</span>` + verdict;
-  }
-
-  /**
-   * One learned table on screen. All three are the same shape — situations down the side, columns across,
-   * a diverging bar per cell — so they are one function rather than three that drift apart.
-   */
-  function renderTable(spec) {
-    const { headId, bodyId, actions, rows, group, label, max, current } = spec;
-    const table = el(headId).closest("table");
-    table.style.setProperty("--action-count", actions.length);
-    el(headId).innerHTML = `<th class="state-head">${t(spec.sideHead)}</th>` +
-      actions.map(a => `<th class="action-head">${word(group, a)}</th>`).join("");
-
+    let body;
     if (!rows.length) {
-      el(bodyId).innerHTML =
-        `<tr><td class="empty" colspan="${actions.length + 1}">${t(spec.empty)}</td></tr>`;
+      body = `<tbody><tr><td class="empty" colspan="${actions.length + 1}">${t(empty)}</td></tr></tbody>`;
+    } else {
+      // Strongest opinions first. What the run is doing now is not a reason to show a row that has
+      // learned nothing yet, and the live row keeps its own ring either way.
+      const strength = r => Math.max(...r.values.map(Math.abs));
+      const shown = [...rows].sort((a, b) => strength(b) - strength(a));
+      // One shared scale across the table, so a long bar means the same thing on every row of it.
+      const scale = Math.max(1e-3, ...shown.flatMap(r => r.values.map(Math.abs)));
+      body = "<tbody>" + shown.map(row => {
+        const best = row.values.indexOf(Math.max(...row.values));
+        const live = row.state === current ? ' class="current"' : "";
+        const text = label(row.state, verdictLabel(group, actions, row.values, best));
+        // The whole label on the tooltip, for the rows the column is too narrow for: a label cut short
+        // loses its verdict, and the verdict is the point.
+        const plain = text.replace(/<[^>]+>/g, "").replaceAll('"', "&quot;");
+        return `<tr${live}><td class="state" title="${plain}">${text}</td>` +
+               row.values.map((v, i) =>
+                   cell(v, scale, word(group, actions[i]), i === best && Math.abs(v) > 1e-4)).join("") +
+               "</tr>";
+      }).join("") + "</tbody>";
+    }
+    return `<div class="table-block"><div class="sub-label">${t(title)}</div>` +
+           `<table style="--action-count:${actions.length}">${head}${body}</table></div>`;
+  }
+
+  /** A shopping list or a reserve as chips: "3 × logs". */
+  const chips = amounts => amounts.length
+    ? amounts.map(a => `<span class="chip"><b>${a.amount}</b> × ${escape(word("resource", a.item))}</span>`).join("")
+    : `<span class="chip">${t("plan.nothing")}</span>`;
+
+  /**
+   * A plan, whole: what, why, at what height, needing what, keeping what back, and from where.
+   *
+   * The same markup serves the plan in force at the top of the page and every answer in the planner's
+   * history below it, so the two can be compared line for line. The one difference is `sought`: the
+   * source the body is looking for right now, which only the live plan has.
+   */
+  function planHtml(plan, sought) {
+    const reason = plan.reason
+      ? `<div class="plan-reason">${escape(plan.reason)}</div>`
+      : `<div class="plan-reason">${t("plan.ladder")}</div>`;
+    const lists = `<div class="plan-lists">` +
+      `<span class="plan-list"><span class="plan-term">${t("plan.band")}</span>` +
+      `<span class="chip">${escape(bandLabel(plan.floor, plan.ceiling))}</span></span>` +
+      `<span class="plan-list"><span class="plan-term">${t("plan.needs")}</span>${chips(plan.needs || [])}</span>` +
+      `<span class="plan-list"><span class="plan-term">${t("plan.reserve")}</span>${chips(plan.reserve || [])}</span>` +
+      `</div>`;
+    const sources = (plan.sources || []).length
+      ? `<table class="sources"><thead><tr>` +
+        `<th>${t("plan.sources")}</th><th>${t("head.tool")}</th><th>${t("plan.band")}</th>` +
+        `<th>${t("head.terrain")}</th><th>${t("head.ways")}</th></tr></thead><tbody>` +
+        plan.sources.map(source => {
+          const live = sought && source.block === sought;
+          const terrain = (source.terrain || []).map(x => word("terrain", x)).join(", ") || "—";
+          const ways = (source.ways || []).map(x => word("way", x)).join(", ");
+          return `<tr${live ? ' class="sought"' : ""}>` +
+                 `<td class="block">${escape(sourceWords(source.block))}` +
+                 `${live ? `<span class="badge">${t("plan.active")}</span>` : ""}</td>` +
+                 `<td>${escape(word("tool", source.tool))}</td>` +
+                 `<td>${escape(bandLabel(source.floor, source.ceiling))}</td>` +
+                 `<td>${escape(terrain)}</td><td>${escape(ways)}</td></tr>`;
+        }).join("") + "</tbody></table>"
+      : "";
+    return `<div class="plan-head"><b>${escape(objectiveLabel(plan.objective))}</b></div>` +
+           reason + lists + sources;
+  }
+
+  function renderPlan(data) {
+    const box = el("plan");
+    if (!data.plan) {
+      box.innerHTML = `<div class="empty-line">${escape(objectiveLabel(data.phase))} · ${t("plan.none")}</div>`;
+      return;
+    }
+    // Which source the body is after right now is the second half of the pursuit label: "LOG/oak_log".
+    const sought = String(data.pursuit || "").split("/")[1] || null;
+    box.innerHTML = planHtml(data.plan, sought);
+  }
+
+  /**
+   * Which folder the page is showing.
+   *
+   * Null follows the run: whatever folder the learning is landing in is the one on screen, which is what
+   * a viewer wants most of the time. Clicking a tab pins that folder — to read what it learned about
+   * zombies while it is off chopping wood — and clicking the pinned tab again lets go.
+   */
+  let pinned = null;
+
+  function renderFolders(data) {
+    const folders = data.folders || [];
+    if (!folders.some(f => f.name === pinned)) {
+      pinned = null;
+    }
+    const shownName = pinned ?? data.activeFolder;
+    const shown = folders.find(f => f.name === shownName) ?? folders[0];
+
+    el("tabs").innerHTML = folders.map(folder => {
+      const live = folder.name === data.activeFolder;
+      const classes = ["tab", folder === shown ? "shown" : ""].join(" ").trim();
+      const states = folder.goals.length + folder.timing.length + folder.position.length + folder.placement.length;
+      return `<span class="${classes}" data-folder="${escape(folder.name)}" ` +
+             `title="${live ? t("folder.live") : ""}">` +
+             `${live ? '<span class="dot"></span>' : ""}${escape(folderLabel(folder.name))}` +
+             `<span class="n">${count(states)}</span></span>`;
+    }).join("");
+
+    if (!shown) {
+      el("folder-meta").innerHTML = "";
+      el("folder").innerHTML = `<div class="empty-line">${t("empty.folders")}</div>`;
       return;
     }
 
-    // Strongest opinions first. What the run is doing now is not a reason to show a row that has learned
-    // nothing yet, and the live row keeps its own ring either way.
-    const strength = r => Math.max(...r.values.map(Math.abs));
-    const shown = [...rows].sort((a, b) => strength(b) - strength(a)).slice(0, max);
-    // One shared scale across the table, so a long bar means the same thing on every row of it.
-    const scale = Math.max(1e-3, ...shown.flatMap(r => r.values.map(Math.abs)));
+    const states = shown.goals.length + shown.timing.length + shown.position.length + shown.placement.length;
+    el("folder-meta").innerHTML =
+      `<span><b>${escape(folderLabel(shown.name))}</b>` +
+      `${shown.name === data.activeFolder ? " · " + t("folder.live") : ""}</span>` +
+      `<span>${t("folder.states", count(states))}</span>` +
+      `<span>${t("folder.decisions", count(shown.decisions))}</span>` +
+      `<span>${t("folder.random", Math.round((shown.epsilon || 0) * 100))}</span>`;
 
-    el(bodyId).innerHTML = shown.map(row => {
-      const best = row.values.indexOf(Math.max(...row.values));
-      const live = row.state === current ? ' class="current"' : "";
-      const verdict = verdictLabel(group, actions, row.values, best);
-      return `<tr${live}><td class="state">${label(row.state, verdict)}</td>` +
-             row.values.map((v, i) =>
-                 cell(v, scale, word(group, actions[i]), i === best && Math.abs(v) > 1e-4)).join("") +
-             "</tr>";
-    }).join("");
+    // The live row is only live in the folder the body is actually in.
+    const current = shown.name === data.activeFolder ? data.currentState : null;
+    const timingCurrent = current && data.currentAction ? current + "/" + data.currentAction : null;
+    el("folder").innerHTML =
+      tableHtml({ title: "goals", sideHead: "head.situation", actions: data.actions || [],
+        rows: shown.goals, group: "action", label: stateLabel, current, empty: "empty.goals" }) +
+      tableHtml({ title: "position", sideHead: "head.position", actions: data.positionActions || [],
+        rows: shown.position, group: "ground", label: groundLabel, current: null, empty: "empty.position" }) +
+      tableHtml({ title: "placement", sideHead: "head.placement", actions: data.placementActions || [],
+        rows: shown.placement, group: "spot", label: spotLabel, current: null, empty: "empty.placement" }) +
+      tableHtml({ title: "timing", sideHead: "head.timing", actions: data.timingActions || [],
+        rows: shown.timing, group: "timing", label: timingLabel, current: timingCurrent, empty: "empty.timing" });
+  }
+
+  // Pin and unpin by clicking the tabs. Delegated, since the tabs are redrawn on every decision.
+  el("tabs").addEventListener("click", event => {
+    const tab = event.target.closest(".tab");
+    if (!tab || !latest) {
+      return;
+    }
+    const name = tab.dataset.folder;
+    pinned = pinned === name ? null : name;
+    renderFolders(latest);
+  });
+
+  function renderShared(data) {
+    el("shared").innerHTML =
+      tableHtml({ title: "crafts", sideHead: "head.craft", actions: data.craftActions || [],
+        rows: data.craftRows || [], group: "craft", label: craftLabel, current: null, empty: "empty.crafts" }) +
+      tableHtml({ title: "water", sideHead: "head.water", actions: data.waterActions || [],
+        rows: data.waterRows || [], group: "swim", label: waterLabel, current: null, empty: "empty.water" }) +
+      tableHtml({ title: "passage", sideHead: "head.passage", actions: data.passageActions || [],
+        rows: data.passageRows || [], group: "passage", label: passageLabel, current: null,
+        empty: "empty.passage" });
   }
 
   /** "45s" / "3m", so a line can say how long ago it was without a clock on the page. */
@@ -1000,13 +1350,6 @@
     return seconds < 90 ? seconds + "s" : Math.round(seconds / 60) + "m";
   };
 
-  /**
-   * What the planner was asked and what it said, oldest first.
-   *
-   * The whole prompt and the whole reply ride along in `detail` and go on the row's tooltip: the line
-   * itself has to stay short enough to skim, and the question a viewer actually has — what did it say —
-   * is one hover away rather than absent.
-   */
   /** The revision the drawn history belongs to, so it is fetched once per change and not per decision. */
   let plannerRevision = null;
 
@@ -1016,8 +1359,8 @@
   /**
    * Asks for the planner's whole conversation.
    *
-   * <p>Relative, so the same page works on loopback inside OBS and through the proxy in the panel,
-   * where the credential is added on the way past.
+   * Relative, so the same page works on loopback inside OBS and through the proxy in the panel, where
+   * the credential is added on the way past.
    */
   async function fetchPlanner() {
     try {
@@ -1032,30 +1375,38 @@
     }
   }
 
+  /**
+   * What the planner was asked and what it said, newest first, with everything each decision was made
+   * of: for an answer, the plan the run took from it — band, list, reserve, sources — and the reply it
+   * was read from; for a question, the line of situation and the whole prompt behind it. The raw text is
+   * folded, one click away, so the page can be skimmed and still be checked.
+   */
   function renderPlanner(entries) {
     const talk = el("planner");
     if (!entries.length) {
-      talk.innerHTML = `<div class="talk-empty">${t("empty.planner")}</div>`;
+      talk.innerHTML = `<div class="empty-line">${t("empty.planner")}</div>`;
       return;
     }
     talk.innerHTML = [...entries].reverse().map(entry => {
       const kind = String(entry.kind || "").toLowerCase();
-      const tip = entry.detail ? ` title="${escape(entry.detail)}"` : "";
-      // The objective travels as its key so it can be named here, in the same words the rest of the
-      // panel uses. What follows it is the planner's own sentence and is left exactly as it wrote it.
-      const named = entry.objective
-        ? `<b>${escape(objectiveLabel(entry.objective))}</b>${entry.text ? " · " : ""}`
+      // An answer's title is the objective in the panel's own words; its reason follows in the model's.
+      const title = entry.plan
+        ? `<b>${escape(objectiveLabel(entry.plan.objective))}</b>` +
+          (entry.text ? ` <span class="reason">${escape(entry.text)}</span>` : "")
+        : (entry.objective ? `<b>${escape(objectiveLabel(entry.objective))}</b> · ` : "") +
+          escape(entry.text || "");
+      const plan = entry.plan ? `<div class="plan">${planHtml(entry.plan, null)}</div>` : "";
+      const raw = entry.detail
+        ? `<details class="raw"><summary>${kind === "asked" ? t("planner.prompt") : t("planner.reply")}</summary>` +
+          `<pre>${escape(entry.detail)}</pre></details>`
         : "";
-      return `<span class="talk-kind ${kind}">${word("planner", entry.kind)}</span>` +
-             `<span class="talk-text"${tip}>${named}${escape(entry.text || "")}</span>` +
-             `<span class="talk-ago">${t("ago", elapsed(entry.ago || 0))}</span>`;
+      return `<article class="entry ${kind}">` +
+             `<div class="entry-head"><span class="talk-kind ${kind}">${word("planner", entry.kind)}</span>` +
+             `<span class="entry-title">${title}</span>` +
+             `<span class="talk-ago">${t("ago", elapsed(entry.ago || 0))}</span></div>` +
+             plan + raw + `</article>`;
     }).join("");
   }
-
-  /** Everything here is written by a model or read off a block; none of it may become markup. */
-  const escape = text => String(text)
-    .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
 
   function meter(id, fraction, hot) {
     const bar = el(id);
@@ -1087,66 +1438,38 @@
         ? " · " + t("tip.memory.machine", gigabytes(stats.ramUsed), gigabytes(stats.ramTotal)) : "");
   }
 
-  /** Everything the panel draws from one snapshot: the objective, the move of the moment, the tables. */
+  /** Everything the panel draws from one snapshot: the moment, the plan, the folders, the shared tables. */
   function render(data) {
     el("phase").textContent = objectiveLabel(data.phase);
+    el("working").textContent = pursuitLabel(data.pursuit);
     // Only there when a planner chose the objective and said why; the fixed ladder has nothing to add.
     const reason = el("phase-reason");
     reason.textContent = data.phaseReason || "";
     reason.hidden = !data.phaseReason;
     // The duration belongs with the action: "fleeing" and "fleeing for ten seconds" are different moves.
     el("doing").textContent = data.currentAction
-      ? `${word("action", data.currentAction)} ${DURATION[data.currentTiming] ?? ""}`.trim()
+      ? `${word("action", data.currentAction)} ${word("timing", data.currentTiming)}`.trim()
       : "—";
     el("making").textContent = data.currentCraft && data.currentCraft !== "NOTHING"
       ? word("craft", data.currentCraft)
       : "—";
 
-    renderTable({
-      headId: "goal-header", bodyId: "goal-rows", sideHead: "head.situation",
-      actions: data.actions || [], rows: data.rows || [],
-      group: "action", label: stateLabel, max: MAX_ROWS, current: data.currentState,
-      empty: "empty.goals",
-    });
+    // The compact strip draws none of the rest, and building it there would be work thrown away
+    // several times a minute.
+    if (!COMPACT) {
+      renderPlan(data);
+      renderFolders(data);
+      renderShared(data);
 
-    renderTable({
-      headId: "craft-header", bodyId: "craft-rows", sideHead: "head.craft",
-      actions: data.craftActions || [], rows: data.craftRows || [],
-      group: "craft", label: craftLabel, max: MAX_CRAFT_ROWS, current: null,
-      empty: "empty.crafts",
-    });
-
-    renderTable({
-      headId: "ground-header", bodyId: "ground-rows", sideHead: "head.position",
-      actions: data.positionActions || [], rows: data.positionRows || [],
-      group: "ground", label: groundLabel, max: MAX_PLACEMENT_ROWS, current: null,
-      empty: "empty.position",
-    });
-
-    renderTable({
-      headId: "spot-header", bodyId: "spot-rows", sideHead: "head.placement",
-      actions: data.placementActions || [], rows: data.placementRows || [],
-      group: "spot", label: spotLabel, max: MAX_PLACEMENT_ROWS, current: null,
-      empty: "empty.placement",
-    });
-
-    renderTable({
-      headId: "water-header", bodyId: "water-rows", sideHead: "head.water",
-      actions: data.waterActions || [], rows: data.waterRows || [],
-      group: "swim", label: waterLabel, max: MAX_PLACEMENT_ROWS, current: null,
-      empty: "empty.water",
-    });
-
-    // The conversation is not in the snapshot — it is whole prompts and whole replies, and it would
-    // be resent on every decision to say nothing new. The snapshot carries a revision, and this asks
-    // for the history only when that has moved. Never in the compact view, which does not draw it.
-    if (!COMPACT && data.plannerRevision !== plannerRevision) {
-      plannerRevision = data.plannerRevision;
-      fetchPlanner();
+      // The conversation is not in the snapshot — it is whole prompts and whole replies, and it would
+      // be resent on every decision to say nothing new. The snapshot carries a revision, and this asks
+      // for the history only when that has moved.
+      if (data.plannerRevision !== plannerRevision) {
+        plannerRevision = data.plannerRevision;
+        fetchPlanner();
+      }
     }
 
-    // The counters that used to sit in tiles at the top live down here now, where they inform without
-    // taking the first thing a viewer looks at.
     el("tally").textContent = t("tally.decisions", count(data.decisions)) + " · "
       + t("tally.random", Math.round((data.epsilon || 0) * 100)) + " · "
       + t("tally.stalls", count(data.stalls));

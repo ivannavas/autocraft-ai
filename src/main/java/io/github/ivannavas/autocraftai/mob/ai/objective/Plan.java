@@ -26,11 +26,11 @@ import java.util.Map;
  * the reserve forbids it, by keeping the craft off the menu and the block out of the hand. They are
  * different tools for different failures — see {@link Reserve}.
  *
- * <p>The two lists are combined differently, and on purpose. What the planner says the run needs
- * <em>replaces</em> the objective's own idea, because it knows more: the whole chain behind a pickaxe is
- * invisible from the word "pickaxe". What it says must not be spent is <em>added</em> to it, because some
- * objectives are themselves a statement about what may not be spent and the model cannot be relied on to
- * restate it. "Get three logs" is finished by holding three logs, so it holds three logs back whether the
+ * <p>Both lists are unions with the objective's own. What the planner says the run needs is added to what
+ * the objective already implies, because it knows more — the whole chain behind a pickaxe is invisible
+ * from the word "pickaxe" — and forgets the obvious: asked for planks it lists the logs and not the planks.
+ * What it says must not be spent is added too, because some objectives are themselves a statement about
+ * what may not be spent and the model cannot be relied on to restate it. "Get three logs" is finished by holding three logs, so it holds three logs back whether the
  * reply mentioned it or not — and where both name the same thing, the larger number wins.
  *
  * @param objective what to achieve
@@ -43,8 +43,25 @@ public record Plan(Phase objective, Bounds bounds, Map<Resource, Integer> needs,
 
     public Plan {
         bounds = bounds == null ? Bounds.anywhere() : bounds;
-        needs = needs == null || needs.isEmpty() ? objective.needs() : Map.copyOf(needs);
+        needs = union(objective.needs(), needs);
         reserved = merge(objective, reserved);
+    }
+
+    /**
+     * The objective's own list and the planner's, together, the larger number winning.
+     *
+     * <p>Together rather than one replacing the other, because the planner keeps leaving the objective's
+     * own item off: asked for twelve planks it listed the three logs they come from and not the planks,
+     * and a crafting table keyed on what is short never saw planks as short at all. What the objective
+     * says it takes is the floor; the planner only ever adds to it.
+     */
+    private static Map<Resource, Integer> union(Map<Resource, Integer> own, Map<Resource, Integer> told) {
+        if (told == null || told.isEmpty()) {
+            return own;
+        }
+        Map<Resource, Integer> both = new java.util.LinkedHashMap<>(own);
+        told.forEach((resource, amount) -> both.merge(resource, amount, Math::max));
+        return Map.copyOf(both);
     }
 
     /**

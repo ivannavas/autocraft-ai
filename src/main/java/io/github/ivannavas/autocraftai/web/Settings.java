@@ -163,6 +163,39 @@ public final class Settings {
     }
 
     /**
+     * How much video is kept in memory, in seconds, ready to be written out when something happens.
+     *
+     * <p>This is the length of every clip: the buffer holds the last minute, and reaching an objective
+     * writes exactly that. It is the minute leading up to the moment, which is the interesting half —
+     * the work, not the standing about afterwards.
+     */
+    public int clipSeconds() {
+        return number("clips.seconds", 60);
+    }
+
+    /**
+     * Where OBS writes the clips, or empty to leave its own setting alone.
+     *
+     * <p>Empty by default because changing where somebody's OBS records to is not a thing a mod should
+     * do uninvited. The streaming box sets it, since there the recording directory is the mod's business
+     * and nobody else's.
+     */
+    public String clipsDir() {
+        return value("clips.dir", "");
+    }
+
+    /**
+     * How many clips to keep before the oldest are deleted, or zero to keep the lot.
+     *
+     * <p>A minute of 720p is tens of megabytes and objectives are reached all day, so unbounded is a
+     * disk that fills — and on this box the same disk holds the world. Bounded by count rather than by
+     * age: what matters is having the last stretch of run to look at, however long that took.
+     */
+    public int clipsKeep() {
+        return number("clips.keep", 200);
+    }
+
+    /**
      * Where the broadcast is sent.
      *
      * <p>YouTube's ingest is a fixed address, unlike the per-broadcast URL TikTok hands out, so it can

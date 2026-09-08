@@ -1,8 +1,11 @@
 package io.github.ivannavas.autocraftai.mob.ai.objective;
 
+import java.util.EnumSet;
+import java.util.List;
 import java.util.Locale;
 
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.level.block.state.BlockState;
 
 /**
  * Go somewhere else — somewhere with trees, somewhere flat, somewhere underground.
@@ -46,6 +49,18 @@ public record Travel(Terrain terrain, String reason) implements Phase {
     @Override
     public double score(StepContext context) {
         return Math.min(MOST_PER_STEP, context.distanceCovered() * PER_BLOCK);
+    }
+
+    /**
+     * One folder for every journey, the kind of place being sought as the source, and that place as the
+     * terrain — so the position table can tell "not there yet" from "arrived" without being told. On foot
+     * and by climbing out of whatever it is in, and never by digging: nobody ever found a forest by going
+     * down.
+     */
+    @Override
+    public Pursuit pursuit(BlockState seen, int y, Bounds plan) {
+        return new Pursuit("GO", terrain.name(),
+                new Whereabouts(plan, List.of(terrain), EnumSet.of(Way.WALK, Way.CLIMB)));
     }
 
     /** The biome the body is standing in, namespace and all, or empty when there is no body to ask. */

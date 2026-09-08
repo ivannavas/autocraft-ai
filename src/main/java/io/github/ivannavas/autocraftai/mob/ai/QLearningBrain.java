@@ -1,29 +1,41 @@
 package io.github.ivannavas.autocraftai.mob.ai;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.OptionalDouble;
+import java.util.OptionalInt;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 
+import io.github.ivannavas.autocraftai.mob.MobBody;
 import io.github.ivannavas.autocraftai.mob.MobEngine;
 import io.github.ivannavas.autocraftai.mob.MobGoal;
 import io.github.ivannavas.autocraftai.mob.ai.objective.GeneralObjectives;
 import io.github.ivannavas.autocraftai.mob.ai.objective.InventoryCensus;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Objective;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Phase;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Progression;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Pursuit;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Reserve;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.PlannerLog;
 import io.github.ivannavas.autocraftai.mob.ai.objective.StepContext;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Tool;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Travel;
 import io.github.ivannavas.autocraftai.mob.goal.CraftAtTableGoal;
 import io.github.ivannavas.autocraftai.mob.goal.CraftGoal;
 import io.github.ivannavas.autocraftai.mob.goal.CraftingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.MineSightingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.PlaceBlockGoal;
+import io.github.ivannavas.autocraftai.mob.goal.SmeltGoal;
 import lombok.extern.slf4j.Slf4j;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -58,6 +70,19 @@ import net.minecraft.world.phys.Vec3;
  * multiply the lot again. Split, a new goal is one column and a new commitment level is one column. The three learn
  * from the same reward over the same move, which does mean none of them can represent an interaction the
  * others cannot see — the price of the split, and the reason it scales.
+ *
+ * <h2>A folder of tables per pursuit</h2>
+ * The four tables that depend on what the run is after — goals, timing, placement, position — are not one
+ * file each but one file each <em>per pursuit</em>: {@code pursuits/LOG/goals.txt}, {@code pursuits/THREAT/
+ * goals.txt}, and so on, opened the first time a pursuit comes up. The objective used to be the first field
+ * of every key instead, and the planner inventing objectives was the end of that: every new wording was a
+ * row visited once. What the body learns about wood does not depend on how much wood was asked for, so
+ * the folder is the resource and the source within it is a field of the key — see {@link Pursuit}.
+ * Crafting and water stay single files, because what they key on never depended on the objective.
+ *
+ * <p>A move is credited to the folder it was chosen from. When the next decision lands in a different
+ * folder — a zombie walks into view, the plan moves on to stone — the old folder's claims are settled with
+ * no continuation rather than bootstrapped from a table that knows nothing about them.
  *
  * <h2>A commitment, and the layers on top of it</h2>
  * The goal table picks something that needs the body and the timing table says how long. That is the
@@ -148,31 +173,53 @@ public final class QLearningBrain {
     private static final int SWIM_PRIORITY = 0;
     /** Ticks spent on the death screen before asking to come back. Long enough to see what killed you. */
     private static final int RESPAWN_DELAY_TICKS = 40;
+    /** Where the per-pursuit folders live, under the directory the shared tables are in. */
+    private static final String PURSUITS = "pursuits";
+    /**
+     * Above the committed goal and below the water: a wall is worth breaking through, drowning is not
+     * worth anything. Level with a craft at a table, so whichever of the two has the body keeps it.
+     */
+    private static final int PASSAGE_PRIORITY = 1;
+    /** Ticks of the committed goal getting nowhere before the terrain is asked about. One second. */
+    private static final int OBSTRUCTED_TICKS = 20;
+    /**
+     * Per block the body got towards where it wanted to go, paid to the passage table on top of the
+     * ordinary reward. What a descent pays per block, and for the same reason: a table that can only
+     * see the standing costs of a second learns nothing from a second that opened the way.
+     */
+    private static final double PASSAGE_PROGRESS_WEIGHT = 0.6;
 
     private final MobEngine engine;
     private final Perception perception = new Perception();
     private final Territory territory = new Territory();
     private final Progression progression;
 
-    private final Table goals;
-    private final Table timing;
+    private final Path directory;
     private final Table crafting;
-    private final Table placement;
-    private final Table position;
     private final Table water;
-    private final List<Table> tables;
+    private final Table passage;
+    /** One set of the four objective-bound tables per pursuit name, opened the first time it comes up. */
+    private final Map<String, Suite> suites = new LinkedHashMap<>();
+    /** The folder the move in flight was chosen from, whose tables hold the claims on its reward. */
+    private Suite active;
+    /** What the tables were working on at the last look. */
+    private Pursuit pursuit = Pursuit.DONE;
 
     /** Where a copy of what the brain knows goes after every decision. No-op until something wants it. */
     private Consumer<QTableSnapshot> snapshotListener = snapshot -> {
     };
 
     private Observation lastObservation;
+    /** The state the move in flight was chosen in, folder and all, as the planner's log reads it. */
+    private String lastState;
     private Commitment commitment;
     private int stepsRun;
     /** Seconds of the move in flight its goal has had nothing to show for. Reset with every decision. */
     private int stalledSteps;
     /** Whether the second just gone was one of them, which is what tells a stall from a recovery. */
     private boolean stalledNow;
+    /** Whether the committed goal has finished what it was for, which ends the move at once and for free. */
+    private boolean doneNow;
 
     private GoalAction installedAction;
     private MobGoal installedGoal;
@@ -180,6 +227,8 @@ public final class QLearningBrain {
     private CraftingGoal craftGoal;
     private MobGoal swimGoal;
     private Swim swimChoice = Swim.CARRY_ON;
+    private MobGoal passageGoal;
+    private Passage passageChoice = Passage.CARRY_ON;
 
     /** How many moves have been cut short for going nowhere. Shown on the overlay, learned from nowhere. */
     private long stalls;
@@ -192,29 +241,69 @@ public final class QLearningBrain {
      * not from wherever the commitment happens to have started.
      */
     private Moment wet;
+    /**
+     * The line the body is walking to find a kind of place the loaded map does not yet show, as a yaw in
+     * radians, or NaN when it is not looking for one. Held until the place turns up or the line stops
+     * paying: a body that re-rolled its heading every decision covered fifty blocks of the same plain in
+     * eight minutes, and a straight line is the way to cross a biome you cannot see the end of.
+     */
+    private double exploring = Double.NaN;
+    /** The body as it was when the passage table last chose, or null while nothing is in its way. */
+    private Moment stuckSince;
+    /** Which way it wanted, and where, when it last chose: what its progress is measured against. */
+    private Obstruction.Wanted stuckWanting;
+    private Vec3 stuckTarget;
+    /** The block it was trying to get at, and how many were on the line to it, when it last chose. */
+    private BlockPos stuckSought;
+    private int stuckBetween;
     private InventoryCensus obtained = InventoryCensus.empty();
     private InventoryCensus previousStepCensus;
     private int wastedTicks;
     private List<Resource> craftedThisStep = List.of();
+    /**
+     * Blocks put down and own blocks taken back up: over the move in flight, for scoring the decision, and
+     * over the last step alone, for the layers that score a second at a time.
+     */
+    private Map<Resource, Integer> placedSinceDecision = Map.of();
+    private Map<Resource, Integer> reclaimedSinceDecision = Map.of();
+    private Map<Resource, Integer> placedThisStep = Map.of();
+    private Map<Resource, Integer> reclaimedThisStep = Map.of();
     private boolean sawWhatItNeeds;
     private int ticksSinceStep;
     private int decisionsSinceSave;
     private int decisionsSinceReport;
     private int ticksDead;
+    /**
+     * Whether the body was in a world at the last tick. The edge into one is when a run begins, and it
+     * is the only place that can say so: nothing else in the brain can tell "the same body, a tick later"
+     * from "a different world with the same objective still written down".
+     */
+    private boolean inWorld;
 
     public QLearningBrain(MobEngine engine, Path directory) {
         this.engine = engine;
         // The objectives are planned rather than scripted: the ladder that used to be the plan is now only
         // what the run climbs when there is nobody to ask.
         this.progression = Progression.planned(directory);
-        this.goals = new Table(names(GoalAction.values()), directory.resolve("goals.txt"));
-        this.timing = new Table(names(Commitment.values()), directory.resolve("timing.txt"));
+        this.directory = directory;
         this.crafting = new Table(names(CraftChoice.values()), directory.resolve("crafting.txt"));
-        this.placement = new Table(names(Spot.values()), directory.resolve("placement.txt"));
-        this.position = new Table(names(Ground.values()), directory.resolve("position.txt"));
         this.water = new Table(names(Swim.values()), directory.resolve("water.txt"));
-        this.tables = List.of(goals, timing, crafting, placement, position, water);
-        tables.forEach(Table::load);
+        this.passage = new Table(names(Passage.values()), directory.resolve("passage.txt"));
+        crafting.load();
+        water.load();
+        passage.load();
+    }
+
+    /** Every table there is right now: the three shared ones and the four of each folder opened so far. */
+    private Stream<Table> tables() {
+        return Stream.concat(Stream.of(crafting, water, passage),
+                suites.values().stream().flatMap(Suite::tables));
+    }
+
+    /** The folder for a pursuit, opened and read from disk the first time it is asked for. */
+    private Suite suiteFor(Pursuit pursuit) {
+        return suites.computeIfAbsent(pursuit.name(),
+                name -> new Suite(directory.resolve(PURSUITS).resolve(name)));
     }
 
     /** Two lists as one, without either of them having to be growable. */
@@ -235,7 +324,7 @@ public final class QLearningBrain {
     }
 
     public List<String> actionNames() {
-        return goals.columns;
+        return names(GoalAction.values());
     }
 
     /** Hands every later snapshot to {@code listener}, and one now so a watcher starts with something. */
@@ -251,6 +340,7 @@ public final class QLearningBrain {
     public void tick(Minecraft client) {
         LocalPlayer player = client.player;
         if (player == null) {
+            inWorld = false;
             leaveWorld();
             return;
         }
@@ -263,15 +353,30 @@ public final class QLearningBrain {
             return;
         }
         if (player.isRemoved()) {
+            inWorld = false;
             leaveWorld();
             return;
         }
         ticksDead = 0;
+        if (!inWorld) {
+            // A new world, or the same one entered again: either way a new run, and the planner is asked
+            // what it should be about before the first step is taken. A respawn does not come through
+            // here — the body never stopped being in the world — and keeps its run, as it should.
+            inWorld = true;
+            progression.arrive(player);
+        }
         if (++ticksSinceStep < STEP_TICKS) {
             return;
         }
         ticksSinceStep = 0;
         stepsRun++;
+        // Placements first, because the gains are counted against them: a block of its own taken back up
+        // is not a gain, and the sweep is what says which blocks are its own.
+        Placed.get().sweep(player);
+        placedThisStep = Placed.get().drainPlaced();
+        reclaimedThisStep = Placed.get().drainReclaimed();
+        placedSinceDecision = sum(placedSinceDecision, placedThisStep);
+        reclaimedSinceDecision = sum(reclaimedSinceDecision, reclaimedThisStep);
         // Counted once a step and nowhere else. A move can be held for ten of them, so a running total
         // built where the decision reads it would miss the nine in between.
         tallyGains(player);
@@ -286,13 +391,18 @@ public final class QLearningBrain {
         retireFinishedCraft();
         // On its own clock, whatever the commitment is doing: the water does not wait for a decision.
         tendWater(player);
+        // And the terrain, on the same footing: a wall does not wait for a decision either.
+        tendPassage(player);
         // Booked before the hold is tested, because whether the move has anything to show for the second
         // just gone is exactly what decides whether it keeps the body for the next one.
-        stalledNow = gettingNowhere();
+        // A goal that has done what it was for is not stuck, and the move is over the moment it says so:
+        // no second charged for the ones it did not use, and the tables choose again now.
+        doneNow = installedGoal != null && installedGoal.isDone() && !engine.isRunning(installedGoal);
+        stalledNow = !doneNow && gettingNowhere();
         if (stalledNow) {
             stalledSteps++;
         }
-        if (stillHolding()) {
+        if (!doneNow && stillHolding()) {
             return;
         }
         decide(client, player);
@@ -312,7 +422,7 @@ public final class QLearningBrain {
      * move it displaced is not going anywhere and should not be charged for it.
      */
     private boolean gettingNowhere() {
-        if (busy(swimGoal) || busy(craftGoal)) {
+        if (busy(swimGoal) || busy(craftGoal) || busy(passageGoal) || crafting()) {
             return false;
         }
         return installedGoal == null || !engine.isRunning(installedGoal)
@@ -325,9 +435,24 @@ public final class QLearningBrain {
                 && goal.stalledTicks() < STALL_TICKS;
     }
 
+    /**
+     * Whether a craft at a table or a smelt is holding the body right now.
+     *
+     * <p>Kept apart from {@link #busy} because those two are the one kind of work that is <em>meant</em> to
+     * stand still for many seconds — walk to the table, open it, wait for the bar — and their own progress
+     * meter reads that stillness as stalling. Treating them like a stalled walk let the passage layer
+     * decide the body was stuck in terrain and pull it off the table every second, so the craft restarted
+     * forever and never finished. They limit themselves with their own give-up; nothing else should
+     * second-guess them while they run.
+     */
+    private boolean crafting() {
+        return (craftGoal instanceof CraftAtTableGoal || craftGoal instanceof SmeltGoal)
+                && engine.isRunning(craftGoal) && !craftGoal.isFinished();
+    }
+
     /** Writes every table out. Called on the way out of the game as well as periodically. */
     public void save() {
-        tables.forEach(Table::save);
+        tables().forEach(Table::save);
     }
 
     /** Writes everything out and lets go of the planner's thread. The last thing the mod does. */
@@ -388,7 +513,7 @@ public final class QLearningBrain {
 
     private void decide(Minecraft client, LocalPlayer player) {
         StepContext step = stepSince(since, player, Math.max(1, stepsRun), wastedTicks, stalledSteps,
-                craftedThisStep);
+                craftedThisStep, placedSinceDecision, reclaimedSinceDecision);
 
         // Score before looking: reaching a rung changes what the body is after, and the sighting that
         // follows should already be taken with the new rung's eyes.
@@ -397,11 +522,22 @@ public final class QLearningBrain {
 
         // What the move that just ended did, before anything replaces it. The planner reads these when an
         // objective drags on: a run of them is what a rut looks like from outside.
-        DecisionLog.get().record(lastObservation == null ? null : lastObservation.key(),
-                installedAction == null ? null : installedAction.name(), step.steps(), reward);
+        DecisionLog.get().record(lastState, installedAction == null ? null : installedAction.name(),
+                step.steps(), reward);
 
+        // Looking is also what settles which folder of tables this decision is made in.
         ActionContext context = surroundings(client, player);
-        Observation observation = Observation.of(player, context, progression.stateKey());
+        Suite suite = suiteFor(pursuit);
+        if (suite != active) {
+            // The move just ended belongs to another folder. Its claims are settled with no continuation,
+            // because a table that has never seen the state the body is in now has nothing to bootstrap
+            // from — and the reward itself is what it earned, whichever folder came next.
+            if (active != null) {
+                active.settle(reward);
+            }
+            active = suite;
+        }
+        Observation observation = Observation.of(player, context, pursuit.source());
 
         boolean[] legalGoals = legalGoals(context);
         boolean[] legalCrafts = legalCrafts(context, step.after());
@@ -409,10 +545,10 @@ public final class QLearningBrain {
         // All three learn from the same reward over the same move: each one's share of the credit is
         // whatever its own column was doing while that reward was earned.
         String craftKey = CraftSituation.key(progression.needs(), step.after());
-        goals.learn(observation.key(), reward, step.steps(), legalGoals);
+        active.goals.learn(observation.key(), reward, step.steps(), legalGoals);
         crafting.learn(craftKey, reward, step.steps(), legalCrafts);
 
-        int goalIndex = goals.choose(observation.key(), legalGoals);
+        int goalIndex = active.goals.choose(observation.key(), legalGoals);
         if (goalIndex < 0) {
             // WANDER is always legal, so this cannot happen; bail rather than index nothing.
             return;
@@ -422,10 +558,10 @@ public final class QLearningBrain {
         // Timing is keyed by the goal as well as the state: the question is not "how long to commit" but
         // "how long to commit to this".
         String timingKey = observation.key() + '/' + action.name();
-        timing.learn(timingKey, reward, step.steps(), timing.everything);
-        Commitment chosen = Commitment.values()[timing.choose(timingKey, timing.everything)];
+        active.timing.learn(timingKey, reward, step.steps(), active.timing.everything);
+        Commitment chosen = Commitment.values()[active.timing.choose(timingKey, active.timing.everything)];
 
-        CraftChoice craft = CraftChoice.values()[crafting.choose(craftKey, legalCrafts)];
+        CraftChoice craft = chooseCraft(craftKey, legalCrafts);
         Aim aim = new Aim(
                 chooseSpot(player, action, context, reward, step.steps()),
                 chooseHeading(player, action, context, reward, step.steps()));
@@ -441,6 +577,9 @@ public final class QLearningBrain {
             stalls++;
             log.debug("Cutting {} short: {} seconds spent going nowhere", installedAction, stalledSteps);
             uninstall();
+        } else if (doneNow) {
+            // Finished, so the same choice again is a new one of the same thing, not the old one idling.
+            uninstall();
         }
 
         install(action, context, aim);
@@ -450,13 +589,43 @@ public final class QLearningBrain {
         stepsRun = 0;
         stalledSteps = 0;
         stalledNow = false;
+        doneNow = false;
         lastObservation = observation;
+        lastState = pursuit.label() + ' ' + observation.key();
         since = Moment.of(player);
         wastedTicks = 0;
         craftedThisStep = List.of();
+        placedSinceDecision = Map.of();
+        reclaimedSinceDecision = Map.of();
 
         publish(observation.key(), action.name(), chosen.name(), craft.name());
         maintain(climbed > 0.0);
+    }
+
+    /**
+     * What to make: the thing the plan is after, when it can be made right now, and otherwise whatever
+     * the crafting table has learned.
+     *
+     * <p>The same rule as mining what the plan named, for the same reason. When the objective is a
+     * pickaxe and a pickaxe is craftable, there is nothing left in the question for a table to learn an
+     * answer to — and a table learning it from scratch made sticks, a sword and a second crafting table
+     * first, each of them charged against the objective, until the planks were gone. What the table keeps
+     * learning is everything on the way there: when planks are worth making, when sticks are.
+     *
+     * <p>The table's pending claim is credited before the rule takes over, so a forced craft is never
+     * mistaken for the table's own choice.
+     */
+    private CraftChoice chooseCraft(String craftKey, boolean[] legalCrafts) {
+        Resource after = progression.current().flatMap(Phase::scores).orElse(null);
+        if (after != null) {
+            for (CraftChoice choice : CraftChoice.values()) {
+                if (choice.resource() == after && legalCrafts[choice.ordinal()]) {
+                    crafting.forget();
+                    return choice;
+                }
+            }
+        }
+        return CraftChoice.values()[crafting.choose(craftKey, legalCrafts)];
     }
 
     /**
@@ -474,8 +643,8 @@ public final class QLearningBrain {
         if (!action.usesSpot()) {
             // Nothing this table chose is going to matter to the move now being made, so its last choice
             // is settled with no continuation rather than left hanging.
-            placement.learnTerminal(reward);
-            placement.forget();
+            active.placement.learnTerminal(reward);
+            active.placement.forget();
             return null;
         }
         BlockPos sighted = context.sighting().isBlock() ? context.sighting().blockPos() : null;
@@ -483,25 +652,27 @@ public final class QLearningBrain {
             // The rule says which block as well as which verb: "go and break that one". Leaving the spot
             // to the placement table would let it answer with the block above it or the one under the
             // feet, which is the same learning the rule exists to skip.
-            placement.learnTerminal(reward);
-            placement.forget();
+            active.placement.learnTerminal(reward);
+            active.placement.forget();
             return sighted;
         }
         boolean[] legal = legalSpots(player, action, sighted);
-        String key = Placement.key(action, progression.shape(), context.flags());
-        placement.learn(key, reward, steps, legal);
+        String key = Placement.key(pursuit.source(), action, context.flags());
+        active.placement.learn(key, reward, steps, legal);
 
-        int column = placement.choose(key, legal);
+        int column = active.placement.choose(key, legal);
         return column < 0 ? null : Spot.values()[column].resolve(player, sighted);
     }
 
     /**
      * Which way to take the body, for the moves that take it somewhere.
      *
-     * <p>Keyed on where the run is trying to get to, where the body is relative to the band the plan set,
-     * and how its recent trail reads — which is the whole of what makes this answerable. A body with no
-     * memory of where it has been cannot prefer somewhere else, so {@link Territory} is not decoration
-     * here, it is the state.
+     * <p>Keyed on the source being looked for, where the body is relative to the band the planner said it
+     * lives in, whether the body is in the kind of place the planner said it is common in, and how its
+     * recent trail reads — which is the whole of what makes this answerable. The terrain is the new word:
+     * it is what lets "which way" mean "away from here" in the wrong biome and "keep going" in the right
+     * one. A body with no memory of where it has been cannot prefer somewhere else, so {@link Territory}
+     * is not decoration here, it is the state.
      *
      * <p>Every direction is always legal. There is no geometry to rule any of them out: a heading is a
      * suggestion the goal is free to turn away from when it meets a wall, and pretending otherwise would
@@ -511,17 +682,52 @@ public final class QLearningBrain {
                                          double reward, int steps) {
         if (!action.usesGround()) {
             // The move now being made goes nowhere, so whatever this table last chose has no continuation.
-            position.learnTerminal(reward);
-            position.forget();
+            active.position.learnTerminal(reward);
+            active.position.forget();
             return OptionalDouble.empty();
         }
-        String key = progression.shape()
-                + '|' + progression.bounds().where(player.getBlockY())
+        // When the planner named the kind of place and the loaded map has one in range, the way there is
+        // a fact and not a choice: the body is pointed at it, and the table is not credited for a heading
+        // it did not pick. It keeps the question for everywhere the map cannot answer.
+        // The block the plan is after, when the map shows one and the eyes do not: the same rule as the
+        // kind of place, one level down. A tree on the map is somewhere to walk, not something to learn.
+        if (context.sighting().kind() != FocusKind.RESOURCE && progression.wanted().isPresent()) {
+            OptionalDouble seen = Perception.bearingToBlock(player, progression.wanted().get());
+            if (seen.isPresent()) {
+                active.position.learnTerminal(reward);
+                active.position.forget();
+                exploring = Double.NaN;
+                return seen;
+            }
+        }
+        String biome = Travel.biomeAt(player);
+        if (!pursuit.where().terrain().isEmpty()
+                && "OUT".equals(pursuit.where().terrainKey(biome))) {
+            active.position.learnTerminal(reward);
+            active.position.forget();
+            OptionalDouble told = Perception.bearingTo(player, pursuit.where().terrain());
+            if (told.isPresent()) {
+                exploring = Double.NaN;
+                return told;
+            }
+            // Nothing of the kind in the loaded map. Hold a line across what there is, and turn a quarter
+            // only when the trail says the line has stopped getting anywhere.
+            if (Double.isNaN(exploring)) {
+                exploring = Math.toRadians(player.getYRot());
+            } else if (territory.pinned() || territory.circling()) {
+                exploring += Math.PI / 2.0;
+            }
+            return OptionalDouble.of(exploring);
+        }
+        exploring = Double.NaN;
+        String key = pursuit.source()
+                + '|' + pursuit.where().band().where(player.getBlockY())
+                + '|' + pursuit.where().terrainKey(biome)
                 + '|' + territory.state()
                 + '|' + context.flags();
-        position.learn(key, reward, steps, position.everything);
+        active.position.learn(key, reward, steps, active.position.everything);
 
-        int column = position.choose(key, position.everything);
+        int column = active.position.choose(key, active.position.everything);
         return column < 0 ? OptionalDouble.empty()
                 : Ground.values()[column].headingFor(player, territory);
     }
@@ -554,7 +760,8 @@ public final class QLearningBrain {
                 // Out. The last choice is settled against the second it bought, with no continuation:
                 // dry land is not a state this table has, and the question will not come round again
                 // until the next water does.
-                water.learnTerminal(score(stepSince(wet, player, 1, 0, 0, List.of())));
+                water.learnTerminal(score(stepSince(wet, player, 1, 0, 0, List.of(),
+                        placedThisStep, reclaimedThisStep)));
                 water.forget();
                 wet = null;
                 removeSwim();
@@ -566,7 +773,8 @@ public final class QLearningBrain {
         boolean[] legal = legalSwims(around, hasBlocks);
         String key = around.key();
         if (wet != null) {
-            water.learn(key, score(stepSince(wet, player, 1, 0, 0, List.of())), 1, legal);
+            water.learn(key, score(stepSince(wet, player, 1, 0, 0, List.of(), placedThisStep,
+                    reclaimedThisStep)), 1, legal);
         }
         wet = Moment.of(player);
 
@@ -613,6 +821,179 @@ public final class QLearningBrain {
         swimChoice = Swim.CARRY_ON;
     }
 
+    /**
+     * Keeps the passage layer in step with the terrain, once a second, whatever the commitment is doing.
+     *
+     * <p>The question only arises when the committed goal is getting nowhere and the body wants to be
+     * somewhere it is not: higher, lower, or further on. Then the terrain is read — see
+     * {@link Obstruction} — and the table asked what to do about it, learns every second from what the
+     * last second got it towards where it wanted, and is settled the moment the way is clear. The fix it
+     * installs sits over the committed goal at a priority the goal cannot outrank, does its one block or
+     * its few steps, and hands the body straight back.
+     *
+     * <p>Never in water, which has a layer of its own, and never while a block is coming apart under the
+     * body's swings: that goal is not stuck, it is working.
+     */
+    private void tendPassage(LocalPlayer player) {
+        if (passageGoal != null && !engine.isRunning(passageGoal) && passageChoice != Passage.CARRY_ON) {
+            // The fix has done what it could. The goal underneath gets another go at what it was doing,
+            // because the world it gave up on is not the world it is in now: the leaves are gone.
+            removePassage();
+            if (installedGoal instanceof MineSightingGoal mine) {
+                mine.retry();
+            }
+        }
+        Obstruction here = obstruction(player);
+        if (here == null) {
+            if (stuckSince != null) {
+                passage.learnTerminal(passageReward(player));
+                passage.forget();
+                stuckSince = null;
+                removePassage();
+            }
+            return;
+        }
+        boolean[] legal = legalPassages(here);
+        String key = here.key();
+        if (stuckSince != null) {
+            passage.learn(key, passageReward(player), 1, legal);
+        }
+        stuckSince = Moment.of(player);
+        stuckWanting = here.wanted();
+        stuckTarget = here.target();
+        stuckSought = here.sought();
+        stuckBetween = here.aheadBlocks().size();
+
+        int column = passage.choose(key, legal);
+        installPassage(column < 0 ? Passage.CARRY_ON : Passage.values()[column], here);
+    }
+
+    /**
+     * The terrain in the body's way, or null when there is no such question to ask.
+     *
+     * <p>Stuck means the committed goal has stopped running, has had nothing to show for a second, or is
+     * pushing at something with somewhere to be. A body already being got through a wall by this layer
+     * counts as stuck too, so the table keeps being asked — and keeps learning — until the way is open.
+     */
+    private Obstruction obstruction(LocalPlayer player) {
+        if (wet != null || installedGoal == null || busy(swimGoal) || busy(craftGoal) || crafting()
+                || engine.isCommitted(installedGoal)) {
+            return null;
+        }
+        MobBody body = engine.body();
+        boolean displaced = passageGoal != null && engine.isRunning(passageGoal);
+        boolean stuck = displaced
+                || !engine.isRunning(installedGoal)
+                || installedGoal.stalledTicks() >= OBSTRUCTED_TICKS
+                || (body.againstWall() && body.moveControl().hasDestination());
+        if (!stuck) {
+            return null;
+        }
+        boolean hasBlocks = PlaceBlockGoal.hotbarSlotWithBlock(player, progression.reserved()) >= 0;
+        // A block in reach with something in the way of it comes first: the body is not trying to go
+        // anywhere, it is trying to get at something, and the terrain that matters is the line to it.
+        if (installedGoal instanceof MineSightingGoal mine && mine.occluder() != null) {
+            Obstruction here = Obstruction.toward(player, mine.target(), hasBlocks);
+            return here.matters() ? here : null;
+        }
+        Obstruction.Wanted wanted = wanted(player, body);
+        if (wanted == null) {
+            return null;
+        }
+        Vec3 target = body.moveControl().hasDestination() ? body.moveControl().destination() : null;
+        Obstruction here = Obstruction.around(player, wanted, hasBlocks, target);
+        // A goal that has stopped altogether is a question even with nothing in front: a walker that
+        // found nowhere at all to aim — a ridge, a pit, a ledge — stands with a clear view and no way on,
+        // and the first desert run stood like that for five minutes. Going round, back, down or up is
+        // what this table is for.
+        return here.matters() || !engine.isRunning(installedGoal) ? here : null;
+    }
+
+    /**
+     * Which way the body is trying to go, or null when it is not trying to go anywhere.
+     *
+     * <p>Height first, from the plan: a band above or below, or a climb or descent asked for outright.
+     * Failing that, the flat, when the legs have a destination or the committed move is one that walks —
+     * a stroll that has given up against a wall has no destination left, and is still a stroll.
+     */
+    private Obstruction.Wanted wanted(LocalPlayer player, MobBody body) {
+        OptionalInt height = progression.heightWanted(player.getBlockY());
+        if (height.isPresent()) {
+            int rise = height.getAsInt() - player.getBlockY();
+            if (rise > 1) {
+                return Obstruction.Wanted.UP;
+            }
+            if (rise < -1) {
+                return Obstruction.Wanted.DOWN;
+            }
+        }
+        if (body.moveControl().hasDestination()
+                || (installedAction != null && installedAction.usesGround())) {
+            return Obstruction.Wanted.FLAT;
+        }
+        return null;
+    }
+
+    /**
+     * What the last second of dealing with the terrain was worth: the ordinary reward for the second,
+     * plus something per block the body got towards where it wanted to be. Up is height gained, down is
+     * height lost, on the flat it is ground closed on wherever the legs were headed, and towards a block
+     * it is blocks cleared off the line to it.
+     */
+    private double passageReward(LocalPlayer player) {
+        Vec3 before = stuckSince.position();
+        Vec3 now = player.position();
+        double progress = switch (stuckWanting) {
+            case UP -> now.y - before.y;
+            case DOWN -> before.y - now.y;
+            case FLAT -> stuckTarget == null ? 0.0 : flat(before, stuckTarget) - flat(now, stuckTarget);
+            // Blocks taken off the line to the one it is after. The block itself, once it comes away,
+            // pays through the ordinary reward like any other gain.
+            case TOWARD -> stuckSought == null ? 0.0
+                    : stuckBetween - Obstruction.occluders(player, stuckSought).size();
+        };
+        return score(stepSince(stuckSince, player, 1, 0, 0, List.of(), placedThisStep, reclaimedThisStep))
+                + PASSAGE_PROGRESS_WEIGHT * progress;
+    }
+
+    private static double flat(Vec3 from, Vec3 to) {
+        double dx = to.x - from.x;
+        double dz = to.z - from.z;
+        return Math.sqrt(dx * dx + dz * dz);
+    }
+
+    /** Doing nothing and going round always work; the rest need something to break, build or dig. */
+    private boolean[] legalPassages(Obstruction here) {
+        Passage[] options = Passage.values();
+        boolean[] allowed = new boolean[options.length];
+        for (int i = 0; i < options.length; i++) {
+            allowed[i] = options[i].isApplicable(here);
+        }
+        return allowed;
+    }
+
+    /** Puts the passage choice in place over the committed goal, left alone while unchanged and running. */
+    private void installPassage(Passage choice, Obstruction here) {
+        if (passageGoal != null && choice == passageChoice && engine.isRunning(passageGoal)) {
+            return;
+        }
+        removePassage();
+        passageChoice = choice;
+        MobGoal goal = choice.create(here, progression.reserved());
+        if (goal != null) {
+            passageGoal = goal;
+            engine.addGoal(PASSAGE_PRIORITY, goal);
+        }
+    }
+
+    private void removePassage() {
+        if (passageGoal != null) {
+            engine.removeGoal(passageGoal);
+            passageGoal = null;
+        }
+        passageChoice = Passage.CARRY_ON;
+    }
+
     /** Which spots the world allows: you cannot mine air, and a block needs something to rest against. */
     private boolean[] legalSpots(LocalPlayer player, GoalAction action, BlockPos sighted) {
         Spot[] spots = Spot.values();
@@ -636,6 +1017,10 @@ public final class QLearningBrain {
         // Noted here because this is where the eyes are: arriving somewhere with what the plan is after
         // in view is the thing the position table exists to learn, and it cannot see it any other way.
         sawWhatItNeeds = sighting.kind() == FocusKind.RESOURCE;
+        // And what is in view is what decides which folder the tables are read from: the source seen, the
+        // mob seen, or the source the plan thinks likeliest from here. Everything asked of the progression
+        // below — ways, band, tool — is answered for that.
+        pursuit = progression.focus(player, sighting);
         Reserve reserve = progression.reserved();
         return new ActionContext(
                 sighting,
@@ -677,7 +1062,8 @@ public final class QLearningBrain {
      * @param from where to measure from, or null when there is nothing earlier than now
      */
     private StepContext stepSince(Moment from, LocalPlayer player, int steps, int wasted, int stalled,
-                                  List<Resource> crafted) {
+                                  List<Resource> crafted, Map<Resource, Integer> placed,
+                                  Map<Resource, Integer> reclaimed) {
         Moment now = Moment.of(player);
         Moment then = from == null ? now : from;
         return new StepContext(
@@ -697,8 +1083,21 @@ public final class QLearningBrain {
                 then.air(),
                 now.air(),
                 crafted,
+                placed,
+                reclaimed,
                 territory.pinned(),
                 sawWhatItNeeds);
+    }
+
+    /** Two tallies as one. */
+    private static Map<Resource, Integer> sum(Map<Resource, Integer> first, Map<Resource, Integer> second) {
+        if (second.isEmpty()) {
+            return first;
+        }
+        Map<Resource, Integer> both = new EnumMap<>(Resource.class);
+        both.putAll(first);
+        second.forEach((resource, amount) -> both.merge(resource, amount, Integer::sum));
+        return both;
     }
 
     /** The body at one instant, kept so a later one can be scored against it. */
@@ -721,7 +1120,8 @@ public final class QLearningBrain {
         if (previousStepCensus == null) {
             obtained = obtained.plusGains(InventoryCensus.empty(), now);
         } else {
-            obtained = obtained.plusGains(previousStepCensus, now);
+            // Less what it only took back: a block of its own picked up again was got the first time.
+            obtained = obtained.plusGains(previousStepCensus, now).less(reclaimedThisStep);
         }
         previousStepCensus = now;
     }
@@ -740,6 +1140,7 @@ public final class QLearningBrain {
         for (int i = 0; i < actions.length; i++) {
             allowed[i] = actions[i].isApplicable(context);
         }
+        underThreat(context, allowed);
         if (!fetchesWhatItSees(context) || !allowed[GoalAction.MINE.ordinal()]) {
             return allowed;
         }
@@ -752,6 +1153,44 @@ public final class QLearningBrain {
                     || (actions[i] == GoalAction.EAT && allowed[i]);
         }
         return allowed;
+    }
+
+    /**
+     * What a body with something hostile in view may not do, as rules rather than lessons.
+     *
+     * <p>The threat folder is learned from scratch and explores at thirty per cent while it does, and the
+     * first night of the first run was six deaths in a row spent finding out that walking up to a
+     * creeper, standing to watch a skeleton, punching it and stopping for a snack are all bad ideas.
+     * Nothing about those is worth a death to learn: the reward for each is the same every time and the
+     * body does not get to keep what it learned across the death. So with a hostile in view there is no
+     * approaching, watching, mining, digging or eating; fists only go up against something that is not
+     * hostile, or with a sword in the hotbar; and a body on low health does not fight at all.
+     */
+    private void underThreat(ActionContext context, boolean[] allowed) {
+        if (context.sighting().kind() != FocusKind.HOSTILE) {
+            return;
+        }
+        for (GoalAction barred : List.of(GoalAction.APPROACH, GoalAction.WATCH, GoalAction.MINE,
+                GoalAction.DIG_DOWN, GoalAction.EAT, GoalAction.REACH_BAND)) {
+            allowed[barred.ordinal()] = false;
+        }
+        boolean armed = Tool.SWORD.hotbarSlot(Minecraft.getInstance().player.getInventory()) >= 0;
+        boolean hurt = Perception.healthOf(Minecraft.getInstance().player) == Perception.Health.LOW;
+        if (!armed || hurt) {
+            // Unarmed, or too hurt to trade blows: get away from it or get above it, and nothing else.
+            // Wandering and travelling with a zombie behind you are a chase in a random direction, and
+            // the second trial's first night ended that way in a frozen river. What is left to learn is
+            // whether to run or to build, which is a real question and a survivable one.
+            allowed[GoalAction.ATTACK.ordinal()] = false;
+            allowed[GoalAction.WANDER.ordinal()] = false;
+            allowed[GoalAction.TRAVEL.ordinal()] = false;
+        }
+        if (!allowed[GoalAction.FLEE.ordinal()] && !allowed[GoalAction.PLACE.ordinal()]
+                && !allowed[GoalAction.ATTACK.ordinal()]) {
+            // Nothing left at all — the hostile is not something that can be fled from in the goal's
+            // terms, or the mask has eaten everything. Running is always possible in principle.
+            allowed[GoalAction.FLEE.ordinal()] = true;
+        }
     }
 
     /**
@@ -791,13 +1230,54 @@ public final class QLearningBrain {
     private boolean[] legalCrafts(ActionContext context, InventoryCensus held) {
         CraftChoice[] choices = CraftChoice.values();
         boolean[] allowed = new boolean[choices.length];
+        Map<Resource, Integer> needs = progression.needs();
         for (int i = 0; i < choices.length; i++) {
             Resource made = choices[i].resource();
-            allowed[i] = made == null
-                    || (context.craftable().contains(made)
-                            && context.reserve().allowsMaking(made, held));
+            if (made == null) {
+                allowed[i] = true;
+            } else if (choices[i].isSmelted()) {
+                // Smelting is not on the recipe book: it is legal when the ore is in the bag and there is
+                // something to burn. The goal finds or places the furnace itself.
+                allowed[i] = held.count(choices[i].input()) > 0 && hasFuel(held)
+                        && context.reserve().allowsMaking(made, held)
+                        && keepsTheList(made, held, needs);
+            } else {
+                allowed[i] = context.craftable().contains(made)
+                        && context.reserve().allowsMaking(made, held)
+                        && keepsTheList(made, held, needs)
+                        && !(made == Resource.CRAFTING_TABLE && held.count(made) > 0);
+            }
         }
         return allowed;
+    }
+
+    /** Whether the bag holds anything a furnace will burn. The reserve is honoured where it is spent. */
+    private static boolean hasFuel(InventoryCensus held) {
+        return held.count(Resource.COAL) > 0 || held.count(Resource.PLANKS) > 0
+                || held.count(Resource.LOG) > 0 || held.count(Resource.STICK) > 0;
+    }
+
+    /**
+     * Whether making this leaves the bag holding at least what the plan says it needs of everything the
+     * craft eats.
+     *
+     * <p>The shopping list is a price everywhere else, and a price can be outvoted: a table learning
+     * from scratch made sticks three times while the plan wanted a pickaxe, and the third batch would
+     * have eaten the planks the pickaxe was made of. So the list is a floor for crafting too. What the
+     * plan is after is exempt — the pickaxe is allowed to consume the planks that were listed for it —
+     * and so is anything the list does not mention.
+     */
+    private static boolean keepsTheList(Resource made, InventoryCensus held, Map<Resource, Integer> needs) {
+        if (needs.containsKey(made)) {
+            return true;
+        }
+        for (Map.Entry<Resource, Integer> eats : made.ingredients().entrySet()) {
+            int wanted = needs.getOrDefault(eats.getKey(), 0);
+            if (wanted > 0 && held.count(eats.getKey()) - eats.getValue() < wanted) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -847,11 +1327,23 @@ public final class QLearningBrain {
                 && !craftGoal.isFinished()) {
             return;
         }
+        // A craft at a table is several seconds of work — put the table down, walk to it, open it — and a
+        // decision comes every one to ten. Letting each decision's fresh draw from a table still learning
+        // tear the goal down meant the pickaxe was started four times and finished never. One that is
+        // under way finishes; the new choice waits its turn.
+        if ((craftGoal instanceof CraftAtTableGoal || craftGoal instanceof SmeltGoal)
+                && engine.isRunning(craftGoal) && !craftGoal.isFinished()) {
+            return;
+        }
         removeCraft();
         if (!choice.makesSomething()) {
             return;
         }
-        if (CraftAtTableGoal.tableAvailable(player)) {
+        if (choice.isSmelted()) {
+            // Its own kind of work — a furnace, not a grid — and it claims the body like a table craft.
+            craftGoal = new SmeltGoal(choice.resource(), choice.input());
+            engine.addGoal(CRAFT_AT_TABLE_PRIORITY, craftGoal);
+        } else if (CraftAtTableGoal.tableAvailable(player)) {
             craftGoal = new CraftAtTableGoal(choice.resource());
             engine.addGoal(CRAFT_AT_TABLE_PRIORITY, craftGoal);
         } else {
@@ -890,24 +1382,46 @@ public final class QLearningBrain {
         }
         if (++decisionsSinceReport >= REPORT_EVERY_DECISIONS) {
             decisionsSinceReport = 0;
-            log.info("Brain: on {}, goals {} states, timing {}, crafting {}, {} moves cut short,"
-                            + " epsilon {}, {} decisions",
-                    progression.stateKey(), goals.table.states(), timing.table.states(),
+            log.info("Brain: on {} in {}, {} folders open with {} goal states, crafting {} states,"
+                            + " {} moves cut short, epsilon {}, {} decisions",
+                    progression.stateKey(), pursuit.label(), suites.size(),
+                    suites.values().stream().mapToInt(suite -> suite.goals.table.states()).sum(),
                     crafting.table.states(), stalls,
-                    String.format(Locale.ROOT, "%.3f", goals.table.epsilon()), goals.table.decisions());
+                    String.format(Locale.ROOT, "%.3f", active == null ? 0.0 : active.goals.table.epsilon()),
+                    decisions());
         }
     }
 
+    /**
+     * What the overlay sees: every folder opened so far, which one is in play, the plan as the run took
+     * it, and the two shared tables.
+     *
+     * <p>Decisions are the total across every folder and the exploration rate is the active folder's own:
+     * a folder opened this session explores like the beginner it is, however long the run has been going,
+     * and the page should say so.
+     */
     private void publish(String state, String action, String timingChoice, String craftChoice) {
+        List<QTableSnapshot.Folder> folders = suites.entrySet().stream()
+                .map(entry -> new QTableSnapshot.Folder(entry.getKey(),
+                        entry.getValue().goals.table.epsilon(), entry.getValue().goals.table.decisions(),
+                        entry.getValue().goals.table.rows(), entry.getValue().timing.table.rows(),
+                        entry.getValue().placement.table.rows(), entry.getValue().position.table.rows()))
+                .toList();
         snapshotListener.accept(new QTableSnapshot(
-                goals.columns, goals.table.rows(), goals.table.epsilon(), goals.table.decisions(),
-                progression.stateKey(), progression.reason(),
+                names(GoalAction.values()), names(Commitment.values()), names(Spot.values()),
+                names(Ground.values()), folders, active == null ? "" : pursuit.name(),
+                active == null ? 0.0 : active.goals.table.epsilon(), decisions(),
+                progression.stateKey(), progression.reason(), pursuit.label(),
+                progression.plan().map(QTableSnapshot.PlanView::of).orElse(null),
                 state, action, timingChoice, craftChoice, stalls,
                 crafting.columns, crafting.table.rows(), CraftLog.get().recent(),
-                PlannerLog.get().recent(),
-                placement.columns, placement.table.rows(),
-                position.columns, position.table.rows(),
-                water.columns, water.table.rows()));
+                water.columns, water.table.rows(),
+                passage.columns, passage.table.rows()));
+    }
+
+    /** Goal decisions made across every folder opened so far. */
+    private long decisions() {
+        return suites.values().stream().mapToLong(suite -> suite.goals.table.decisions()).sum();
     }
 
     /**
@@ -918,7 +1432,7 @@ public final class QLearningBrain {
      */
     private void endEpisode(Minecraft client, LocalPlayer player) {
         if (lastObservation != null) {
-            tables.forEach(table -> table.learnTerminal(DEATH_PENALTY));
+            tables().forEach(table -> table.learnTerminal(DEATH_PENALTY));
             forget();
         }
         // The plan goes with the life. A body that has just died is somewhere else with an empty bag, and
@@ -945,7 +1459,23 @@ public final class QLearningBrain {
 
     /** Throws away everything learned and writes the wipe out, so it is what survives to the next session. */
     public void clearLearning() {
-        tables.forEach(table -> table.table.clear());
+        tables().forEach(table -> table.table.clear());
+        // The folders opened this session are wiped above and written out empty below. The ones on disk
+        // from earlier sessions are not open, so their files go instead.
+        Path folders = directory.resolve(PURSUITS);
+        if (Files.isDirectory(folders)) {
+            try (Stream<Path> files = Files.walk(folders)) {
+                files.filter(Files::isRegularFile).forEach(file -> {
+                    try {
+                        Files.deleteIfExists(file);
+                    } catch (IOException e) {
+                        log.warn("Could not delete {}: {}", file, e.getMessage());
+                    }
+                });
+            } catch (IOException e) {
+                log.warn("Could not clear {}: {}", folders, e.getMessage());
+            }
+        }
         CraftLog.get().clear();
         PlannerLog.get().clear();
         forget();
@@ -957,8 +1487,12 @@ public final class QLearningBrain {
         uninstall();
         removeCraft();
         removeSwim();
-        tables.forEach(Table::forget);
+        removePassage();
+        stuckSince = null;
+        tables().forEach(Table::forget);
+        active = null;
         lastObservation = null;
+        lastState = null;
         since = null;
         wet = null;
         // Dying drops everything, and leaving takes the body with it. Either way the total is re-seeded
@@ -967,19 +1501,70 @@ public final class QLearningBrain {
         previousStepCensus = null;
         // A new life is not explained by the last one's wanderings.
         territory.clear();
+        exploring = Double.NaN;
         // A tally of the moment, not a record of the run: an episode that ends takes it with it rather
         // than charging the next one for swings it never made.
         wastedTicks = 0;
         WastedEffort.get().clear();
         craftedThisStep = List.of();
         CraftLog.get().drainCrafted();
+        Placed.get().clear();
+        placedSinceDecision = Map.of();
+        reclaimedSinceDecision = Map.of();
+        placedThisStep = Map.of();
+        reclaimedThisStep = Map.of();
         DecisionLog.get().clear();
         commitment = null;
         stepsRun = 0;
         stalledSteps = 0;
         stalledNow = false;
+        doneNow = false;
         ticksSinceStep = 0;
         publish(null, null, null, null);
+    }
+
+    /**
+     * The four objective-bound tables of one pursuit, read from and written to one folder.
+     *
+     * <p>Opened when a pursuit first comes up rather than all at once, because which pursuits a run will
+     * have is the planner's to decide and there is no list to open from. The folder is made on the spot so
+     * the first save has somewhere to go.
+     */
+    private static final class Suite {
+
+        private final Table goals;
+        private final Table timing;
+        private final Table placement;
+        private final Table position;
+
+        private Suite(Path folder) {
+            try {
+                Files.createDirectories(folder);
+            } catch (IOException e) {
+                log.warn("Could not create {}: {}", folder, e.getMessage());
+            }
+            this.goals = new Table(names(GoalAction.values()), folder.resolve("goals.txt"));
+            this.timing = new Table(names(Commitment.values()), folder.resolve("timing.txt"));
+            this.placement = new Table(names(Spot.values()), folder.resolve("placement.txt"));
+            this.position = new Table(names(Ground.values()), folder.resolve("position.txt"));
+            tables().forEach(Table::load);
+        }
+
+        private Stream<Table> tables() {
+            return Stream.of(goals, timing, placement, position);
+        }
+
+        /**
+         * Credits every claim these tables hold with no continuation, and lets go of them. For a move
+         * whose successor is another folder's: the reward is what it earned, and what came next is not
+         * this folder's to value.
+         */
+        private void settle(double reward) {
+            tables().forEach(table -> {
+                table.learnTerminal(reward);
+                table.forget();
+            });
+        }
     }
 
     /**
