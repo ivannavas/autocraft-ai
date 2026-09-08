@@ -65,6 +65,7 @@ public final class SmeltGoal implements CraftingGoal {
 
     private int ticksRunning;
     private boolean smelted;
+    private boolean gaveUp;
 
     /**
      * @param target what to end up holding — the ingot
@@ -86,13 +87,18 @@ public final class SmeltGoal implements CraftingGoal {
     }
 
     @Override
+    public boolean gaveUp() {
+        return gaveUp;
+    }
+
+    @Override
     public Set<MobControl> controls() {
         return CONTROLS;
     }
 
     @Override
     public boolean canUse(MobBody body) {
-        if (smelted) {
+        if (smelted || gaveUp) {
             return false;
         }
         LocalPlayer player = body.player();
@@ -110,6 +116,7 @@ public final class SmeltGoal implements CraftingGoal {
     public void start(MobBody body) {
         ticksRunning = 0;
         smelted = false;
+        gaveUp = false;
     }
 
     @Override
@@ -144,6 +151,7 @@ public final class SmeltGoal implements CraftingGoal {
 
     @Override
     public void stop(MobBody body) {
+        gaveUp = !smelted;
         body.moveControl().stop();
         closeFurnace(body.player());
     }

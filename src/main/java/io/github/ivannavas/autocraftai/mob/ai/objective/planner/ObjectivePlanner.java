@@ -24,6 +24,10 @@ public interface ObjectivePlanner {
      * Sets a request going, unless one is already in flight or the last one failed too recently to be
      * worth repeating. Never blocks. The supplier is called on the caller's thread, and only if the
      * request is actually going to be made.
+     *
+     * <p>A question that is merely too soon after the last is not dropped but owed: {@link #pending()}
+     * stays true and a later call makes it. The run has no other source of objectives, so "not now" must
+     * never be mistaken for "never".
      */
     void consider(Supplier<Situation> situation);
 
@@ -32,6 +36,15 @@ public interface ObjectivePlanner {
 
     /** Whether an answer is still expected, so a caller can tell "not yet" from "never". */
     boolean pending();
+
+    /**
+     * Why no answer is coming, while that is the case: no key, a failed request, a reply that was not an
+     * objective. Empty while a question is out or could be put. Shown on the overlay, because a run with
+     * no objective and no word on why looks like a run that has hung.
+     */
+    default Optional<String> trouble() {
+        return Optional.empty();
+    }
 
     /**
      * Forgets the run so far, for a body that has just arrived in a world.
@@ -64,6 +77,11 @@ public interface ObjectivePlanner {
             @Override
             public boolean pending() {
                 return false;
+            }
+
+            @Override
+            public Optional<String> trouble() {
+                return Optional.of("no API key");
             }
         };
     }

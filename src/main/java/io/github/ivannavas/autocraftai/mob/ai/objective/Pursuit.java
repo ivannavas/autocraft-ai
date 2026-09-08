@@ -27,13 +27,13 @@ package io.github.ivannavas.autocraftai.mob.ai.objective;
  */
 public record Pursuit(String name, String source, Whereabouts where) {
 
-    /** What the key says when the pursuit has no source to name: the ladder's rungs, a climb, a build. */
+    /** What the key says when the pursuit has no source to name: a climb, a build, being between orders. */
     public static final String NO_SOURCE = "-";
 
     /** Between orders, with an answer on its way. */
     public static final Pursuit PLANNING = new Pursuit("IDLE", "PLANNING", Whereabouts.anywhere());
-    /** Nothing left to want and nobody left to ask. */
-    public static final Pursuit DONE = new Pursuit("IDLE", "DONE", Whereabouts.anywhere());
+    /** Between orders with no answer coming: the planner cannot be reached, and nothing stands in for it. */
+    public static final Pursuit UNPLANNED = new Pursuit("IDLE", "UNPLANNED", Whereabouts.anywhere());
 
     public Pursuit {
         source = source == null || source.isBlank() ? NO_SOURCE : source;

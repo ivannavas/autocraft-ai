@@ -117,6 +117,11 @@ public final class PlannerLog {
         add(new Entry(System.currentTimeMillis(), Source.MENTOR, Kind.ANSWERED, "", reason, reply, null));
     }
 
+    /** What became of a lesson: the body got free, or it did not. The brain reports it; the page shows it. */
+    public void mentorNoted(String text) {
+        add(new Entry(System.currentTimeMillis(), Source.MENTOR, Kind.KEPT, "", text, null, null));
+    }
+
     /** No lesson: the mentor could not be reached, or had nothing to add for this block. */
     public void mentorFailed(String why, String detail) {
         add(new Entry(System.currentTimeMillis(), Source.MENTOR, Kind.FAILED, "", why, detail, null));

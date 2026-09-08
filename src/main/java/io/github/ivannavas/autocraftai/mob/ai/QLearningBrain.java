@@ -200,6 +200,23 @@ public final class QLearningBrain {
     private final Progression progression;
     /** Asked, and only on a real block, to teach the local policy the way out and keep it. */
     private final Mentor mentor;
+    /** How many decisions in a row the body has been pinned on the same pursuit. A block is asked about at the third. */
+    private int pinnedStreak;
+    /** The pursuit the streak was counted on: standing still waiting for the first plan is not being stuck on it. */
+    private String pinnedPursuit = "";
+    /** Decisions made this session, for timing a lesson's outcome. */
+    private long decisionsMade;
+    /** The last lesson applied and when, until its outcome — free again, or still pinned — is known. */
+    private Rescue lastRescue;
+    private long rescueDecision;
+    /** How many decisions after a lesson the body has to be free of the block for the lesson to count. */
+    private static final int RESCUE_WINDOW = 30;
+    /** How many decisions pinned before the mentor is asked: a stumble is not a block. */
+    private static final int PINNED_BEFORE_MENTOR = 3;
+    /** How long a craft that gave up stays off the table, so the same trek is not started straight back. */
+    private static final long CRAFT_BACKOFF_MILLIS = 60_000L;
+    /** Crafts that gave up recently, and until when they are not to be tried again. */
+    private final Map<Resource, Long> craftBackoff = new EnumMap<>(Resource.class);
 
     private final Path directory;
     private final Table crafting;
@@ -210,7 +227,7 @@ public final class QLearningBrain {
     /** The folder the move in flight was chosen from, whose tables hold the claims on its reward. */
     private Suite active;
     /** What the tables were working on at the last look. */
-    private Pursuit pursuit = Pursuit.DONE;
+    private Pursuit pursuit = Pursuit.PLANNING;
 
     /** Where a copy of what the brain knows goes after every decision. No-op until something wants it. */
     private Consumer<QTableSnapshot> snapshotListener = snapshot -> {
@@ -444,30 +461,84 @@ public final class QLearningBrain {
      * mentor is called for it again.
      */
     private void applyLessons() {
-        Optional<Rescue> rescue = mentor.take();
-        if (rescue.isEmpty()) {
+        Optional<Rescue> taken = mentor.take();
+        if (taken.isEmpty()) {
             return;
         }
-        Suite suite = suites.get(rescue.get().pursuit());
-        if (suite == null) {
-            return;
+        Rescue rescue = taken.get();
+        Suite suite = suites.get(rescue.pursuit());
+        if (suite != null) {
+            rescue.lessons().forEach(lesson -> suite.goals.seed(rescue.state(), lesson.action(), lesson.value()));
         }
-        rescue.get().lessons().forEach(lesson ->
-                suite.goals.seed(rescue.get().state(), lesson.action(), lesson.value()));
-        log.info("Applied {} lessons to {} at {}", rescue.get().lessons().size(),
-                rescue.get().pursuit(), rescue.get().state());
+        // The passage table is shared, and its row is the ground, so this lands wherever the body is
+        // next stuck on the same kind of terrain — not only here.
+        rescue.passageLessons().forEach(lesson -> passage.seed(rescue.terrain(), lesson.action(), lesson.value()));
+        // And the crafting table, for the block that is not terrain at all: a craft holding the body.
+        rescue.craftLessons().forEach(lesson -> crafting.seed(rescue.craftKey(), lesson.action(), lesson.value()));
+        lastRescue = rescue;
+        rescueDecision = decisionsMade;
+        log.info("Applied lessons ({}) to {} at {} / {}", rescue.summary(), rescue.pursuit(),
+                rescue.state(), rescue.terrain());
     }
 
-    /** The best a folder's goal table thinks any legal move in this state is worth; zero when it knows none. */
-    private static double bestLegal(Table goals, String state, boolean[] legal) {
-        double[] values = goals.table.valuesFor(state);
-        double best = 0.0;
-        for (int i = 0; i < values.length; i++) {
-            if (legal[i]) {
-                best = Math.max(best, values[i]);
-            }
+    /**
+     * Says what became of the last lesson, once: the body came unpinned within the window, or it did not.
+     * Written to the mentor's log so the page shows the coaching's record beside the coaching.
+     */
+    private void settleRescue() {
+        if (lastRescue == null) {
+            return;
         }
-        return best;
+        long since = decisionsMade - rescueDecision;
+        if (!territory.pinned()) {
+            log.info("Mentor lesson worked: free after {} decisions ({})", since, lastRescue.summary());
+            PlannerLog.get().mentorNoted("worked: free after " + since + " decisions (" + lastRescue.summary() + ")");
+            lastRescue = null;
+        } else if (since >= RESCUE_WINDOW) {
+            log.info("Mentor lesson did not work: still pinned after {} decisions ({})", since,
+                    lastRescue.summary());
+            PlannerLog.get().mentorNoted("did not work: still pinned after " + since + " decisions ("
+                    + lastRescue.summary() + ")");
+            lastRescue = null;
+        }
+    }
+
+    /**
+     * The ground under the block, as the passage layer would read it, for telling the mentor. Read
+     * whatever the passage layer's own gate says, because the mentor is asked about a body that is not
+     * moving at all, which is a state that gate does not always call an obstruction.
+     */
+    /**
+     * What is actually moving the body right now, for the mentor. The stuck state says what the goal table
+     * chose; it does not say that a table craft outranked that choice and has had the body for a minute,
+     * which is the one fact that explained the longest block seen so far.
+     */
+    private String driver() {
+        if (crafting()) {
+            return craftGoal.name() + " — a craft that walks to a table or furnace and holds the body,"
+                    + " outranking every goal move, until it finishes or gives up";
+        }
+        if (passageGoal != null && engine.isRunning(passageGoal)) {
+            return passageGoal.name() + " (a passage move)";
+        }
+        if (swimGoal != null && engine.isRunning(swimGoal)) {
+            return swimGoal.name() + " (swimming)";
+        }
+        if (installedGoal != null && engine.isRunning(installedGoal)) {
+            return installedGoal.name() + " (the chosen goal move)";
+        }
+        return "nothing is running";
+    }
+
+    private Obstruction ground(LocalPlayer player) {
+        boolean hasBlocks = PlaceBlockGoal.hotbarSlotWithBlock(player, progression.reserved()) >= 0;
+        if (installedGoal instanceof MineSightingGoal mine && mine.occluder() != null) {
+            return Obstruction.toward(player, mine.target(), hasBlocks);
+        }
+        MobBody body = engine.body();
+        Obstruction.Wanted wanted = wanted(player, body);
+        Vec3 target = body.moveControl().hasDestination() ? body.moveControl().destination() : null;
+        return Obstruction.around(player, wanted == null ? Obstruction.Wanted.FLAT : wanted, hasBlocks, target);
     }
 
     /** Whether this goal has taken the body off the primary and is getting somewhere with it. */
@@ -582,7 +653,7 @@ public final class QLearningBrain {
         Observation observation = Observation.of(player, context, pursuit.source());
 
         boolean[] legalGoals = legalGoals(context);
-        boolean[] legalCrafts = legalCrafts(context, step.after());
+        boolean[] legalCrafts = legalCrafts(context, step.after(), player);
 
         // All three learn from the same reward over the same move: each one's share of the credit is
         // whatever its own column was doing while that reward was earned.
@@ -590,17 +661,32 @@ public final class QLearningBrain {
         active.goals.learn(observation.key(), reward, step.steps(), legalGoals);
         crafting.learn(craftKey, reward, step.steps(), legalCrafts);
 
-        // A block the body is pinned in and its own table has no good answer for is the mentor's to
-        // teach. Asked before choosing so a lesson that has just arrived can change this very decision;
-        // the mentor dedups and throttles, so calling whenever the block holds costs nothing extra.
+        // A body pinned for several decisions on something it cannot simply craft its way out of is a
+        // block, and a block is the mentor's to teach. Asked before choosing so a lesson that has just
+        // arrived can change this very decision; the mentor paces and dedups, so asking while the block
+        // holds costs nothing extra. The outcome of the last lesson is settled first, so the page can say
+        // whether the coaching is working.
+        decisionsMade++;
+        boolean samePursuit = pursuit.name().equals(pinnedPursuit);
+        pinnedPursuit = pursuit.name();
+        pinnedStreak = territory.pinned() ? (samePursuit ? pinnedStreak + 1 : 1) : 0;
+        settleRescue();
         applyLessons();
-        if (territory.pinned() && !objectiveCraftable(legalCrafts)
-                && bestLegal(active.goals, observation.key(), legalGoals) <= 1.0E-4) {
+        // Not while a table craft or a smelt has the body and is getting on with it: standing at a table
+        // is work, not a block, and a craft whose walk has stalled lets go on its own within seconds.
+        if (pinnedStreak >= PINNED_BEFORE_MENTOR && progression.current().isPresent()
+                && !objectiveCraftable(legalCrafts) && !crafting()) {
             String stuck = observation.key();
             String folder = pursuit.name();
             List<String> moves = names(GoalAction.values());
-            mentor.consider(() -> new MentorAsk(
-                    progression.blockSituation(player, obtained), folder, stuck, moves));
+            List<String> passageMoves = names(Passage.values());
+            List<String> craftMoves = names(CraftChoice.values());
+            int y = player.getBlockY();
+            mentor.consider(() -> {
+                Obstruction ground = ground(player);
+                return new MentorAsk(progression.blockSituation(player, obtained), folder, stuck, moves,
+                        ground.key(), ground.words(), passageMoves, y, driver(), craftKey, craftMoves);
+            });
         }
 
         int goalIndex = active.goals.choose(observation.key(), legalGoals);
@@ -1300,14 +1386,29 @@ public final class QLearningBrain {
      * sticks, so it cannot take it — no matter what the table thinks that craft is worth, and without
      * having to have learned anything first.
      */
-    private boolean[] legalCrafts(ActionContext context, InventoryCensus held) {
+    private boolean[] legalCrafts(ActionContext context, InventoryCensus held, LocalPlayer player) {
         CraftChoice[] choices = CraftChoice.values();
         boolean[] allowed = new boolean[choices.length];
         Map<Resource, Integer> needs = progression.needs();
+        Resource after = progression.current().flatMap(Phase::scores).orElse(null);
+        boolean tableInSight = CraftAtTableGoal.tableInSight(player);
+        long now = System.currentTimeMillis();
         for (int i = 0; i < choices.length; i++) {
             Resource made = choices[i].resource();
             if (made == null) {
                 allowed[i] = true;
+            } else if (craftBackoff.getOrDefault(made, 0L) > now) {
+                // It gave up on this a moment ago; the same walk to the same table would give up the same way.
+                allowed[i] = false;
+            } else if (needs.containsKey(made) && held.count(made) >= needs.get(made)) {
+                // The list already has enough of it. A second wooden pickaxe was crafted at a table forty
+                // blocks away because "PICKAXE=1" stayed on the list after the first one was in the bag.
+                allowed[i] = false;
+            } else if (!choices[i].handheld() && !choices[i].isSmelted() && made != after
+                    && !needs.containsKey(made) && !tableInSight) {
+                // A table craft the plan did not ask for is a trek to a table, and a trek outranks every
+                // move the goal table can choose. Only worth it when the table is right here.
+                allowed[i] = false;
             } else if (choices[i].isSmelted()) {
                 // Smelting is not on the recipe book: it is legal when the ore is in the bag and there is
                 // something to burn. The goal finds or places the furnace itself.
@@ -1396,6 +1497,13 @@ public final class QLearningBrain {
      * background alongside whatever else is going on.
      */
     private void installCraft(CraftChoice choice, LocalPlayer player) {
+        if (craftGoal != null && craftGoal.gaveUp()) {
+            // It ran and let go without finishing. Putting it straight back is how a sword craft held the
+            // body in a shaft for seven minutes; it sits out a while and the plan's own work gets the body.
+            log.info("Gave up crafting {}; not trying again for a minute", craftGoal.target());
+            craftBackoff.put(craftGoal.target(), System.currentTimeMillis() + CRAFT_BACKOFF_MILLIS);
+            removeCraft();
+        }
         if (craftGoal != null && choice.makesSomething() && craftGoal.target() == choice.resource()
                 && !craftGoal.isFinished()) {
             return;

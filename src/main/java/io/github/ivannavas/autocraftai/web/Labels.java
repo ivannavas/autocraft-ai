@@ -69,7 +69,7 @@ final class Labels {
             "above.OPEN", "above.CEILING", "qualifier.breakable", "qualifier.diggable",
             "head.block", "head.tool", "head.terrain", "head.ways",
             "plan", "plan.band", "plan.anyheight", "plan.needs", "plan.reserve", "plan.sources",
-            "plan.nothing", "plan.ladder", "plan.none", "plan.active",
+            "plan.nothing", "plan.noreason", "plan.unplanned", "plan.none", "plan.active",
             "pursuits", "folder.live", "folder.states", "folder.decisions", "folder.random",
             "folder.GO", "folder.DOWN", "folder.UP", "folder.BUILD", "folder.THREAT", "folder.IDLE",
             "shared", "planner.prompt", "planner.reply", "planner.plan",
@@ -110,15 +110,17 @@ final class Labels {
         groups.put("terrain", enums("terrain", Terrain.values()));
         groups.put("structure", enums("structure", Structure.values()));
         groups.put("planner", enums("planner", PlannerLog.Kind.values()));
+        // The same kinds, in the mentor's words: it does not answer, it teaches.
+        groups.put("mentor", words("mentor.", List.of("ASKED", "ANSWERED", "KEPT", "FAILED")));
         groups.put("spot", enums("spot", Spot.values()));
         groups.put("ground", enums("ground", Ground.values()));
         groups.put("swim", enums("swim", Swim.values()));
         groups.put("passage", enums("passage", Passage.values()));
         groups.put("way", enums("way", Way.values()));
         groups.put("tool", enums("tool", Tool.values()));
-        // The seven fixed rungs, plus the two states that are not an objective at all.
+        // The named objectives the planner may hand back, plus the two states that are not one at all.
         Map<String, String> objectives = enums("objective", Rung.values());
-        objectives.putAll(words("objective.", List.of("PLANNING", "DONE")));
+        objectives.putAll(words("objective.", List.of("PLANNING", "UNPLANNED")));
         groups.put("objective", objectives);
         return Json.of(locale(), groups);
     }

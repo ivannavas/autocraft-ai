@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -18,6 +17,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -42,10 +43,28 @@ public final class ClaudeMentor implements Mentor {
 
     private static final String MODEL = "claude-opus-5";
     private static final String API_URL = "https://api.anthropic.com/v1/messages";
-    private static final int MAX_TOKENS = 512;
+    private static final int MAX_TOKENS = 700;
     private static final int TIMEOUT_SECONDS = 30;
     private static final String CONVERSATION = "unblock";
     private static final long RETRY_AFTER_MILLIS = 60_000L;
+    /**
+     * The least time between any two questions, whatever the block. One block reads as several sibling
+     * states as the body shuffles — a step closer, a block placed — and the first mentor was asked about
+     * two of them four seconds apart. A body still pinned this long after a lesson is worth a second
+     * opinion; one pinned for four seconds is not a second block.
+     */
+    private static final long MIN_INTERVAL_MILLIS = 45_000L;
+    /** How long after teaching a state the same state may be taught again, if the body is still stuck. */
+    private static final long RETEACH_AFTER_MILLIS = 90_000L;
+    /** How many times one state may be taught. Two: the first answer and one that knows it failed. */
+    private static final int MAX_TIMES = 2;
+    /**
+     * How many questions one pursuit gets in all, whatever the states. A body circling an item it cannot
+     * reach reads as pinned in a new sibling state every minute, and each is a fresh question; four
+     * answers that all "worked" for a few decisions is the pattern of a block the mentor cannot see, and
+     * the fifth costs the same and teaches the same.
+     */
+    private static final int MAX_PER_PURSUIT = 4;
     private static final String KEY_FILE = "anthropic-key.txt";
     private static final String KEY_ENVIRONMENT_VARIABLE = "ANTHROPIC_API_KEY";
 
@@ -60,8 +79,16 @@ public final class ClaudeMentor implements Mentor {
     private final AtomicReference<Rescue> answer = new AtomicReference<>();
     private final AtomicBoolean asking = new AtomicBoolean();
     private final AtomicLong silentUntil = new AtomicLong();
-    /** Stuck states already taught, so none is ever sent twice: the planted lessons handle a repeat. */
-    private final Set<String> taught = ConcurrentHashMap.newKeySet();
+    private final AtomicLong lastAsked = new AtomicLong();
+
+    /** One state taught: when, how many times, and what was said, for the reminder if it did not take. */
+    private record Taught(long at, int times, String summary) {
+    }
+
+    /** Stuck states taught so far, by folder and state, so a state is taught at most twice and not soon. */
+    private final Map<String, Taught> taught = new ConcurrentHashMap<>();
+    /** Questions put per pursuit, for the overall cap. */
+    private final Map<String, Integer> perPursuit = new ConcurrentHashMap<>();
 
     private ClaudeMentor(MentorAgent agent) {
         this.agent = agent;
@@ -103,42 +130,61 @@ public final class ClaudeMentor implements Mentor {
 
     @Override
     public void consider(Supplier<MentorAsk> ask) {
-        if (System.currentTimeMillis() < silentUntil.get() || !asking.compareAndSet(false, true)) {
+        long now = System.currentTimeMillis();
+        if (now < silentUntil.get() || now - lastAsked.get() < MIN_INTERVAL_MILLIS
+                || !asking.compareAndSet(false, true)) {
             return;
         }
         MentorAsk asked = ask.get();
-        // A block already taught is never sent again: the lessons planted last time are what answer it now.
-        if (taught.contains(asked.stuckState())) {
+        // A state taught recently, or taught twice, is left to the lessons already planted.
+        Taught before = taught.get(key(asked));
+        if (before != null && (before.times() >= MAX_TIMES || now - before.at() < RETEACH_AFTER_MILLIS)) {
             asking.set(false);
             return;
         }
-        String prompt = asked.describe();
+        if (perPursuit.getOrDefault(asked.pursuit(), 0) >= MAX_PER_PURSUIT) {
+            asking.set(false);
+            return;
+        }
+        perPursuit.merge(asked.pursuit(), 1, Integer::sum);
+        lastAsked.set(now);
+        String prompt = asked.describe() + (before == null ? ""
+                : "\nYou already taught this block once (" + before.summary()
+                        + ") and it is still stuck. Teach a different way out.");
         PlannerLog.get().mentorAsked("unblock: " + asked.summary(), prompt);
         thread.execute(() -> {
             try {
-                teach(asked, prompt);
+                teach(asked, prompt, before);
             } finally {
                 asking.set(false);
             }
         });
     }
 
-    private void teach(MentorAsk asked, String prompt) {
+    private static String key(MentorAsk asked) {
+        return asked.pursuit() + '|' + asked.stuckState();
+    }
+
+    private void teach(MentorAsk asked, String prompt, Taught before) {
         try {
             String reply = agent.execute(CONVERSATION, prompt).response();
-            List<Lesson> lessons = lessons(reply, asked.actions());
-            if (lessons.isEmpty()) {
-                log.info("The mentor had nothing to add for {}", asked.summary());
-                PlannerLog.get().mentorFailed("nothing taught", shorten(reply));
+            Rescue rescue = new Rescue(asked.pursuit(), asked.stuckState(),
+                    lessons(reply, "lessons", asked.actions()),
+                    asked.terrain(), lessons(reply, "passage", asked.passageMoves()),
+                    asked.craftKey(), lessons(reply, "craft", asked.craftMoves()));
+            if (rescue.isEmpty()) {
+                log.info("The mentor had nothing to add for {}: {}", asked.summary(), shorten(reply));
+                PlannerLog.get().mentorFailed("nothing taught", reply);
                 rest();
                 return;
             }
-            taught.add(asked.stuckState());
-            answer.set(new Rescue(asked.pursuit(), asked.stuckState(), lessons));
-            log.info("Mentor taught {} lessons for {}: {}", lessons.size(), asked.summary(), lessons);
+            taught.put(key(asked), new Taught(System.currentTimeMillis(),
+                    before == null ? 1 : before.times() + 1, rescue.summary()));
+            answer.set(rescue);
+            log.info("Mentor taught {} for {}", rescue.summary(), asked.summary());
             // Kept in the same record the planner writes to, but tagged as the mentor's, so the overlay
             // shows the coaching in a panel of its own.
-            PlannerLog.get().mentorTaught("taught " + lessons.size() + ": " + reasonIn(reply), reply);
+            PlannerLog.get().mentorTaught("taught " + rescue.summary() + ": " + reasonIn(reply), reply);
         } catch (RuntimeException e) {
             log.warn("Could not reach the mentor ({}); leaving the block to the policy", e.getMessage());
             PlannerLog.get().mentorFailed(shorten(e.getMessage()), null);
@@ -146,17 +192,41 @@ public final class ClaudeMentor implements Mentor {
         }
     }
 
-    /** The lessons in the reply, keeping only moves the stuck state actually offers. */
-    private List<Lesson> lessons(String reply, List<String> actions) {
+    /** One {@code {"action": X, "value": N}} as text, for a reply the JSON parser could not take whole. */
+    private static final Pattern LESSON = Pattern.compile(
+            "\"action\"\\s*:\\s*\"([A-Za-z_]+)\"\\s*,\\s*\"value\"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)");
+
+    /**
+     * The lessons under one field of the reply, keeping only moves the table actually offers.
+     *
+     * <p>Read from the parsed object when it parses, and off the text when it does not: a reply cut short
+     * by the token limit, or with a word after the closing brace, still carries its lessons in order, and
+     * the first mentor threw all of them away over a missing bracket.
+     */
+    private List<Lesson> lessons(String reply, String field, List<String> actions) {
         List<Lesson> found = new ArrayList<>();
-        object(reply).map(node -> node.path("lessons")).filter(JsonNode::isArray).ifPresent(entries -> {
-            for (JsonNode entry : entries) {
+        Optional<JsonNode> parsed = object(reply).map(node -> node.path(field)).filter(JsonNode::isArray);
+        if (parsed.isPresent()) {
+            for (JsonNode entry : parsed.get()) {
                 String action = entry.path("action").asText("").strip().toUpperCase(Locale.ROOT);
                 if (actions.contains(action)) {
                     found.add(new Lesson(action, entry.path("value").asDouble(0.0)));
                 }
             }
-        });
+            return found;
+        }
+        int at = reply == null ? -1 : reply.indexOf('"' + field + '"');
+        if (at < 0) {
+            return found;
+        }
+        int end = reply.indexOf(']', at);
+        Matcher lesson = LESSON.matcher(end < 0 ? reply.substring(at) : reply.substring(at, end));
+        while (lesson.find()) {
+            String action = lesson.group(1).toUpperCase(Locale.ROOT);
+            if (actions.contains(action)) {
+                found.add(new Lesson(action, Double.parseDouble(lesson.group(2))));
+            }
+        }
         return found;
     }
 
@@ -204,8 +274,10 @@ public final class ClaudeMentor implements Mentor {
         // A fresh world is a fresh policy: re-teaching a run's first block is cheap and lands the lessons
         // on tables that actually have the row.
         taught.clear();
+        perPursuit.clear();
         answer.set(null);
         silentUntil.set(0L);
+        lastAsked.set(0L);
     }
 
     @Override

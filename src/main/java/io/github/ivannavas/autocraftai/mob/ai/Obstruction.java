@@ -233,6 +233,37 @@ public record Obstruction(Wanted wanted, Ahead ahead, Above above, boolean hasBl
      * follow: {@code B} carrying blocks, {@code T} the way ahead can be broken with what is in hand,
      * {@code D} the ground under the feet can be dug.
      */
+    /**
+     * The same reading in plain words, for the mentor, which is shown the block rather than the table and
+     * has to be told what a wall is and whether the body could do anything about it.
+     */
+    public String words() {
+        StringBuilder out = new StringBuilder();
+        out.append(switch (wanted) {
+            case UP -> "wants to get higher";
+            case DOWN -> "wants to get lower";
+            case FLAT -> "wants to walk on";
+            case TOWARD -> "wants to get at a block already in reach";
+        });
+        out.append("; ahead: ").append(switch (ahead) {
+            case NONE -> "clear";
+            case STEP -> "a one-block step (its legs take that on their own)";
+            case WALL -> "a wall two or more blocks high"
+                    + (aheadBreakable ? " it could break with what it holds" : " it cannot break with what it holds");
+            case GAP -> "a drop long enough to hurt";
+            case LEAVES -> "leaves between it and the block it is after";
+            case SOFT -> "soft blocks (dirt, wood, sand) between it and the block it is after";
+            case HARD -> "hard blocks (stone, ore) between it and the block it is after"
+                    + (aheadBreakable ? ", breakable with its tool" : ", which its tool cannot break");
+        });
+        out.append("; overhead: ").append(above == Above.OPEN ? "open, it can jump and stack"
+                : "a ceiling within two blocks" + (ceilingBreakable ? " it could break" : " it cannot break with what it holds"));
+        out.append(hasBlocks ? "; carrying blocks it could put down" : "; nothing to put down");
+        out.append(canDig ? "; the block underfoot could be dug out without opening a drop"
+                : "; digging straight down here is not safe or not possible");
+        return out.toString();
+    }
+
     public String key() {
         StringBuilder tags = new StringBuilder();
         if (hasBlocks) {

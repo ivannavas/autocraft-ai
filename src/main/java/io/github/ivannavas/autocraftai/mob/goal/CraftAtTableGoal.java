@@ -50,6 +50,13 @@ public final class CraftAtTableGoal implements CraftingGoal {
 
     private static final int ATTEMPT_INTERVAL_TICKS = 10;
     private static final int GIVE_UP_TICKS = 400;
+    /**
+     * How long the walk to the table may make no progress before the goal lets go of the body. Short: a
+     * table craft outranks every move the goal table can choose, so a walk that is not getting there is
+     * the whole run standing still. Twenty seconds of that, restarted at once, held a body in a shaft for
+     * seven minutes while it tried to reach a table on the surface for a sword nobody had asked for.
+     */
+    private static final int STALLED_GIVE_UP_TICKS = 80;
     /** How far out an existing table is worth walking to. */
     private static final int TABLE_SCAN_RANGE = 8;
     /** Kept under the server's reach so an interaction is never sent from too far to land. */
@@ -60,6 +67,7 @@ public final class CraftAtTableGoal implements CraftingGoal {
 
     private int ticksRunning;
     private boolean crafted;
+    private boolean gaveUp;
     private final Advance advance = new Advance();
 
     public CraftAtTableGoal(Resource target) {
@@ -83,7 +91,10 @@ public final class CraftAtTableGoal implements CraftingGoal {
 
     @Override
     public boolean canUse(MobBody body) {
-        if (crafted || Recipes.find(body.player(), target).isEmpty()) {
+        // Once it has let go it stays let go: the engine would otherwise start it again the very next
+        // tick, before the brain has seen that it gave up, and the four-second give-up becomes a
+        // four-second loop that holds the body just the same.
+        if (gaveUp || crafted || Recipes.find(body.player(), target).isEmpty()) {
             return false;
         }
         return findTable(body) != null || hotbarSlotWithTable(body.player()) >= 0;
@@ -91,7 +102,12 @@ public final class CraftAtTableGoal implements CraftingGoal {
 
     @Override
     public boolean canContinueToUse(MobBody body) {
-        return !crafted && ticksRunning < GIVE_UP_TICKS;
+        return !crafted && ticksRunning < GIVE_UP_TICKS && advance.stalledTicks() < STALLED_GIVE_UP_TICKS;
+    }
+
+    @Override
+    public boolean gaveUp() {
+        return gaveUp;
     }
 
     /**
@@ -108,6 +124,7 @@ public final class CraftAtTableGoal implements CraftingGoal {
     public void start(MobBody body) {
         ticksRunning = 0;
         crafted = false;
+        gaveUp = false;
         advance.reset();
     }
 
@@ -154,6 +171,7 @@ public final class CraftAtTableGoal implements CraftingGoal {
 
     @Override
     public void stop(MobBody body) {
+        gaveUp = !crafted;
         body.moveControl().stop();
         closeTable(body.player());
     }
@@ -222,11 +240,29 @@ public final class CraftAtTableGoal implements CraftingGoal {
                 && (findTable(player) != null || hotbarSlotWithTable(player) >= 0);
     }
 
+    /**
+     * Whether a craft here costs no trek: a table in sight, or one in the hotbar to put down. What a
+     * craft the plan did not ask for has to show before it is allowed to take the body — the remembered
+     * table thirty blocks off is worth walking back to for a pickaxe the plan wants, not for a sword.
+     */
+    public static boolean tableInSight(LocalPlayer player) {
+        return player != null && (nearbyTable(player) != null || hotbarSlotWithTable(player) >= 0);
+    }
+
     private BlockPos findTable(MobBody body) {
         return findTable(body.player());
     }
 
     private static BlockPos findTable(LocalPlayer player) {
+        BlockPos best = nearbyTable(player);
+        // None in sight, but the body may have set one up earlier and walked off mining. It knows where
+        // its own went; walk back to the nearest that is still standing rather than stand here stuck.
+        return best != null ? best
+                : Placed.get().nearestOwn(player.level(), player.position(), Blocks.CRAFTING_TABLE);
+    }
+
+    /** The nearest table within the scan range, or null. */
+    private static BlockPos nearbyTable(LocalPlayer player) {
         Level level = player.level();
         BlockPos origin = player.blockPosition();
         BlockPos best = null;
@@ -243,10 +279,7 @@ public final class CraftAtTableGoal implements CraftingGoal {
                 best = pos.immutable();
             }
         }
-        // None in sight, but the body may have set one up earlier and walked off mining. It knows where
-        // its own went; walk back to the nearest that is still standing rather than stand here stuck.
-        return best != null ? best
-                : Placed.get().nearestOwn(level, player.position(), Blocks.CRAFTING_TABLE);
+        return best;
     }
 
     private static int hotbarSlotWithTable(LocalPlayer player) {

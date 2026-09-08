@@ -41,11 +41,14 @@ import net.minecraft.world.level.block.state.BlockState;
  * wanted from the landscape, and the tables get a state of their own for being between orders. It lasts a
  * few seconds.
  *
- * <h2>And a ladder underneath, for when nobody answers</h2>
- * With no key, no network, or a reply that will not parse, the planner stops claiming an answer is coming
- * and the run climbs {@link Rung} instead — the fixed wood-and-stone opening this used to be. The cursor
- * into it only moves when one of its own rungs is reached, so a planner that comes back later finds the
- * ladder where it left it.
+ * <h2>And nothing underneath</h2>
+ * The planner is the only source of objectives. With no key, no network, or a reply that will not parse,
+ * the run has no objective and says so — {@link #stateKey()} reads {@code UNPLANNED} and {@link #reason()}
+ * carries the planner's own account of why — until the planner can be asked again. There used to be a
+ * fixed ladder here for that case, and it did more harm than the wait it saved: a question the planner had
+ * merely deferred read as a question nobody would answer, and a run three objectives in would drop back
+ * to "get wood" with a bag full of planks. Better to stand still and say why than to work to a plan
+ * nobody made.
  *
  * <h2>And an objective that drags on gets looked at again</h2>
  * An objective is a guess about what is worth doing, made from a situation that has since moved on. Most
@@ -79,8 +82,8 @@ public final class Progression {
     /** Key used while the planner is being waited on. */
     private static final String PLANNING = "PLANNING";
 
-    /** Key used when there is nothing left to want and nobody left to ask. */
-    private static final String FINISHED = "DONE";
+    /** Key used when nobody is going to answer for now, and nothing stands in for the planner. */
+    private static final String UNPLANNED = "UNPLANNED";
 
     /**
      * How long an objective may run before the planner is asked whether it is still the right one.
@@ -102,7 +105,6 @@ public final class Progression {
     private static final int REVIEW_WHEN_STUCK_STEPS = 60;
 
     private final ObjectivePlanner planner;
-    private final List<Phase> fallback;
     private final List<String> achieved = new ArrayList<>();
 
     /**
@@ -133,13 +135,12 @@ public final class Progression {
     /** The plan the current objective came in, whole, for the overlay; null between orders. */
     private Plan plan;
     /** What the tables are working on, as of the last look: which folder, which source, and where it is. */
-    private Pursuit active = Pursuit.DONE;
+    private Pursuit active = Pursuit.PLANNING;
     /** The plan's own band, which stands in for any source that came without one of its own. */
     private Bounds bounds = Bounds.anywhere();
     private Map<Resource, Integer> needs = Map.of();
     private Reserve reserved = Reserve.none();
     private boolean wasSomewhereUseful;
-    private int fallbackIndex;
     private int stepsOnCurrent;
     /**
      * The height to climb to in order to break out of a trap, or {@link Integer#MIN_VALUE} when not
@@ -152,24 +153,13 @@ public final class Progression {
     /** How far "out of here" is: enough to clear a ravine wall or drop out of a tree's crown. */
     private static final int ESCAPE_RISE = 12;
 
-    public Progression(ObjectivePlanner planner, List<Phase> fallback) {
+    public Progression(ObjectivePlanner planner) {
         this.planner = planner;
-        this.fallback = List.copyOf(fallback);
     }
 
-    /** Objectives from Claude, with the fixed ladder underneath for when it cannot be reached. */
+    /** Objectives from Claude, and from nowhere else. */
     public static Progression planned(Path directory) {
-        return new Progression(ClaudePlanner.create(directory), Rung.ladder());
-    }
-
-    /** The ladder and nothing else, which is what a run with nobody to ask gets. */
-    public static Progression standard() {
-        return new Progression(ObjectivePlanner.none(), Rung.ladder());
-    }
-
-    /** Whether there is nothing left to want and nobody left to ask for more. */
-    public boolean isFinished() {
-        return current == null && !planner.pending() && fallbackIndex >= fallback.size();
+        return new Progression(ClaudePlanner.create(directory));
     }
 
     /** What the run is after, or empty while it is between orders. */
@@ -195,7 +185,7 @@ public final class Progression {
         if (current != null) {
             return current.name();
         }
-        return planner.pending() ? PLANNING : FINISHED;
+        return planner.pending() ? PLANNING : UNPLANNED;
     }
 
     /**
@@ -244,7 +234,7 @@ public final class Progression {
     }
 
     private Pursuit idle() {
-        return planner.pending() ? Pursuit.PLANNING : Pursuit.DONE;
+        return planner.pending() ? Pursuit.PLANNING : Pursuit.UNPLANNED;
     }
 
     /**
@@ -325,7 +315,6 @@ public final class Progression {
     public void arrive(LocalPlayer player) {
         restart();
         achieved.clear();
-        fallbackIndex = 0;
         planner.reset();
         log.info("Arrived in a world; asking the planner what to do first");
         planner.consider(() -> Situation.of(player, InventoryCensus.of(player.getInventory()), achieved, ""));
@@ -369,8 +358,12 @@ public final class Progression {
     }
 
     /** Why the run is after this, in a sentence, or empty when nobody said. For the overlay only. */
+    /**
+     * Why the run is doing what it is doing: the planner's reason for the objective, or — with no objective
+     * and no answer coming — the planner's account of why not, so the overlay can say it.
+     */
     public String reason() {
-        return current == null ? "" : current.reason();
+        return current == null ? planner.trouble().orElse("") : current.reason();
     }
 
     /** What the current objective wants noticed in the landscape, if anything. */
@@ -431,9 +424,6 @@ public final class Progression {
             log.info("Reached {}", current.name());
             achieved.add(current.name());
             onReached.accept(current.name());
-            if (fallbackIndex < fallback.size() && current == fallback.get(fallbackIndex)) {
-                fallbackIndex++;
-            }
             current = null;
             plan = null;
             stepsOnCurrent = 0;
@@ -488,11 +478,12 @@ public final class Progression {
     }
 
     /**
-     * Finds the run something to do: the planner's answer if it has arrived, a question if it has not been
-     * asked, and the next rung of the ladder if no answer is coming at all.
+     * Finds the run something to do: the planner's answer if it has arrived, and a question if it has not
+     * been asked. With no answer and none coming the run stays without an objective — there is nothing
+     * else to take one from — and the question is put again at every decision until one is.
      *
      * <p>Bounded, which is what lets the caller loop on it: the planner hands over at most one answer per
-     * question and asks at most one question at a time, and the ladder is finite.
+     * question and asks at most one question at a time.
      */
     private void adopt(StepContext context) {
         // Taken before the early return, because an answer may be a review's: the planner was asked about
@@ -517,23 +508,8 @@ public final class Progression {
         // A supplier rather than a situation: reading the world costs an inventory walk and an entity
         // query, and there is no sense paying for either when the planner is going to ignore the question.
         planner.consider(() -> Situation.of(context.player(), context.obtained(), achieved, ""));
-        // Still nothing coming means nobody is going to answer, so climb the ladder rather than stand
-        // about waiting for a reply that was never sent.
-        if (!planner.pending()) {
-            current = fallbackIndex < fallback.size() ? fallback.get(fallbackIndex) : null;
-            plan = current == null ? null : Plan.of(current);
-            // The ladder has no opinion about height: it was written before there was a way to have one,
-            // and inventing a band for it would be charging the body against a rule nobody set. Its rungs
-            // do know what they take, though, which is what the crafting table keys on.
-            bounds = Bounds.anywhere();
-            needs = current == null ? Map.of() : current.needs();
-            // No planner means nothing put aside on purpose, but a rung is a Gather like any other and
-            // still holds back what it is gathering: the two sources of objectives have to behave the
-            // same or the run learns different lessons depending on whether the network was up.
-            reserved = current == null ? Reserve.none() : Reserve.fromCrafts(current.reserved());
-            stepsOnCurrent = 0;
-            refocus(context);
-        }
+        // Whether that put a question, owes one, or could do neither is what the idle pursuit reads.
+        refocus(context);
     }
 
     /**

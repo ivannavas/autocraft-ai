@@ -87,3 +87,9 @@ publishing {
         // retrieving dependencies.
     }
 }
+
+
+// The sources are UTF-8 (they use dashes in strings); the JDK default on Windows is not.
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}

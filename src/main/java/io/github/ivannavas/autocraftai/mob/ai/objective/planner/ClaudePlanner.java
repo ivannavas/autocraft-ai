@@ -87,11 +87,13 @@ public final class ClaudePlanner implements ObjectivePlanner {
     /** How long to leave a failing planner alone before asking it again. */
     private static final long RETRY_AFTER_MILLIS = 60_000L;
     /**
-     * The least time between any two questions, answered or not. The planner is a strategist, not a
-     * reflex: asking it more than once a stretch spends tokens to hear the same thing. A block that needs
-     * a faster hand goes to the mentor, not to more planner calls.
+     * The least time between any two questions, answered or not. A pace, not a filter: a question that
+     * comes too soon is owed and put when the interval is up, never dropped — the run has no other source
+     * of objectives, and a dropped question used to read as "nobody is answering" and send it down a
+     * fixed ladder. What actually saves tokens is the cache below; this only stops a pathological loop
+     * from turning into a request a second.
      */
-    private static final long MIN_INTERVAL_MILLIS = 20_000L;
+    private static final long MIN_INTERVAL_MILLIS = 10_000L;
     /** How long a cached answer stands for a situation that has not meaningfully changed. */
     private static final long CACHE_TTL_MILLIS = 120_000L;
     /** What the planner says when the objective it was asked about is still the right one. */
@@ -114,6 +116,10 @@ public final class ClaudePlanner implements ObjectivePlanner {
     private final AtomicLong silentUntil = new AtomicLong();
     /** When the last question actually went out, for the minimum interval between them. */
     private final AtomicLong lastAsked = new AtomicLong();
+    /** A question that came too soon after the last and is owed as soon as the interval allows. */
+    private final AtomicBoolean wanted = new AtomicBoolean();
+    /** Why the last request came to nothing, for the overlay, while no new one will be made. */
+    private final AtomicReference<String> trouble = new AtomicReference<>();
     /** The last situation answered and what it was answered with, so an identical one skips the network. */
     private final AtomicReference<String> cachedSignature = new AtomicReference<>("");
     private final AtomicReference<Plan> cachedPlan = new AtomicReference<>();
@@ -138,7 +144,7 @@ public final class ClaudePlanner implements ObjectivePlanner {
     public static ObjectivePlanner create(Path directory) {
         String key = apiKey(directory);
         if (key == null) {
-            log.info("No Anthropic key ({} or {}); objectives will follow the fixed ladder",
+            log.info("No Anthropic key ({} or {}); the run will have no objectives",
                     KEY_ENVIRONMENT_VARIABLE, directory.resolve(KEY_FILE));
             return ObjectivePlanner.none();
         }
@@ -178,10 +184,24 @@ public final class ClaudePlanner implements ObjectivePlanner {
     @Override
     public void consider(Supplier<Situation> situation) {
         long now = System.currentTimeMillis();
-        if (now < silentUntil.get() || now - lastAsked.get() < MIN_INTERVAL_MILLIS
-                || !asking.compareAndSet(false, true)) {
+        if (now < silentUntil.get()) {
+            // Resting after a failure; trouble() says why, and the next call after the rest tries again.
             return;
         }
+        if (asking.get()) {
+            // One is already out; its answer is the one coming, and nothing further is owed.
+            return;
+        }
+        if (now - lastAsked.get() < MIN_INTERVAL_MILLIS) {
+            // Too soon, so owed: pending() holds true and the caller, which asks every decision while it
+            // has no objective, puts the question the moment the pace allows.
+            wanted.set(true);
+            return;
+        }
+        if (!asking.compareAndSet(false, true)) {
+            return;
+        }
+        wanted.set(false);
         // The description is built on the caller's thread, and that is where it has to be built: it reads
         // the world, and the world is only safe to read from the game thread.
         Situation asked = situation.get();
@@ -226,6 +246,7 @@ public final class ClaudePlanner implements ObjectivePlanner {
                         plan.reserved().isEmpty() ? "" : ", holding back " + plan.reserved().kept(),
                         plan.objective().reason());
                 PlannerLog.get().answered(plan, plan.objective().reason(), reply);
+                trouble.set(null);
                 answer.set(plan);
                 cachedSignature.set(signature);
                 cachedPlan.set(plan);
@@ -246,12 +267,13 @@ public final class ClaudePlanner implements ObjectivePlanner {
             log.warn("The planner answered something that is not an objective ({}): {}",
                     said, shorten(reply));
             PlannerLog.get().failed("not an objective: " + said, shorten(reply));
-            rest();
+            rest("not an objective: " + said);
         } catch (RuntimeException e) {
             // The message can carry the API's own error body, which is worth seeing; the key is not in it.
-            log.warn("Could not reach the planner ({}); falling back to the ladder", e.getMessage());
+            log.warn("Could not reach the planner ({}); the run waits without an objective",
+                    e.getMessage());
             PlannerLog.get().failed(shorten(e.getMessage()), null);
-            rest();
+            rest(shorten(e.getMessage()));
         }
     }
 
@@ -317,8 +339,14 @@ public final class ClaudePlanner implements ObjectivePlanner {
         return object(reply).map(node -> node.path("reason").asText("")).orElse("");
     }
 
-    /** Stops asking for a while, so one bad key is not one failed request per objective for the rest of the run. */
-    private void rest() {
+    /**
+     * Stops asking for a while, so one bad key is not one failed request per objective for the rest of
+     * the run, and remembers why for the overlay. Nothing is owed across a rest: the next question is
+     * put when the rest is over, from the situation then.
+     */
+    private void rest(String why) {
+        trouble.set(why);
+        wanted.set(false);
         silentUntil.set(System.currentTimeMillis() + RETRY_AFTER_MILLIS);
     }
 
@@ -469,6 +497,8 @@ public final class ClaudePlanner implements ObjectivePlanner {
         // A key that failed in the last world is not going to work in this one either, but a network
         // that was down may well be back, and the first question of a run is the one worth asking.
         silentUntil.set(0L);
+        wanted.set(false);
+        trouble.set(null);
     }
 
     @Override
@@ -478,7 +508,14 @@ public final class ClaudePlanner implements ObjectivePlanner {
 
     @Override
     public boolean pending() {
-        return asking.get();
+        return asking.get() || wanted.get();
+    }
+
+    @Override
+    public Optional<String> trouble() {
+        return System.currentTimeMillis() < silentUntil.get()
+                ? Optional.ofNullable(trouble.get())
+                : Optional.empty();
     }
 
     @Override

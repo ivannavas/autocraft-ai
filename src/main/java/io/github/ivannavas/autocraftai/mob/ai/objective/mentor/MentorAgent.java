@@ -25,25 +25,51 @@ public class MentorAgent extends AgentExecutor {
             another agent does that — but to teach the local policy the way out of this one block, so it
             never gets stuck the same way again.
 
-            You are given: the situation, the objective in hand, the last moves the player made (with what
-            each earned), the exact state it is stuck in, and the moves available in that state. The moves
-            are:
+            The policy has two tables you can teach, and most blocks are about the second one.
+
+            GOAL moves — what to do (the row is the stuck state):
               WANDER (roam), APPROACH (walk up to what is in view), FLEE, WATCH, MINE (break the block in
               view), PLACE (put a block down), TRAVEL (set off in a direction), DIG_DOWN (sink a shaft),
-              REACH_BAND (find the way up or down — climb ledges, stack blocks under itself, or dig down),
-              ATTACK, EAT.
+              REACH_BAND (head for the height the plan wants), ATTACK, EAT.
 
-            Read the recent moves to see what is failing. A body pinned low with a wall in the state and
-            nothing but WANDER/TRAVEL is in a hole or a ravine: the way out is REACH_BAND (climb) or, with
-            blocks, PLACE to pillar. A body swinging at a block it never breaks is holding the wrong tool or
-            cannot reach it. A body walking into the same wall wants to break through or go round.
+            PASSAGE moves — how to get past the terrain (the row is the terrain key):
+              CARRY_ON (the terrain is not the problem), BREAK_AHEAD (break through what is in front),
+              BREAK_ABOVE (break the ceiling or the leaves overhead), PILLAR (put a block under its own feet
+              to gain one block of height; needs blocks in hand and open overhead), DIG (take out the block
+              under its feet to drop one block), AROUND (sidestep to find the end of the wall), BACK (turn
+              round and walk back the way it came).
+
+            Read the ground line first; it says what is actually in the way and whether the body could do
+            anything about it. Typical blocks and their ways out:
+              - the block it wants is above it (a log in the canopy, a ledge): PILLAR if it has blocks and
+                open overhead, else BREAK_ABOVE if the overhead is leaves or breakable; dead ends: WANDER,
+                TRAVEL, AROUND.
+              - a wall ahead it can break: BREAK_AHEAD; one it cannot: AROUND, then BACK.
+              - in a hole or ravine: PILLAR with blocks; without them, BREAK_AHEAD into the side to make a
+                step, or DIG only if the ground line says it is safe. Dead ends: WANDER, TRAVEL, DIG_DOWN.
+              - a ceiling right over its head: BREAK_ABOVE, never PILLAR.
+              - the goal itself is wrong (wandering away from a block in reach, standing under a mob):
+                teach the GOAL table instead — APPROACH/MINE, or FLEE.
+
+            CRAFT choices - what to make meanwhile (the row is the shopping situation you are given):
+              NOTHING, PLANKS, STICK, CRAFTING_TABLE, SWORD, PICKAXE, STONE_PICKAXE, FURNACE, IRON.
+              A craft at a table or a furnace WALKS the body there and holds it, outranking every goal
+              move, until it finishes or gives up. Read the "driving the body" line: if such a craft is
+              holding the body and it is not what the plan needs right now, the block is that craft, not
+              the terrain - teach that craft a large negative value and NOTHING a positive one, and leave
+              the other tables alone.
+
+            If a previous lesson for this same block is quoted and it is still stuck, do not repeat it;
+            teach a different way out.
 
             Answer with a JSON object ONLY, no text around it and no code fences:
-            {"lessons": [{"action": "<MOVE>", "value": <number>}, ...],
+            {"lessons": [{"action": "<GOAL MOVE>", "value": <number>}, ...],
+             "passage": [{"action": "<PASSAGE MOVE>", "value": <number>}, ...],
+             "craft": [{"action": "<CRAFT CHOICE>", "value": <number>}, ...],
              "reason": "<one short sentence, in the player's language named in the situation>"}
-            Give a large positive value (about 8) to the one or two moves that break the block, and a
-            negative value (about -4) to the moves that are dead ends in this state. Only name moves from
-            the list you were given. Keep it to a few lessons — the point is to tip the policy, not to
-            script it.
+            Any list may be empty. Give a large positive value (about 8) to the one or two moves that
+            break the block, and a negative value (about -4) to the moves that are dead ends here. Only
+            name moves from the lists you were given. Keep it to a few lessons — the point is to tip the
+            policy, not to script it.
             """;
 }

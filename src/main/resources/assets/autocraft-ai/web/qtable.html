@@ -102,6 +102,12 @@
     line-height: 1.4;
   }
 
+  /* No objective and none coming: the one state the page raises its voice about, in both views. */
+  .now-value.warn,
+  .empty-line.warn {
+    color: var(--negative);
+  }
+
   /* --- the compact view --------------------------------------------------------------------------
    *
    * What goes out on the stream: the objective and the move being made, and nothing else. The tables
@@ -832,7 +838,8 @@
       "qualifier.breakable": "can break it", "qualifier.diggable": "can dig down",
       "plan": "The plan", "plan.band": "height", "plan.anyheight": "any height",
       "plan.needs": "needs", "plan.reserve": "keeps back", "plan.sources": "where it comes from",
-      "plan.nothing": "nothing", "plan.ladder": "from the fixed ladder, nobody planned it",
+      "plan.nothing": "nothing", "plan.noreason": "no reason given",
+      "plan.unplanned": "No objective. The planner is not answering, so nothing is pursued until it does.",
       "plan.none": "no plan yet", "plan.active": "looking for this one now",
       "pursuits": "What it has learned, pursuit by pursuit", "folder.live": "in play",
       "folder.states": "%s situations", "folder.decisions": "%s decisions",
@@ -922,7 +929,7 @@
       ASKED: "asked", ANSWERED: "answered", KEPT: "kept the objective", FAILED: "no answer",
     },
     mentor: {
-      ASKED: "stuck, asked", ANSWERED: "taught", KEPT: "taught", FAILED: "no lesson",
+      ASKED: "stuck, asked", ANSWERED: "taught", KEPT: "afterwards", FAILED: "no lesson",
     },
     spot: {
       AT_SIGHT: "the block in view", ABOVE_SIGHT: "one above it", BELOW_SIGHT: "one below it",
@@ -949,7 +956,7 @@
       GET_CRAFTING_TABLE: "get a crafting table", GET_STICKS: "get sticks",
       GET_SWORD: "get a sword", GET_PICKAXE: "get a pickaxe", GATHER_STONE: "get stone",
       GET_STONE_PICKAXE: "get a stone pickaxe",
-      PLANNING: "deciding what to do next", DONE: "all done",
+      PLANNING: "deciding what to do next", UNPLANNED: "no objective — the planner is not answering",
     },
   };
 
@@ -1239,7 +1246,7 @@
   function planHtml(plan, sought) {
     const reason = plan.reason
       ? `<div class="plan-reason">${escape(plan.reason)}</div>`
-      : `<div class="plan-reason">${t("plan.ladder")}</div>`;
+      : `<div class="plan-reason">${t("plan.noreason")}</div>`;
     const lists = `<div class="plan-lists">` +
       `<span class="plan-list"><span class="plan-term">${t("plan.band")}</span>` +
       `<span class="chip">${escape(bandLabel(plan.floor, plan.ceiling))}</span></span>` +
@@ -1268,6 +1275,13 @@
 
   function renderPlan(data) {
     const box = el("plan");
+    if (data.phase === "UNPLANNED") {
+      // Nothing stands in for the planner, so this is the one state worth shouting about: the run is
+      // standing still on purpose, and the planner's own word on why goes right beside it.
+      box.innerHTML = `<div class="empty-line warn">⚠ ${t("plan.unplanned")}` +
+        `${data.phaseReason ? ` · ${escape(data.phaseReason)}` : ""}</div>`;
+      return;
+    }
     if (!data.plan) {
       box.innerHTML = `<div class="empty-line">${escape(objectiveLabel(data.phase))} · ${t("plan.none")}</div>`;
       return;
@@ -1470,8 +1484,10 @@
   /** Everything the panel draws from one snapshot: the moment, the plan, the folders, the shared tables. */
   function render(data) {
     el("phase").textContent = objectiveLabel(data.phase);
+    el("phase").classList.toggle("warn", data.phase === "UNPLANNED");
     el("working").textContent = pursuitLabel(data.pursuit);
-    // Only there when a planner chose the objective and said why; the fixed ladder has nothing to add.
+    // The planner's reason for the objective — or, with no objective and no answer coming, its account
+    // of why not. Empty only while an answer is on its way.
     const reason = el("phase-reason");
     reason.textContent = data.phaseReason || "";
     reason.hidden = !data.phaseReason;
