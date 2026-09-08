@@ -8,6 +8,7 @@ import io.github.ivannavas.autocraftai.mob.MobBody;
 import io.github.ivannavas.autocraftai.mob.MobControl;
 import io.github.ivannavas.autocraftai.mob.MobGoal;
 import net.minecraft.core.BlockPos;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
@@ -39,6 +40,14 @@ import net.minecraft.world.phys.Vec3;
  * passes with room to spare — it is moving, briskly, in a ring. What counts here is how far along the
  * bearing it has got from where it started, ratcheted: the journey has to keep beating its own record, or
  * it is not a journey and the decision goes back to the brain.
+ *
+ * <h2>Water is not a wall</h2>
+ * It was, and a lake was the end of every journey that met one. Nothing in the water could be stood on, so
+ * every heading across it came back empty and the goal stranded itself — on the bank when it walked there
+ * itself, and floating in the middle when something else had carried it in, with a bearing it still had
+ * and nowhere along it that it was willing to aim. A body can swim. The surface of water is somewhere it
+ * can go, {@link io.github.ivannavas.autocraftai.mob.MoveControl} already holds the jump that keeps its
+ * head up, and a line across a lake is the same line. Lava is not water, and stays a wall.
  */
 public final class TravelGoal implements MobGoal {
 
@@ -105,13 +114,25 @@ public final class TravelGoal implements MobGoal {
         // Being stranded has to bar the start as well as the continuation. The engine offers a stopped goal
         // the body again on the very next tick, so without this the giving up is a stutter rather than a
         // handover, and the decision never gets back to the brain that has to learn from it.
+        // Footing or water: a journey that would not start until the body was on dry ground was a body
+        // that floated for the rest of its commitment after the swim goal handed it back mid-lake.
         return !stranded && ticksRunning < GIVE_UP_TICKS
-                && body.onGround() && !body.player().isPassenger();
+                && (body.onGround() || body.player().isInWater()) && !body.player().isPassenger();
     }
 
     @Override
     public boolean canContinueToUse(MobBody body) {
         return !stranded && ticksRunning < GIVE_UP_TICKS;
+    }
+
+    /**
+     * The journey's own measure, which is the one that tells a line from a loop: ticks since it last beat
+     * its record along the bearing. A body walking a ring is moving briskly and getting nowhere, and
+     * anything that counted footsteps would call that progress.
+     */
+    @Override
+    public int stalledTicks() {
+        return ticksSinceGain;
     }
 
     @Override
@@ -196,14 +217,14 @@ public final class TravelGoal implements MobGoal {
     }
 
     /**
-     * The furthest point along a line the body could walk to without the ground giving out on the way.
+     * The furthest point along a line the body could walk or swim to without the way giving out.
      *
      * <p>Sampled outwards and stopped at the first gap, rather than asked about the far end alone. A single
      * tree trunk twelve blocks off used to condemn a whole direction, and a direction condemned was a turn,
      * and the turns were the circling. This aims short of the trunk instead, and a second later the tree is
      * beside the body and the line is clear again.
      *
-     * @return where to walk, or null when even the first step that way is not walkable
+     * @return where to go, or null when even the first step that way is neither walkable nor swimmable
      */
     private Vec3 furthestWalkable(MobBody body, double heading) {
         Vec3 best = null;
@@ -220,8 +241,12 @@ public final class TravelGoal implements MobGoal {
     }
 
     /**
-     * The first floor near the candidate the player could stand on with room for its whole body, or null
-     * when the column is unloaded or offers nowhere to land.
+     * The first place in the column the body could be: a floor it could stand on with room for its whole
+     * body, or failing that the surface of water it could swim in. Null when the column is unloaded or
+     * offers neither.
+     *
+     * <p>Top down, so a bank above the water is found before the water is, and a body walks where it can
+     * and swims only where it must.
      */
     private Vec3 standingSpot(MobBody body, BlockPos candidate) {
         Level level = body.level();
@@ -230,6 +255,9 @@ public final class TravelGoal implements MobGoal {
             BlockPos pos = new BlockPos(candidate.getX(), y, candidate.getZ());
             if (!level.isLoaded(pos)) {
                 return null;
+            }
+            if (swimmable(level, pos)) {
+                return Vec3.atBottomCenterOf(pos);
             }
             BlockPos floor = pos.below();
             if (!level.getBlockState(floor).entityCanStandOn(level, floor, player)) {
@@ -244,6 +272,11 @@ public final class TravelGoal implements MobGoal {
             }
         }
         return null;
+    }
+
+    /** The surface of water: water here with air over it, which is where a swimming head is. Never lava. */
+    private static boolean swimmable(Level level, BlockPos pos) {
+        return level.getFluidState(pos).is(FluidTags.WATER) && level.getBlockState(pos.above()).isAir();
     }
 
     @Override

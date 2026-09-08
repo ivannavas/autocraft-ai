@@ -15,6 +15,10 @@ import net.minecraft.core.BlockPos;
  * what the body is carrying, and which recipes that pays for is an answer only the recipe book has.
  * Working it out once per decision and passing it here keeps the scan off every caller.
  *
+ * <p>What is deliberately not here is the water. It is the state of a table of its own rather than one
+ * more letter on everybody else's, and that table runs on its own clock — once a second while the body is
+ * wet, not once per decision — so it reads {@link Water} for itself. {@link Swim} says why.
+ *
  * @param sighting   the one thing the goals steer by
  * @param craftable  everything the inventory could pay for right now
  * @param wall       the solid block straight ahead at body height, or null if the way is clear
@@ -26,21 +30,19 @@ import net.minecraft.core.BlockPos;
  * @param wellFed    the larder is full enough that another animal is not worth killing
  * @param worthDigging going down is a route to what the plan wants, rather than a way of leaving it
  * @param heightWanted the height the body ought to be at, when it is not at it
- * @param water       the water the body is in, and the ways out of it
  * @param reserve     what the plan will not let it spend
  * @param mineOnSight the block in view is one the plan came here to break
  */
 public record ActionContext(Sighting sighting, Set<Resource> craftable, BlockPos wall,
                             boolean hasBlocks, boolean canDigDown, Tool tool,
                             boolean hungry, boolean canEat, boolean wellFed, boolean worthDigging,
-                            OptionalInt heightWanted, Water water, Reserve reserve,
+                            OptionalInt heightWanted, Reserve reserve,
                             boolean mineOnSight) {
 
     public ActionContext {
         craftable = Set.copyOf(craftable);
         tool = tool == null ? Tool.HAND : tool;
         heightWanted = heightWanted == null ? OptionalInt.empty() : heightWanted;
-        water = water == null ? Water.dry() : water;
         reserve = reserve == null ? Reserve.none() : reserve;
     }
 
@@ -90,17 +92,6 @@ public record ActionContext(Sighting sighting, Set<Resource> craftable, BlockPos
      */
     public boolean worthDigging() {
         return worthDigging;
-    }
-
-    /**
-     * The water the body is in, and where the ways out of it are.
-     *
-     * <p>Deliberately not folded into {@link #flags()}. It is the state of a table of its own rather than
-     * one more letter on everybody else's — {@link Swim} says why, and says it better than a line here
-     * could.
-     */
-    public Water water() {
-        return water;
     }
 
     /**

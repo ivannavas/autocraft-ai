@@ -82,6 +82,16 @@ public final class DigDownGoal implements MobGoal {
         return !breaking;
     }
 
+    /**
+     * A shaft has one measure of progress and it is already counted: ticks since a blow last landed. Every
+     * tick of a block coming apart resets it, so a descent through stone reads as busy however slow it is,
+     * and a body aimed at something it cannot break reads as what it is.
+     */
+    @Override
+    public int stalledTicks() {
+        return ticksStalled;
+    }
+
     @Override
     public void start(MobBody body) {
         breaking = false;

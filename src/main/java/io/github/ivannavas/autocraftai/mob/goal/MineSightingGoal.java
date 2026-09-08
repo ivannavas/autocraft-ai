@@ -88,6 +88,8 @@ public final class MineSightingGoal implements MobGoal {
     // is a symptom of the problem and not a fresh chance at it.
     private int ticksRunning;
     private int ticksStalled;
+    /** What this attempt has to show for itself: ground covered on the way, blows landed once there. */
+    private final Advance advance = new Advance();
     private boolean breaking;
     private boolean equipped;
     private boolean blocked;
@@ -131,6 +133,17 @@ public final class MineSightingGoal implements MobGoal {
         return !breaking;
     }
 
+    /**
+     * Getting nowhere here is one of two things, and both count: not closing on the block while walking to
+     * it, and not landing a blow once standing at it. Like the counters above it belongs to the attempt
+     * rather than to the run of it, so a goal that keeps losing the legs and getting them back does not
+     * come back looking fresh each time.
+     */
+    @Override
+    public int stalledTicks() {
+        return advance.stalledTicks();
+    }
+
     @Override
     public void start(MobBody body) {
         // Only what the stop actually undid: the break was cancelled and the held item may have changed
@@ -148,6 +161,7 @@ public final class MineSightingGoal implements MobGoal {
 
         if (!withinReach(body, centre)) {
             body.moveControl().moveTo(centre, SPEED);
+            advance.walking(body);
             return;
         }
 
@@ -192,12 +206,14 @@ public final class MineSightingGoal implements MobGoal {
             // Still turning, something solid in the way, or a blow the game would not take. All of them
             // look the same from here and all of them mean this tick got nowhere.
             breaking = false;
+            advance.nothing();
             if (++ticksStalled >= STALLED_TICKS) {
                 blocked = true;
             }
             return;
         }
         ticksStalled = 0;
+        advance.progress();
     }
 
     /** One blow. False when the game would not take it, which is a tick that got nowhere like any other. */

@@ -23,7 +23,16 @@ import java.util.List;
 public final class PlannerLog {
 
     /** Enough to see the last few exchanges without the panel turning into a transcript. */
-    private static final int KEEP = 8;
+    /**
+     * How much of the conversation is kept.
+     *
+     * <p>Generous, because this is the record of every objective the run was given and why, and it is
+     * read by someone trying to understand a session after the fact — a window of the last handful
+     * answers "what is it doing now", which the panel already shows, and nothing else. The entries are
+     * a few kilobytes each and they are never sent with the per-decision snapshot, so the cost of
+     * keeping them is memory nobody misses.
+     */
+    private static final int KEEP = 200;
 
     private static final PlannerLog INSTANCE = new PlannerLog();
 
@@ -78,7 +87,22 @@ public final class PlannerLog {
         add(new Entry(System.currentTimeMillis(), Kind.FAILED, "", why, detail));
     }
 
+    /**
+     * Bumped on every entry, and never reset.
+     *
+     * <p>What the page watches to know the log has moved. A count would not do: once the log is full
+     * it stops changing, and the history would silently stop updating at exactly the point there is
+     * most of it.
+     */
+    private volatile long revision;
+
+    /** @return a number that changes whenever anything was added, for spotting a stale copy */
+    public long revision() {
+        return revision;
+    }
+
     private synchronized void add(Entry entry) {
+        revision++;
         entries.addLast(entry);
         while (entries.size() > KEEP) {
             entries.removeFirst();

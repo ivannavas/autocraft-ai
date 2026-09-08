@@ -35,6 +35,23 @@ public interface MobGoal {
         return true;
     }
 
+    /**
+     * Ticks this goal has spent with nothing to show for them; zero while it is getting somewhere.
+     *
+     * <p>This is how a decision says it is taking too long. The brain commits to a goal for a length it
+     * guessed at, and until a goal could answer this the guess was all there was — a body walled in, one
+     * swinging at a block it cannot reach and one standing about with a job that finished ten seconds ago
+     * all looked from outside like a body that was busy. What counts as progress is this goal's business
+     * (a blow that landed, ground covered, a mouthful being eaten); how much of the absence of it is too
+     * much is the brain's.
+     *
+     * <p>A goal that says nothing is taken to be getting somewhere for as long as it runs, which is the
+     * right answer for one that stops the moment it is done.
+     */
+    default int stalledTicks() {
+        return 0;
+    }
+
     default void start(MobBody body) {
     }
 

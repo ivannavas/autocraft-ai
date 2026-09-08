@@ -24,7 +24,6 @@ import io.github.ivannavas.autocraftai.mob.goal.CraftGoal;
 import io.github.ivannavas.autocraftai.mob.goal.CraftingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.MineSightingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.PlaceBlockGoal;
-import io.github.ivannavas.autocraftai.mob.goal.RandomStrollGoal;
 import lombok.extern.slf4j.Slf4j;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -46,13 +45,13 @@ import net.minecraft.world.phys.Vec3;
  *   <li><b>crafting</b>: which {@link CraftChoice} to work on in the background, or none — keyed by
  *       {@link CraftSituation}, not by what is in view, since what is worth making depends on the rung and
  *       the bag rather than on which block happens to be under the crosshair.</li>
- *   <li><b>interrupts</b>: whether a move that is going nowhere should be cut short, and with what.</li>
  *   <li><b>placement</b>: for the two moves that act on a block, <em>which</em> block — the one in view,
  *       the one above it, the one under the feet. See {@link Spot}.</li>
  *   <li><b>position</b>: for the two moves that take the body somewhere, <em>which way</em> — onward,
  *       back, or towards ground it has not covered. See {@link Ground}.</li>
- *   <li><b>water</b>: what to do about being in water, asked only while the body is in some. See
- *       {@link Swim}, and {@link Water} for the state it is keyed by.</li>
+ *   <li><b>water</b>: what to do about being in water, asked once a second for as long as the body is in
+ *       some — the one table that runs on its own clock rather than the commitment's. See {@link Swim},
+ *       and {@link Water} for the state it is keyed by.</li>
  * </ul>
  *
  * <p>One table over the cross-product would be {@code 6 x 3 x 6 x 4} columns, and every new goal would
@@ -60,26 +59,65 @@ import net.minecraft.world.phys.Vec3;
  * from the same reward over the same move, which does mean none of them can represent an interaction the
  * others cannot see — the price of the split, and the reason it scales.
  *
- * <h2>Primary and secondary</h2>
- * The goal table picks something that needs the body. Crafting needs neither legs nor eyes, so it is not a
- * rival to that choice: it is installed alongside and the engine runs both, which is how the body can be
- * fleeing a creeper and turning logs into planks at once. Anything that needs the body still and aimed
- * cannot be a secondary, and the engine's control claims are what enforce that rather than a rule here.
+ * <h2>A commitment, and the layers on top of it</h2>
+ * The goal table picks something that needs the body and the timing table says how long. That is the
+ * commitment, and it is the one decision the brain holds still; everything else is a layer laid over it,
+ * each on its own clock and each answering a question the commitment cannot see. Crafting is chosen with
+ * the commitment and runs alongside it, because a two-by-two grid needs neither legs nor eyes — which is
+ * how the body can be fleeing a creeper and turning logs into planks at once. The water layer is asked
+ * every second the body is wet, whatever the commitment is doing, and what it installs outranks the
+ * commitment's goal, because a body that is drowning is not travelling however committed it is.
  *
- * <h2>Interruptions, and who pays for them</h2>
- * A commitment is an estimate, and estimates are wrong. When the body stops getting anywhere — walled in,
- * or simply not moving — the interrupt table gets asked whether to cut the move short and what to do
- * instead. If it does, the <em>timing</em> table is charged {@link #INTERRUPTION_PENALTY} on top of
- * whatever the move earned, because the thing that was wrong was the length: it committed fifteen seconds
- * to something that stopped paying after three.
+ * <p>Nothing here decides who gets the legs when two of them want them. The engine does, by priority and
+ * by control claim, and that is deliberate: the arbitration has one right answer in every case there is —
+ * not drowning beats everything, a pickaxe is worth walking to a table for — and a table asked to learn it
+ * would spend the run getting it wrong on the way to getting it right, inside every other table's move.
+ * That was the interrupt table's mistake, and it is not one worth making twice. What a layer learns is
+ * <em>what</em> to do about its own question; <em>whether</em> it gets the body to do it is not a matter
+ * of opinion.
+ *
+ * <h2>When a move stops paying its way</h2>
+ * A commitment is an estimate, and estimates are wrong. There used to be a table for that too — a short
+ * list of rescues, asked what to do about a body that was not moving — and it was a mistake twice over.
+ * It answered a question the goal table already answers, in a state the goal table already keys on
+ * ({@code W} for walled in, {@code B} for carrying blocks), so the two spent the run learning the same
+ * lesson separately; and it spent its own exploration inside every other table's move, so a wall could
+ * turn a perfectly good mining decision into a random stroll while it was still finding its feet.
+ *
+ * <p>What replaces it is the goals saying so themselves. Every goal can be asked how long it has had
+ * nothing to show for itself — see {@link MobGoal#stalledTicks()} — and each one measures that in the
+ * terms its own job makes sense in: blows landed, ground covered, a mouthful being eaten, a journey
+ * beating its own record along a bearing. A move whose goal has been getting nowhere for
+ * {@link #STALL_TICKS} spends that second stalled; {@link #STALL_LIMIT_STEPS} of those and the move is cut
+ * short and every table chooses again, with the goal torn down so the same choice comes back as a fresh
+ * attempt.
+ *
+ * <p>Nobody is charged a special penalty for it. The seconds spent going nowhere are counted into the
+ * step and priced by {@link GeneralObjectives}, so they reach every table through the ordinary reward —
+ * and reach the timing table hardest, which is right, because the longer a move is held the more of them
+ * it collects.
  */
 @Slf4j
 public final class QLearningBrain {
 
     /** Ticks in one step. Twenty is one second, and a step is the unit every commitment is counted in. */
     private static final int STEP_TICKS = 20;
-    /** Steps a move is allowed to sit with a finished goal before it is cut short. */
-    private static final int IDLE_GRACE_STEPS = 2;
+    /**
+     * Ticks of a goal having nothing to show for itself before that second counts as spent on nothing.
+     *
+     * <p>Two seconds rather than one. Every goal's own measure is coarse — a journey books its progress
+     * four blocks at a time, a fight one swing at a time — and a bar set at a single second would call
+     * ordinary work stalling every time the grain of the measure fell the wrong way.
+     */
+    private static final int STALL_TICKS = 40;
+    /**
+     * Seconds of a move spent on nothing before it is cut short and every table chooses again.
+     *
+     * <p>Counted over the whole move rather than in a row: a goal that alternates a good second with a
+     * dead one is halfway to being stuck, and waiting for two dead ones to land together would let it
+     * run out a ten-second commitment at half pay.
+     */
+    private static final int STALL_LIMIT_STEPS = 2;
     /** Priority the chosen goal is installed at. */
     private static final int GOAL_PRIORITY = 2;
     /** A two-by-two craft claims no controls, so its priority only orders it against other free goals. */
@@ -92,10 +130,6 @@ public final class QLearningBrain {
     private static final int SAVE_EVERY_DECISIONS = 100;
     private static final int REPORT_EVERY_DECISIONS = 300;
     private static final double DEATH_PENALTY = -20.0;
-    /** Charged to the timing table when a move has to be cut short: its estimate is what failed. */
-    private static final double INTERRUPTION_PENALTY = -3.0;
-    /** Under this much ground covered in a step, with legs engaged, the body is going nowhere. */
-    private static final double STUCK_DISTANCE = 0.5;
     /**
      * How far past its commitment a goal that refuses interruption may run before it is cut short anyway.
      *
@@ -123,7 +157,6 @@ public final class QLearningBrain {
     private final Table goals;
     private final Table timing;
     private final Table crafting;
-    private final Table interrupts;
     private final Table placement;
     private final Table position;
     private final Table water;
@@ -136,7 +169,10 @@ public final class QLearningBrain {
     private Observation lastObservation;
     private Commitment commitment;
     private int stepsRun;
-    private int idleSteps;
+    /** Seconds of the move in flight its goal has had nothing to show for. Reset with every decision. */
+    private int stalledSteps;
+    /** Whether the second just gone was one of them, which is what tells a stall from a recovery. */
+    private boolean stalledNow;
 
     private GoalAction installedAction;
     private MobGoal installedGoal;
@@ -145,14 +181,17 @@ public final class QLearningBrain {
     private MobGoal swimGoal;
     private Swim swimChoice = Swim.CARRY_ON;
 
-    private Vec3 stepPosition;
-    private long interruptionCount;
+    /** How many moves have been cut short for going nowhere. Shown on the overlay, learned from nowhere. */
+    private long stalls;
 
-    private float lastHealth;
-    private int lastFood;
-    private int lastAir;
-    private Vec3 lastPosition;
-    private InventoryCensus lastCensus = InventoryCensus.empty();
+    /** The body as it was when the move in flight was chosen, which is what the move is scored against. */
+    private Moment since;
+    /**
+     * The body as it was when the water table last chose, or null on dry land. The water layer keeps its
+     * own clock and so its own mark: a second in the water is scored from the last second in the water,
+     * not from wherever the commitment happens to have started.
+     */
+    private Moment wet;
     private InventoryCensus obtained = InventoryCensus.empty();
     private InventoryCensus previousStepCensus;
     private int wastedTicks;
@@ -171,11 +210,10 @@ public final class QLearningBrain {
         this.goals = new Table(names(GoalAction.values()), directory.resolve("goals.txt"));
         this.timing = new Table(names(Commitment.values()), directory.resolve("timing.txt"));
         this.crafting = new Table(names(CraftChoice.values()), directory.resolve("crafting.txt"));
-        this.interrupts = new Table(names(Interruption.values()), directory.resolve("interrupts.txt"));
         this.placement = new Table(names(Spot.values()), directory.resolve("placement.txt"));
         this.position = new Table(names(Ground.values()), directory.resolve("position.txt"));
         this.water = new Table(names(Swim.values()), directory.resolve("water.txt"));
-        this.tables = List.of(goals, timing, crafting, interrupts, placement, position, water);
+        this.tables = List.of(goals, timing, crafting, placement, position, water);
         tables.forEach(Table::load);
     }
 
@@ -234,8 +272,8 @@ public final class QLearningBrain {
         }
         ticksSinceStep = 0;
         stepsRun++;
-        // Counted once per step and nowhere else: stepSince is called more than once in a step that ends
-        // in an interruption, and accumulating there would count the same gain twice.
+        // Counted once a step and nowhere else. A move can be held for ten of them, so a running total
+        // built where the decision reads it would miss the nine in between.
         tallyGains(player);
         // Where the body has been, noted once a step: the position table's whole state is this trail.
         territory.mark(player.position());
@@ -246,45 +284,45 @@ public final class QLearningBrain {
         // drained would be charged to whatever decision happened to look next.
         craftedThisStep = concat(craftedThisStep, CraftLog.get().drainCrafted());
         retireFinishedCraft();
-        boolean goingNowhere = goingNowhere(player);
+        // On its own clock, whatever the commitment is doing: the water does not wait for a decision.
+        tendWater(player);
+        // Booked before the hold is tested, because whether the move has anything to show for the second
+        // just gone is exactly what decides whether it keeps the body for the next one.
+        stalledNow = gettingNowhere();
+        if (stalledNow) {
+            stalledSteps++;
+        }
         if (stillHolding()) {
-            // A commitment only gets reconsidered when it has stopped paying its way. Asking every step
-            // regardless would turn the interrupt table into a second goal table with worse information.
-            //
-            // A goal that has declared itself uninterruptable is never asked about at all. Without that
-            // line the interrupt table walked straight through the one protection mining has: a block
-            // half broken looks stationary, the rescue pulls the goal, and uninstalling it throws the
-            // progress away — which is why wood almost never finished being chopped.
-            if (goingNowhere && !engine.isCommitted(installedGoal)) {
-                Interruption rescue = considerInterruption(client, player);
-                if (rescue != Interruption.CONTINUE) {
-                    interrupt(client, player, rescue);
-                }
-            }
             return;
         }
         decide(client, player);
     }
 
     /**
-     * Whether something is asking the legs to move and the body is not moving. Walled in and shoving at the
-     * wall looks exactly like this, and so does standing in a hole.
+     * Whether the second just gone was spent on nothing.
      *
-     * <p>The test is a destination, not a stopped body. Plenty of goals stand still on purpose — mining
-     * plants its feet to swing, crafting at a table stands at it — and reading that as being stuck was how
-     * the interrupt table came to sit on top of every attempt to chop wood. A body with nowhere it is
-     * trying to be cannot be failing to get there.
+     * <p>The goal answers for itself — see {@link MobGoal#stalledTicks()} — and the two cases that are not
+     * the goal's to answer are handled here. A goal that has finished, or that will not start, has nothing
+     * to show for the second by definition: a block that broke ten seconds ago leaves a mining goal that
+     * cannot run and a body standing in the hole, which was the plainest way a commitment used to be spent
+     * on nothing at all.
+     *
+     * <p>And a primary that has had the body taken off it is not the one failing. Not drowning outranks
+     * every errand and a pickaxe is worth walking to a table for; while either of those is happening the
+     * move it displaced is not going anywhere and should not be charged for it.
      */
-    private boolean goingNowhere(LocalPlayer player) {
-        Vec3 now = player.position();
-        Vec3 before = stepPosition;
-        stepPosition = now;
-        if (before == null || installedGoal == null || !engine.body().moveControl().hasDestination()) {
+    private boolean gettingNowhere() {
+        if (busy(swimGoal) || busy(craftGoal)) {
             return false;
         }
-        double dx = now.x - before.x;
-        double dz = now.z - before.z;
-        return Math.sqrt(dx * dx + dz * dz) < STUCK_DISTANCE;
+        return installedGoal == null || !engine.isRunning(installedGoal)
+                || installedGoal.stalledTicks() >= STALL_TICKS;
+    }
+
+    /** Whether this goal has taken the body off the primary and is getting somewhere with it. */
+    private boolean busy(MobGoal goal) {
+        return goal != null && !goal.controls().isEmpty() && engine.isRunning(goal)
+                && goal.stalledTicks() < STALL_TICKS;
     }
 
     /** Writes every table out. Called on the way out of the game as well as periodically. */
@@ -303,9 +341,10 @@ public final class QLearningBrain {
      *
      * <p>It runs out its committed length, with two exceptions. A goal that cannot be abandoned half way —
      * a block coming apart — holds on past the end of its commitment rather than losing the work, but only
-     * for {@link #COMMITTED_GRACE_STEPS} beyond it. And a goal that has finished with nothing left to
-     * restart gives the rest of the time back, because sitting out ten idle seconds would teach the table
-     * that the length was the mistake.
+     * for {@link #COMMITTED_GRACE_STEPS} beyond it. And a move that has spent {@link #STALL_LIMIT_STEPS}
+     * seconds getting nowhere gives the rest of the time back, because sitting out the other eight would
+     * be eight more seconds of the same nothing — a goal that has finished, a wall that will not move, a
+     * block that cannot be reached.
      *
      * <h2>Why the grace is bounded</h2>
      * It was not, and digging down exposed what that meant. A goal is uninterruptable while a block is
@@ -317,7 +356,8 @@ public final class QLearningBrain {
      *
      * <p>Being cut short is not the same as losing the work. The move ends and the brain chooses again,
      * and choosing the same thing on the same block leaves the goal exactly where it was — {@code install}
-     * only tears a goal down when the choice has actually changed.
+     * only tears a goal down when the choice has actually changed, or when what ended the move was the
+     * body going nowhere, which is the one case where leaving it standing would settle nothing.
      */
     private boolean stillHolding() {
         if (commitment == null) {
@@ -327,18 +367,28 @@ public final class QLearningBrain {
                 && stepsRun < commitment.steps() + COMMITTED_GRACE_STEPS) {
             return true;
         }
-        if (stepsRun >= commitment.steps()) {
+        if (cutShort()) {
             return false;
         }
-        if (installedGoal != null && !engine.isRunning(installedGoal)) {
-            return ++idleSteps < IDLE_GRACE_STEPS;
-        }
-        idleSteps = 0;
-        return true;
+        return stepsRun < commitment.steps();
+    }
+
+    /**
+     * Whether the move has spent long enough on nothing to be worth ending early.
+     *
+     * <p>Two questions, and it takes both. How much of the move has gone on nothing, counted over the
+     * whole of it rather than in a row, because a goal that wastes every other second is wasting half the
+     * move. And whether it is still going on now, because a journey that squeezed past a tree for two
+     * seconds and then got going again has answered the question itself — ending it there would throw a
+     * working move away over ground it has already made up.
+     */
+    private boolean cutShort() {
+        return stalledNow && stalledSteps >= STALL_LIMIT_STEPS;
     }
 
     private void decide(Minecraft client, LocalPlayer player) {
-        StepContext step = stepSince(player, Math.max(1, stepsRun));
+        StepContext step = stepSince(since, player, Math.max(1, stepsRun), wastedTicks, stalledSteps,
+                craftedThisStep);
 
         // Score before looking: reaching a rung changes what the body is after, and the sighting that
         // follows should already be taken with the new rung's eyes.
@@ -380,19 +430,28 @@ public final class QLearningBrain {
                 chooseSpot(player, action, context, reward, step.steps()),
                 chooseHeading(player, action, context, reward, step.steps()));
 
+        // A move that ended with the body going nowhere leaves nothing worth keeping. Tearing the goal
+        // down is what makes choosing again a real answer: without it, a table that picks the same move on
+        // the same block gets the stalled goal left exactly where it was — still not running, still not
+        // getting anywhere — and the decision changes nothing at all.
+        //
+        // Never a goal the engine says is mid-break, however. That one is not stalling now whatever the
+        // move as a whole has wasted, and pulling it would throw away the block it is halfway through.
+        if (cutShort() && !engine.isCommitted(installedGoal)) {
+            stalls++;
+            log.debug("Cutting {} short: {} seconds spent going nowhere", installedAction, stalledSteps);
+            uninstall();
+        }
+
         install(action, context, aim);
         installCraft(craft, player);
-        installSwim(chooseSwim(context, reward, step.steps()), context);
 
         commitment = chosen;
         stepsRun = 0;
-        idleSteps = 0;
+        stalledSteps = 0;
+        stalledNow = false;
         lastObservation = observation;
-        lastHealth = step.healthAfter();
-        lastFood = player.getFoodData().getFoodLevel();
-        lastAir = player.getAirSupply();
-        lastPosition = step.positionAfter();
-        lastCensus = step.after();
+        since = Moment.of(player);
         wastedTicks = 0;
         craftedThisStep = List.of();
 
@@ -468,37 +527,59 @@ public final class QLearningBrain {
     }
 
     /**
-     * What to do about the water the body is in, or nothing at all when it is not in any.
+     * Keeps the water layer in step with the water, once a second, whatever the commitment is doing.
      *
-     * <p>Keyed on the water alone — how deep, how much breath, where the ways out are — and on nothing
-     * about the objective. Drowning is drowning whether the run was after wood or after iron, and keying
-     * this on the rung would split one short lesson across every plan the run ever has and make it learn
-     * the same thing from scratch each time.
+     * <p>This is the layer that runs on its own clock, and the reason it has to. The commitment is held for
+     * up to ten seconds and reconsidered at the end; the water is a fact of the next second. A body that
+     * walked into a lake three seconds into a travel used to get no answer about the lake until the travel
+     * was over, and spent the time floating: the goal it was committed to had nowhere it was willing to
+     * aim, and the one table that knew what to do about water was not going to be asked until the clock
+     * ran out.
      *
-     * @return what to do, which is {@link Swim#CARRY_ON} whenever the body is dry
+     * <p>So the table is asked every step the body is wet, learns every step from what the second in the
+     * water earned, and is settled the moment the body is dry. Keyed on the water alone, how deep and how
+     * much breath and where the ways out are, and on nothing about the objective: drowning is drowning
+     * whether the run was after wood or after iron, and keying this on the rung would split one short
+     * lesson across every plan the run ever has.
+     *
+     * <p>Nothing here touches the commitment. The swim goal sits on top of the committed one at a priority
+     * it cannot outrank, holds the body for as long as the water choice needs it, and the engine hands the
+     * body straight back when it lets go. The two are in the same body at once, and the engine's control
+     * claims are what keep them out of the same legs at once.
      */
-    private Swim chooseSwim(ActionContext context, double reward, int steps) {
-        if (!context.water().present()) {
-            // On dry land the question does not arise, so whatever this table last chose is settled with
-            // no continuation rather than left hanging on a state that will not come round again.
-            water.learnTerminal(reward);
-            water.forget();
-            return Swim.CARRY_ON;
+    private void tendWater(LocalPlayer player) {
+        Water around = Water.around(player);
+        if (!around.present()) {
+            if (wet != null) {
+                // Out. The last choice is settled against the second it bought, with no continuation:
+                // dry land is not a state this table has, and the question will not come round again
+                // until the next water does.
+                water.learnTerminal(score(stepSince(wet, player, 1, 0, 0, List.of())));
+                water.forget();
+                wet = null;
+                removeSwim();
+            }
+            return;
         }
-        boolean[] legal = legalSwims(context);
-        String key = context.water().key();
-        water.learn(key, reward, steps, legal);
+        Reserve reserve = progression.reserved();
+        boolean hasBlocks = PlaceBlockGoal.hotbarSlotWithBlock(player, reserve) >= 0;
+        boolean[] legal = legalSwims(around, hasBlocks);
+        String key = around.key();
+        if (wet != null) {
+            water.learn(key, score(stepSince(wet, player, 1, 0, 0, List.of())), 1, legal);
+        }
+        wet = Moment.of(player);
 
         int column = water.choose(key, legal);
-        return column < 0 ? Swim.CARRY_ON : Swim.values()[column];
+        installSwim(column < 0 ? Swim.CARRY_ON : Swim.values()[column], around, reserve);
     }
 
     /** Doing nothing always works; the rest need somewhere to swim to or something to stand on. */
-    private boolean[] legalSwims(ActionContext context) {
+    private boolean[] legalSwims(Water around, boolean hasBlocks) {
         Swim[] options = Swim.values();
         boolean[] allowed = new boolean[options.length];
         for (int i = 0; i < options.length; i++) {
-            allowed[i] = options[i].isApplicable(context);
+            allowed[i] = options[i].isApplicable(around, hasBlocks);
         }
         return allowed;
     }
@@ -506,17 +587,18 @@ public final class QLearningBrain {
     /**
      * Puts the water choice in place, on top of whatever the goal table is doing.
      *
-     * <p>Left alone while the choice is unchanged, for the same reason a craft is: a swim to the surface
-     * restarted every second is a body treading water. A choice that has changed replaces it, and
-     * {@link Swim#CARRY_ON} — which is what every decision on dry land answers — takes it away.
+     * <p>Left alone while the choice is unchanged and still running, for the same reason a craft is: a
+     * swim to the surface restarted every second is a body treading water. A choice that has changed
+     * replaces it, one whose goal has finished (arrived, or placed its block) is made again, and
+     * {@link Swim#CARRY_ON} takes whatever was there away and gives the body back to the commitment.
      */
-    private void installSwim(Swim choice, ActionContext context) {
+    private void installSwim(Swim choice, Water around, Reserve reserve) {
         if (swimGoal != null && choice == swimChoice && engine.isRunning(swimGoal)) {
             return;
         }
         removeSwim();
         swimChoice = choice;
-        MobGoal goal = choice.create(context);
+        MobGoal goal = choice.create(around, reserve);
         if (goal != null) {
             swimGoal = goal;
             engine.addGoal(SWIM_PRIORITY, goal);
@@ -548,107 +630,6 @@ public final class QLearningBrain {
         return allowed;
     }
 
-    /**
-     * Asks the interrupt table what to do about a move that has stopped getting anywhere.
-     *
-     * <p>Keyed on the goal that is stuck and on what is around to do about it, not on the full observation:
-     * being walled in while fleeing a zombie and being walled in while walking to a tree are the same
-     * problem, and splitting them would make it learn the answer twice.
-     */
-    private Interruption considerInterruption(Minecraft client, LocalPlayer player) {
-        ActionContext context = surroundings(client, player);
-        boolean[] legal = legalInterruptions(context);
-        String key = (installedAction == null ? "-" : installedAction.name()) + "|stuck|" + context.flags();
-
-        // Credit the last call's choice before making a new one, with what the move has earned since. A
-        // fixed zero here was the first version and it taught this table precisely nothing: every column
-        // stayed at zero, so every pick was a coin toss dressed up as a policy.
-        interrupts.learnTerminal(score(stepSince(player, Math.max(1, stepsRun))));
-
-        int column = interrupts.choose(key, legal);
-        return column < 0 ? Interruption.CONTINUE : Interruption.values()[column];
-    }
-
-    /** Rescues need something to act on: a wall to dig, blocks to build with. Wandering off always works. */
-    private boolean[] legalInterruptions(ActionContext context) {
-        Interruption[] options = Interruption.values();
-        boolean[] allowed = new boolean[options.length];
-        for (int i = 0; i < options.length; i++) {
-            allowed[i] = switch (options[i]) {
-                case CONTINUE, WANDER -> true;
-                case MINE_WALL -> context.walled();
-                case PLACE -> context.hasBlocks();
-            };
-        }
-        return allowed;
-    }
-
-    /**
-     * Cuts the move short and puts the rescue in its place.
-     *
-     * <p>The move is closed out the way any move is, with one difference: the timing table is charged for
-     * having committed to a length that had to be abandoned. The goal table is not charged and not
-     * credited — the rescue is not its choice, so it keeps no pending claim on this move.
-     */
-    private void interrupt(Minecraft client, LocalPlayer player, Interruption rescue) {
-        interruptionCount++;
-        StepContext step = stepSince(player, Math.max(1, stepsRun));
-        double climbed = progression.advanceIfComplete(step);
-        double reward = score(step) + climbed;
-
-        ActionContext context = surroundings(client, player);
-        Observation observation = Observation.of(player, context, progression.stateKey());
-
-        goals.learn(observation.key(), reward, step.steps(), legalGoals(context));
-        crafting.learn(CraftSituation.key(progression.needs(), step.after()), reward, step.steps(),
-                legalCrafts(context, step.after()));
-        timing.learn(observation.key(), reward + INTERRUPTION_PENALTY, step.steps(), timing.everything);
-        // The rescue picks its own block and its own direction, so whatever those two last chose ends
-        // here.
-        placement.learnTerminal(reward);
-        placement.forget();
-        position.learnTerminal(reward);
-        position.forget();
-        goals.forget();
-
-        DecisionLog.get().record(lastObservation == null ? null : lastObservation.key(),
-                installedAction == null ? null : installedAction.name(), step.steps(),
-                reward + INTERRUPTION_PENALTY);
-
-        log.debug("Interrupting {} with {}", installedAction, rescue);
-        installRescue(rescue, player, context);
-
-        // A rescue gets the shortest commitment there is: it exists to unstick the body, and whether it
-        // worked is a question worth asking again in a second rather than in ten.
-        commitment = Commitment.SHORT;
-        stepsRun = 0;
-        idleSteps = 0;
-        lastObservation = observation;
-        lastHealth = step.healthAfter();
-        lastFood = player.getFoodData().getFoodLevel();
-        lastAir = player.getAirSupply();
-        lastPosition = step.positionAfter();
-        lastCensus = step.after();
-        wastedTicks = 0;
-        craftedThisStep = List.of();
-        publish(observation.key(), rescue.name(), commitment.name(), "NOTHING");
-    }
-
-    private void installRescue(Interruption rescue, LocalPlayer player, ActionContext context) {
-        uninstall();
-        installedAction = null;
-        installedTarget = null;
-        installedGoal = switch (rescue) {
-            // The wall's own tool, not the sighting's: what is being dug through here is the obstruction,
-            // and while fleeing the sighting is the mob behind us.
-            case MINE_WALL -> new MineSightingGoal(
-                    Sighting.ofBlock(FocusKind.BLOCK, context.wall()), toolFor(player, context.wall()));
-            case PLACE -> new PlaceBlockGoal();
-            default -> new RandomStrollGoal();
-        };
-        engine.addGoal(GOAL_PRIORITY, installedGoal);
-    }
-
     /** Everything around the body, gathered once so the sighting and the map agree with each other. */
     private ActionContext surroundings(Minecraft client, LocalPlayer player) {
         Sighting sighting = perception.look(client, player, progression.wanted());
@@ -670,7 +651,6 @@ public final class QLearningBrain {
                 Perception.wellFed(player),
                 progression.worthDigging(player.getBlockY()),
                 progression.heightWanted(player.getBlockY()),
-                Water.around(player),
                 reserve,
                 progression.minesWhatItSees() && sighting.kind() == FocusKind.RESOURCE);
     }
@@ -686,29 +666,48 @@ public final class QLearningBrain {
         return progression.toolFor(player.level().getBlockState(pos));
     }
 
-    /** What changed since the last decision, which is all the objectives are allowed to see. */
-    private StepContext stepSince(LocalPlayer player, int steps) {
-        InventoryCensus census = InventoryCensus.of(player.getInventory());
-        Vec3 position = player.position();
-        boolean fresh = lastObservation == null;
+    /**
+     * What changed since a moment, which is all the objectives are allowed to see.
+     *
+     * <p>Two clocks read through the one method. The commitment asks about the moment it was chosen and
+     * brings the effort and the crafts it has been counting; the water layer asks about the last second in
+     * the water and brings none of that, because swings and crafts belong to the move that made them and a
+     * second of swimming should be scored on the swimming.
+     *
+     * @param from where to measure from, or null when there is nothing earlier than now
+     */
+    private StepContext stepSince(Moment from, LocalPlayer player, int steps, int wasted, int stalled,
+                                  List<Resource> crafted) {
+        Moment now = Moment.of(player);
+        Moment then = from == null ? now : from;
         return new StepContext(
                 player,
-                fresh ? player.getHealth() : lastHealth,
-                player.getHealth(),
-                fresh ? position : lastPosition,
-                position,
-                fresh ? census : lastCensus,
-                census,
+                then.health(),
+                now.health(),
+                then.position(),
+                now.position(),
+                then.census(),
+                now.census(),
                 obtained,
                 steps,
-                wastedTicks,
-                fresh ? player.getFoodData().getFoodLevel() : lastFood,
-                player.getFoodData().getFoodLevel(),
-                fresh ? player.getAirSupply() : lastAir,
-                player.getAirSupply(),
-                craftedThisStep,
+                wasted,
+                stalled,
+                then.food(),
+                now.food(),
+                then.air(),
+                now.air(),
+                crafted,
                 territory.pinned(),
                 sawWhatItNeeds);
+    }
+
+    /** The body at one instant, kept so a later one can be scored against it. */
+    private record Moment(float health, int food, int air, Vec3 position, InventoryCensus census) {
+
+        static Moment of(LocalPlayer player) {
+            return new Moment(player.getHealth(), player.getFoodData().getFoodLevel(),
+                    player.getAirSupply(), player.position(), InventoryCensus.of(player.getInventory()));
+        }
     }
 
     /**
@@ -760,16 +759,23 @@ public final class QLearningBrain {
      * ActionContext#mineOnSight()} and differs in one case that matters.
      *
      * <p>A rule with no way out of it would insist on the same block for the rest of the run. When the
-     * mine already installed on that very block has given up — in reach of it and getting nowhere, which
-     * is what a log behind a wall looks like — the rule yields and the goal table gets the decision back.
-     * The body walks off, the nearest block becomes a different one, and the rule applies again to that.
+     * mine already installed on that very block is getting nowhere the rule yields and the goal table
+     * gets the decision back; the body walks off, the nearest block becomes a different one, and the rule
+     * applies again to that.
+     *
+     * <p>Getting nowhere is two things and the rule has to yield to both, because the run has been stopped
+     * by both. In reach and unable to land a blow is a log behind a wall, which is what
+     * {@link MineSightingGoal#gaveUp()} was written for. Out of reach and unable to close the distance is
+     * a log on the far side of a ravine, and that one used to be the rescue table's to answer — the only
+     * thing it was ever genuinely needed for, since it was the one table this rule could not gag. What
+     * answers it now is the goal's own count of the seconds it has spent achieving nothing.
      */
     private boolean fetchesWhatItSees(ActionContext context) {
         if (!context.mineOnSight()) {
             return false;
         }
         return !(installedGoal instanceof MineSightingGoal mine
-                && mine.gaveUp()
+                && (mine.gaveUp() || mine.stalledTicks() >= STALL_TICKS)
                 && Objects.equals(installedTarget, context.sighting().blockPos()));
     }
 
@@ -808,7 +814,9 @@ public final class QLearningBrain {
      * <p>Keeping the break is {@link #stillHolding()}'s job and it does it there, by holding the move for
      * as long as the commitment plus a block's worth of grace. By the time a choice reaches here that time
      * is up, and a choice that has genuinely changed is meant to take effect. What still protects a break
-     * is the line below: choosing the same thing on the same block changes nothing at all.
+     * is the line below: choosing the same thing on the same block changes nothing at all — unless the
+     * move that just ended was going nowhere, in which case {@link #decide} has already taken the goal out
+     * and what arrives here is a fresh attempt rather than the same stalled one.
      */
     private void install(GoalAction action, ActionContext context, Aim aim) {
         // For a move that acts on a block, the block is what identity means: the same verb aimed somewhere
@@ -882,10 +890,10 @@ public final class QLearningBrain {
         }
         if (++decisionsSinceReport >= REPORT_EVERY_DECISIONS) {
             decisionsSinceReport = 0;
-            log.info("Brain: on {}, goals {} states, timing {}, crafting {}, interrupts {} ({} fired),"
+            log.info("Brain: on {}, goals {} states, timing {}, crafting {}, {} moves cut short,"
                             + " epsilon {}, {} decisions",
                     progression.stateKey(), goals.table.states(), timing.table.states(),
-                    crafting.table.states(), interrupts.table.states(), interruptionCount,
+                    crafting.table.states(), stalls,
                     String.format(Locale.ROOT, "%.3f", goals.table.epsilon()), goals.table.decisions());
         }
     }
@@ -894,9 +902,8 @@ public final class QLearningBrain {
         snapshotListener.accept(new QTableSnapshot(
                 goals.columns, goals.table.rows(), goals.table.epsilon(), goals.table.decisions(),
                 progression.stateKey(), progression.reason(),
-                state, action, timingChoice, craftChoice, interruptionCount,
-                crafting.columns, crafting.table.rows(),
-                interrupts.columns, interrupts.table.rows(), CraftLog.get().recent(),
+                state, action, timingChoice, craftChoice, stalls,
+                crafting.columns, crafting.table.rows(), CraftLog.get().recent(),
                 PlannerLog.get().recent(),
                 placement.columns, placement.table.rows(),
                 position.columns, position.table.rows(),
@@ -952,7 +959,8 @@ public final class QLearningBrain {
         removeSwim();
         tables.forEach(Table::forget);
         lastObservation = null;
-        lastCensus = InventoryCensus.empty();
+        since = null;
+        wet = null;
         // Dying drops everything, and leaving takes the body with it. Either way the total is re-seeded
         // from whatever the next census finds, so the ladder never claims a pickaxe that is on the floor.
         obtained = InventoryCensus.empty();
@@ -968,9 +976,9 @@ public final class QLearningBrain {
         DecisionLog.get().clear();
         commitment = null;
         stepsRun = 0;
-        idleSteps = 0;
+        stalledSteps = 0;
+        stalledNow = false;
         ticksSinceStep = 0;
-        stepPosition = null;
         publish(null, null, null, null);
     }
 

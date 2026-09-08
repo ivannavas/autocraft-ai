@@ -1,10 +1,12 @@
 package io.github.ivannavas.autocraftai.web;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.StringJoiner;
 
 import io.github.ivannavas.autocraftai.mob.ai.QTableSnapshot;
+import io.github.ivannavas.autocraftai.mob.ai.objective.planner.PlannerLog;
 
 /**
  * Writes a {@link QTableSnapshot} as JSON.
@@ -44,10 +46,10 @@ final class Json {
         out.append("\"currentCraft\":").append(string(snapshot.currentCraft())).append(',');
         out.append("\"epsilon\":").append(number(snapshot.epsilon())).append(',');
         out.append("\"decisions\":").append(snapshot.decisions()).append(',');
-        out.append("\"interruptions\":").append(snapshot.interruptions()).append(',');
+        out.append("\"stalls\":").append(snapshot.stalls()).append(',');
         out.append("\"actions\":").append(strings(snapshot.actions())).append(',');
         out.append("\"crafts\":").append(crafts(snapshot)).append(',');
-        out.append("\"planner\":").append(planner(snapshot)).append(',');
+        out.append("\"plannerRevision\":").append(PlannerLog.get().revision()).append(',');
         out.append("\"craftActions\":").append(strings(snapshot.craftActions())).append(',');
         out.append("\"craftRows\":").append(rows(snapshot.craftRows())).append(',');
         out.append("\"positionActions\":").append(strings(snapshot.positionActions())).append(',');
@@ -56,24 +58,24 @@ final class Json {
         out.append("\"placementRows\":").append(rows(snapshot.placementRows())).append(',');
         out.append("\"waterActions\":").append(strings(snapshot.waterActions())).append(',');
         out.append("\"waterRows\":").append(rows(snapshot.waterRows())).append(',');
-        out.append("\"interruptActions\":").append(strings(snapshot.interruptActions())).append(',');
-        out.append("\"interruptRows\":").append(rows(snapshot.interruptRows())).append(',');
         out.append("\"rows\":").append(rows(snapshot));
         out.append('}');
         return out.toString();
     }
 
     /**
-     * The planner's conversation: what was asked and what came back, oldest first.
+     * The planner's whole conversation: what was asked and what came back, oldest first.
      *
-     * <p>The detail — the whole prompt, the whole reply — goes out with it, because the panel shows it on
-     * hover and a summary alone cannot answer the question a viewer actually has, which is "what did it
-     * say". It is a couple of kilobytes at most and only changes when the planner is called.
+     * <p>Fetched on its own rather than ridden along with the snapshot. The detail is the entire prompt
+     * and the entire reply, which is the only thing that answers "what did it actually say" — and
+     * sending a couple of hundred of those on every decision, several times a minute, would be tens of
+     * megabytes an hour to say nothing new. The snapshot carries a revision instead, and the page comes
+     * back for this when that number moves.
      */
-    private static String planner(QTableSnapshot snapshot) {
+    static String planner(List<PlannerLog.Entry> entries) {
         long now = System.currentTimeMillis();
         StringJoiner joiner = new StringJoiner(",", "[", "]");
-        snapshot.planner().forEach(entry -> joiner.add("{\"kind\":" + string(entry.kind().name())
+        entries.forEach(entry -> joiner.add("{\"kind\":" + string(entry.kind().name())
                 + ",\"objective\":" + string(entry.objective())
                 + ",\"text\":" + string(entry.text())
                 + ",\"detail\":" + string(entry.detail())

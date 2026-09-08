@@ -54,6 +54,7 @@ public final class PlaceBlockGoal implements MobGoal {
 
     private int ticksRunning;
     private boolean placed;
+    private final Advance advance = new Advance();
 
     /** Pillars under the body, which is what this goal did before it could be told anything else. */
     public PlaceBlockGoal() {
@@ -89,10 +90,21 @@ public final class PlaceBlockGoal implements MobGoal {
         return !placed && ticksRunning < GIVE_UP_TICKS;
     }
 
+    /**
+     * Walking to where the block goes, and nothing else: the placement itself ends the goal, so a body
+     * that is neither getting to the spot nor putting anything down is a body waiting for something that
+     * is not coming.
+     */
+    @Override
+    public int stalledTicks() {
+        return advance.stalledTicks();
+    }
+
     @Override
     public void start(MobBody body) {
         ticksRunning = 0;
         placed = false;
+        advance.reset();
     }
 
     @Override
@@ -100,8 +112,12 @@ public final class PlaceBlockGoal implements MobGoal {
         ticksRunning++;
         int slot = hotbarSlotWithBlock(body.player(), reserve);
         if (slot < 0) {
+            // Nothing to put down and no way to get any from here. Standing with an empty hand is the
+            // clearest case there is of a decision that has stopped going anywhere.
+            advance.nothing();
             return;
         }
+        advance.walking(body);
         body.player().getInventory().setSelectedSlot(slot);
 
         if (pillaring(body)) {

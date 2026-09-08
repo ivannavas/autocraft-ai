@@ -9,7 +9,6 @@ import java.util.Optional;
 import io.github.ivannavas.autocraftai.mob.ai.CraftChoice;
 import io.github.ivannavas.autocraftai.mob.ai.FocusKind;
 import io.github.ivannavas.autocraftai.mob.ai.GoalAction;
-import io.github.ivannavas.autocraftai.mob.ai.Interruption;
 import io.github.ivannavas.autocraftai.mob.ai.Ground;
 import io.github.ivannavas.autocraftai.mob.ai.Perception;
 import io.github.ivannavas.autocraftai.mob.ai.Spot;
@@ -58,7 +57,7 @@ final class Labels {
     /** Words that are ours rather than an enum's, keyed by the same suffix the page asks for. */
     private static final List<String> TEXT = List.of(
             "objective", "doing", "making",
-            "goals", "crafts", "interrupts", "interrupts.suffix", "planner", "placement", "position",
+            "goals", "crafts", "planner", "placement", "position",
             "water",
             "head.placement", "head.position", "head.water",
             "depth.WADING", "depth.SWIMMING", "depth.SUBMERGED",
@@ -67,14 +66,14 @@ final class Labels {
             "shore.NEAR", "shore.FAR", "shore.NONE",
             "band.IN", "band.BELOW", "band.ABOVE", "band.ANY",
             "trail.FRESH", "trail.CIRCLING", "trail.PINNED",
-            "head.situation", "head.craft", "head.stuck",
-            "empty.goals", "empty.crafts", "empty.interrupts", "empty.planner", "empty.placement",
+            "head.situation", "head.craft",
+            "empty.goals", "empty.crafts", "empty.planner", "empty.placement",
             "empty.position", "empty.water",
             "ago", "going.GET", "going.GO", "going.DOWN", "going.UP", "going.BUILD", "going.NONE",
             "machine", "cpu", "memory",
             "key.worse", "key.better", "key.bar", "key.best", "key.distance", "key.tables",
             "status.connecting", "status.live", "status.offline",
-            "tally.decisions", "tally.random",
+            "tally.decisions", "tally.random", "tally.stalls",
             "verdict.avoid", "verdict.none",
             "qualifier.wall", "qualifier.blocks", "qualifier.hungry",
             "bag.empty", "bag.holding", "needs.nothing", "needs.short",
@@ -92,7 +91,6 @@ final class Labels {
         groups.put("focus", enums("focus", FocusKind.values()));
         groups.put("distance", enums("distance", Perception.Distance.values()));
         groups.put("health", enums("health", Perception.Health.values()));
-        groups.put("rescue", enums("rescue", Interruption.values()));
         groups.put("craft", enums("craft", CraftChoice.values()));
         groups.put("resource", enums("resource", Resource.values()));
         groups.put("terrain", enums("terrain", Terrain.values()));

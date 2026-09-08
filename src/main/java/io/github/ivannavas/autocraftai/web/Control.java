@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import io.github.ivannavas.autocraftai.mob.ai.QLearningBrain;
+import io.github.ivannavas.autocraftai.mob.ai.objective.planner.PlannerLog;
 import lombok.extern.slf4j.Slf4j;
 import net.minecraft.client.Minecraft;
 
@@ -119,6 +120,7 @@ public final class Control {
             }
             switch (path) {
                 case QTableServer.BASE + "status" -> require(exchange, method, "GET", this::status);
+                case QTableServer.BASE + "planner" -> require(exchange, method, "GET", this::planner);
                 case QTableServer.BASE + "learning/reset" -> require(exchange, method, "POST", this::resetLearning);
                 case QTableServer.BASE + "world/new" -> require(exchange, method, "POST", this::startWorld);
                 case QTableServer.BASE + "world/resume" -> require(exchange, method, "POST", this::resumeWorld);
@@ -200,6 +202,18 @@ public final class Control {
                 + ",\"overlayPort\":" + QTableServer.PORT
                 + ",\"settings\":" + settings.describe()
                 + "}");
+    }
+
+    /**
+     * Everything the planner has been asked and has answered, in full.
+     *
+     * <p>Its own endpoint rather than part of the snapshot: each entry carries a whole prompt and a
+     * whole reply, and the snapshot goes out on every decision. The snapshot carries
+     * {@code plannerRevision} so a reader knows when this is worth asking for again.
+     */
+    private void planner(HttpExchange exchange) throws IOException {
+        reply(exchange, 200, "{\"ok\":true,\"revision\":" + PlannerLog.get().revision()
+                + ",\"entries\":" + Json.planner(PlannerLog.get().recent()) + "}");
     }
 
     /**

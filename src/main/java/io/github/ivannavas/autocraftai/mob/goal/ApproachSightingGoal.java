@@ -33,6 +33,7 @@ public final class ApproachSightingGoal implements MobGoal {
     private final double arrivalDistance;
 
     private int ticksRunning;
+    private final Advance advance = new Advance();
 
     public ApproachSightingGoal(Sighting sighting) {
         this.sighting = sighting;
@@ -54,9 +55,20 @@ public final class ApproachSightingGoal implements MobGoal {
         return canUse(body) && ticksRunning < GIVE_UP_TICKS;
     }
 
+    /**
+     * Walking to something and not getting any closer to it. Arriving is not this: the goal stops the
+     * moment it is within arm's length, and a goal that has stopped is the brain's business rather than
+     * this counter's.
+     */
+    @Override
+    public int stalledTicks() {
+        return advance.stalledTicks();
+    }
+
     @Override
     public void start(MobBody body) {
         ticksRunning = 0;
+        advance.reset();
     }
 
     @Override
@@ -64,6 +76,7 @@ public final class ApproachSightingGoal implements MobGoal {
         ticksRunning++;
         body.moveControl().moveTo(sighting.position(), SPEED);
         body.lookControl().lookAt(sighting.eyePosition());
+        advance.walking(body);
     }
 
     @Override

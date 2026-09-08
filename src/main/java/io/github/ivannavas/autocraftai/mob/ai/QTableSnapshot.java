@@ -23,11 +23,9 @@ public record QTableSnapshot(
         String currentAction,
         String currentTiming,
         String currentCraft,
-        long interruptions,
+        long stalls,
         List<String> craftActions,
         List<Row> craftRows,
-        List<String> interruptActions,
-        List<Row> interruptRows,
         List<CraftLog.Craft> crafts,
         List<PlannerLog.Entry> planner,
         List<String> placementActions,
@@ -42,8 +40,6 @@ public record QTableSnapshot(
         rows = List.copyOf(rows);
         craftActions = List.copyOf(craftActions);
         craftRows = List.copyOf(craftRows);
-        interruptActions = List.copyOf(interruptActions);
-        interruptRows = List.copyOf(interruptRows);
         crafts = List.copyOf(crafts);
         planner = List.copyOf(planner);
         placementActions = List.copyOf(placementActions);
@@ -63,7 +59,7 @@ public record QTableSnapshot(
 
     public static QTableSnapshot empty(List<String> actions) {
         return new QTableSnapshot(actions, List.of(), 0.0, 0L, "-", "", null, null, null, null, 0L,
-                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                List.of(), List.of(), List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of());
     }
 }

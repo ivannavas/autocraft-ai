@@ -69,6 +69,7 @@ public final class ReachBandGoal implements MobGoal {
     private int ticksSinceScan;
     private boolean stranded;
     private Vec3 heading;
+    private final Advance advance = new Advance();
 
     /** @param target the height to get to */
     public ReachBandGoal(int target) {
@@ -99,12 +100,26 @@ public final class ReachBandGoal implements MobGoal {
         return !stranded && !arrived(body.player()) && ticksRunning < GIVE_UP_TICKS;
     }
 
+    /**
+     * Ground covered while there is a way to walk, and blocks placed or broken while there is not.
+     *
+     * <p>Both, because this goal changes hands halfway through: walking to a ledge and stacking blocks
+     * under its own feet are the same objective by two methods, and a measure that only understood one of
+     * them would call the other stalling. Height alone would not do either — most of a climb is walking
+     * across to where the climb starts.
+     */
+    @Override
+    public int stalledTicks() {
+        return advance.stalledTicks();
+    }
+
     @Override
     public void start(MobBody body) {
         ticksRunning = 0;
         ticksSinceScan = RESCAN_TICKS;
         stranded = false;
         heading = null;
+        advance.reset();
     }
 
     @Override
@@ -117,6 +132,7 @@ public final class ReachBandGoal implements MobGoal {
         if (heading != null) {
             body.lookControl().lookAt(heading);
             body.moveControl().moveTo(heading, SPEED);
+            advance.walking(body);
             return;
         }
         // The ground offers nothing. Make some.
@@ -203,6 +219,8 @@ public final class ReachBandGoal implements MobGoal {
             mode.useItemOn(player, InteractionHand.MAIN_HAND,
                     new BlockHitResult(top, Direction.UP, support, false));
             player.swing(InteractionHand.MAIN_HAND);
+            // A block under the feet is a block of height, which is the whole of what this goal is for.
+            advance.progress();
         });
     }
 
@@ -228,6 +246,7 @@ public final class ReachBandGoal implements MobGoal {
             if (mode.continueDestroyBlock(under, Direction.UP)) {
                 Minecraft.getInstance().level.addBreakingBlockEffect(under, Direction.UP);
                 player.swing(InteractionHand.MAIN_HAND);
+                advance.progress();
             }
         });
     }

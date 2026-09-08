@@ -39,6 +39,23 @@ public final class GeneralObjectives {
      */
     private static final double WASTED_EFFORT_COST = 4.0;
     /**
+     * Per second the move spent with its goal getting nowhere at all.
+     *
+     * <p>Impatience already charges for the passage of time, and deliberately charges very little: a
+     * second spent walking to a tree is a second the run had to spend. This is the other kind of second —
+     * the block finished breaking and the body kept swinging at the hole, the wall did not move however
+     * hard it was leant on, the spot could not be reached from here. Nothing about the bag or the ground
+     * covered tells those apart from ordinary slow going, so the goal that is doing it says so itself and
+     * this is what saying so costs. See {@link io.github.ivannavas.autocraftai.mob.MobGoal#stalledTicks()}.
+     *
+     * <p>A quarter of what swinging at stone bare-handed costs, and twenty times what dithering does.
+     * Standing about is not as bad as working hard at something that produces nothing — it does not even
+     * blunt a tool — but it is the commonest way a run wastes a minute, and it has to be worth more than
+     * the rounding error a per-decision charge amounts to. Three seconds of it costs about what a log
+     * pays, which is the trade being offered: get on with something or hand the decision back.
+     */
+    private static final double STALL_COST = 1.0;
+    /**
      * Per point of hunger restored. A loaf is six points, so a meal pays about what a log does.
      *
      * <p>Only gains are paid for. Hunger ticks down all day whatever the body is doing, and charging for
@@ -66,6 +83,9 @@ public final class GeneralObjectives {
                     context -> Math.min(context.distanceCovered(), EXPLORATION_CAP * context.steps())
                             * EXPLORATION_WEIGHT),
             objective("impatience", context -> -IDLE_COST * context.steps()),
+            // Per second like the two around it, and the seconds are counted by the goal rather than by
+            // the clock: a move held for ten that spent three of them stuck is charged for three.
+            objective("standing about", context -> -STALL_COST * context.stalledSteps()),
             // Already a per-second quantity, since it is counted in ticks as they pass.
             objective("wasted effort", context -> -WASTED_EFFORT_COST * context.wastedSeconds()),
             objective("nourishment", context -> context.foodGained() * NOURISHMENT_WEIGHT),

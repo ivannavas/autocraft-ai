@@ -48,6 +48,8 @@ public final class RandomStrollGoal implements MobGoal {
 
     private Vec3 destination;
     private int ticksRunning;
+    /** Ground covered on the way to the spot it picked, which is all wandering has to show for itself. */
+    private final Advance advance = new Advance();
 
     public RandomStrollGoal() {
         this(1.0F, OptionalDouble.empty());
@@ -71,7 +73,9 @@ public final class RandomStrollGoal implements MobGoal {
 
     @Override
     public boolean canUse(MobBody body) {
-        if (!body.onGround() || body.player().isPassenger()) {
+        // Footing or water. The spot it picks is always dry land, so a stroll that starts in a lake is a
+        // swim to the nearest bank — which beats what it did before, which was refuse to start and float.
+        if (!(body.onGround() || body.player().isInWater()) || body.player().isPassenger()) {
             return false;
         }
         // No dice roll before setting off: by the time this goal is installed the brain has already decided
@@ -85,15 +89,25 @@ public final class RandomStrollGoal implements MobGoal {
         return body.moveControl().hasDestination() && ticksRunning < GIVE_UP_TICKS;
     }
 
+    /** Walking to a spot and not getting any nearer to it: the whole of what can go wrong here. */
+    @Override
+    public int stalledTicks() {
+        return advance.stalledTicks();
+    }
+
     @Override
     public void start(MobBody body) {
         ticksRunning = 0;
+        // A restart is a new spot to walk to, so what the last one had to show for itself says nothing
+        // about this one.
+        advance.reset();
         body.moveControl().moveTo(destination, speed);
     }
 
     @Override
     public void tick(MobBody body) {
         ticksRunning++;
+        advance.walking(body);
     }
 
     @Override

@@ -53,6 +53,12 @@ public final class EatGoal implements MobGoal {
         return !eaten && ticksRunning < GIVE_UP_TICKS;
     }
 
+    /**
+     * Nothing to report, and that is the honest answer rather than an omission. A mouthful is a second and
+     * a half of standing still and every one of those seconds is the move working; the other case — the
+     * use refused, the food knocked out of the hand — does not leave this goal standing about, it ends it,
+     * and a goal that has ended is already counted by the brain as a second spent on nothing.
+     */
     @Override
     public void start(MobBody body) {
         ticksRunning = 0;

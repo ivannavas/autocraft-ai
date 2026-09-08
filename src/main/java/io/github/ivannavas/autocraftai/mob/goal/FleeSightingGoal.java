@@ -31,6 +31,7 @@ public final class FleeSightingGoal implements MobGoal {
     private final Sighting sighting;
 
     private int ticksRunning;
+    private final Advance advance = new Advance();
 
     public FleeSightingGoal(Sighting sighting) {
         this.sighting = sighting;
@@ -51,9 +52,16 @@ public final class FleeSightingGoal implements MobGoal {
         return canUse(body) && ticksRunning < GIVE_UP_TICKS;
     }
 
+    /** A retreat that is not covering ground is not a retreat; it is standing in front of the thing. */
+    @Override
+    public int stalledTicks() {
+        return advance.stalledTicks();
+    }
+
     @Override
     public void start(MobBody body) {
         ticksRunning = 0;
+        advance.reset();
         aim(body);
     }
 
@@ -68,6 +76,7 @@ public final class FleeSightingGoal implements MobGoal {
         // Look where it is running, not back at what it is running from: the body walks in the direction it
         // faces, and a mob staring over its shoulder would trot backwards into the scenery.
         body.lookControl().lookAt(body.moveControl().destination());
+        advance.walking(body);
     }
 
     @Override

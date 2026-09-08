@@ -43,6 +43,16 @@ public final class WatchSightingGoal implements MobGoal {
         return sighting.isValid() && ticksRunning < WATCH_TICKS;
     }
 
+    /**
+     * All of them. Watching is the one move that is defined by having nothing to show for itself — the
+     * head turns and the world goes on without the body — so every tick of it is a tick spent on nothing,
+     * and the brain is entitled to know that rather than to be told this goal is busy.
+     */
+    @Override
+    public int stalledTicks() {
+        return ticksRunning;
+    }
+
     @Override
     public void start(MobBody body) {
         ticksRunning = 0;

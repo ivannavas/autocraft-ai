@@ -59,6 +59,7 @@ public final class CraftAtTableGoal implements CraftingGoal {
 
     private int ticksRunning;
     private boolean crafted;
+    private final Advance advance = new Advance();
 
     public CraftAtTableGoal(Resource target) {
         this.target = target;
@@ -92,10 +93,21 @@ public final class CraftAtTableGoal implements CraftingGoal {
         return !crafted && ticksRunning < GIVE_UP_TICKS;
     }
 
+    /**
+     * Counted because this one takes the body away from whatever the goal table chose, so its own progress
+     * is the excuse for the other goal not making any. An open grid is work; walking to a table is work
+     * while the ground goes by; clicking at a table that never opens is not.
+     */
+    @Override
+    public int stalledTicks() {
+        return advance.stalledTicks();
+    }
+
     @Override
     public void start(MobBody body) {
         ticksRunning = 0;
         crafted = false;
+        advance.reset();
     }
 
     @Override
@@ -106,6 +118,7 @@ public final class CraftAtTableGoal implements CraftingGoal {
         AbstractCraftingMenu open = openTableMenu(body.player());
         if (open != null) {
             body.moveControl().stop();
+            advance.progress();
             if (ticksRunning % ATTEMPT_INTERVAL_TICKS == 0) {
                 craft(body, open);
             }
@@ -114,6 +127,9 @@ public final class CraftAtTableGoal implements CraftingGoal {
 
         BlockPos table = findTable(body);
         if (table == null) {
+            // Nothing to walk to. Either a table goes down here — which the placing itself reports — or
+            // this goal is standing about holding the body it took off something else.
+            advance.nothing();
             placeTable(body);
             return;
         }
@@ -122,9 +138,13 @@ public final class CraftAtTableGoal implements CraftingGoal {
         body.lookControl().lookAt(centre);
         if (!withinReach(body, centre)) {
             body.moveControl().moveTo(centre, SPEED);
+            advance.walking(body);
             return;
         }
         body.moveControl().stop();
+        // Standing at the table with the screen shut: the click either opens it within a tick or two or
+        // it is not going to, and the second of those is a decision going nowhere.
+        advance.nothing();
         if (ticksRunning % ATTEMPT_INTERVAL_TICKS == 0) {
             // The same right-click a player makes. The server answers by opening the screen for us.
             use(body, table, Direction.UP, centre);
@@ -166,6 +186,7 @@ public final class CraftAtTableGoal implements CraftingGoal {
         body.player().getInventory().setSelectedSlot(slot);
         // Clicking the top face of the ground block is what puts the table on top of it.
         use(body, ground, Direction.UP, Vec3.atCenterOf(ground).add(0.0, 0.5, 0.0));
+        advance.progress();
     }
 
     private void use(MobBody body, BlockPos pos, Direction face, Vec3 hit) {

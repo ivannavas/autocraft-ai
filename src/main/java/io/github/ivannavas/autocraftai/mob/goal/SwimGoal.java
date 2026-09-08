@@ -38,6 +38,7 @@ public final class SwimGoal implements MobGoal {
     private final BlockPos target;
 
     private int ticksRunning;
+    private final Advance advance = new Advance();
 
     /**
      * @param choice which water choice this is carrying out, for the goal listing
@@ -65,9 +66,20 @@ public final class SwimGoal implements MobGoal {
         return ticksRunning < GIVE_UP_TICKS && canUse(body);
     }
 
+    /**
+     * A swim that is covering no water. Counted in three dimensions like every other, which matters more
+     * here than anywhere: rising is the whole move when the target is the surface, and a body holding jump
+     * against a ceiling is going nowhere however much water it is churning.
+     */
+    @Override
+    public int stalledTicks() {
+        return advance.stalledTicks();
+    }
+
     @Override
     public void start(MobBody body) {
         ticksRunning = 0;
+        advance.reset();
     }
 
     @Override
@@ -86,6 +98,7 @@ public final class SwimGoal implements MobGoal {
         } else {
             body.moveControl().stop();
         }
+        advance.walking(body);
     }
 
     @Override

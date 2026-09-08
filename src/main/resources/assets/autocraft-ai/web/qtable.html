@@ -315,6 +315,56 @@
     font-size: 12px;
   }
 
+  /* --- the compact view --------------------------------------------------------------------------
+   *
+   * What goes out on the stream: the objective and the move being made, and nothing else. The tables
+   * are the interesting part to whoever is running this, and unreadable clutter to whoever is
+   * watching a video of a game — a viewer wants to know what it is trying to do, not to audit it.
+   *
+   * The same page in both places on purpose. One document, one event stream, one set of words to
+   * translate; the view only decides what is drawn.
+   */
+  body.compact {
+    padding: 0;
+  }
+
+  body.compact .block,
+  body.compact .load,
+  body.compact .foot {
+    display: none;
+  }
+
+  body.compact .panel {
+    display: block;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+    padding: 14px 22px;
+    /* Nearly opaque, unlike the panel view. This band sits over the game's own health and hotbar, and
+       at the alpha that reads well behind a table the two show through each other and neither is
+       legible. Covering them costs nothing: the strip says what the run is doing, which is the same
+       question the HUD answers less clearly. */
+    background: rgba(var(--surface), 0.94);
+  }
+
+  body.compact .now {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: 0;
+    /* Bigger than the panel's: this is read at a glance, at video bitrates, on a phone. */
+    font-size: 20px;
+    gap: 6px 34px;
+  }
+
+  body.compact .now-label {
+    font-size: 12px;
+  }
+
+  body.compact .now-reason {
+    font-size: 14px;
+  }
+
   .now-item {
     display: flex;
     align-items: baseline;
@@ -541,15 +591,6 @@
   </section>
 
   <section class="block">
-    <div class="section-label"><span id="t-interrupts">When it gets stuck</span>
-      <b id="interruption-count">0</b> <span id="t-interrupts-suffix">times reconsidered</span></div>
-    <table>
-      <thead><tr id="int-header"></tr></thead>
-      <tbody id="int-rows"></tbody>
-    </table>
-  </section>
-
-  <section class="block">
     <div class="section-label" id="t-position">Which way to go</div>
     <table>
       <thead><tr id="ground-header"></tr></thead>
@@ -614,14 +655,26 @@
 </div>
 
 <script>
-  // How many rows fit on a stream overlay before it stops being readable. The rest are counted, not drawn.
-  const MAX_ROWS = 12;
-  /** The interrupt table is a footnote to the main one, not a rival for the panel. */
-  const MAX_INTERRUPT_ROWS = 5;
-  /** The crafting table has few situations worth showing: it is a side activity, not the main story. */
-  const MAX_CRAFT_ROWS = 6;
-  /** Where to dig is a narrow question, and its states are few enough that a handful covers the run. */
-  const MAX_PLACEMENT_ROWS = 6;
+  /**
+   * Which of the two views this page is: the strip that goes on the stream, or the whole thing.
+   *
+   * Read from the query string rather than negotiated, so the OBS browser source and the control
+   * panel are simply two different URLs onto the same page.
+   */
+  const COMPACT = new URLSearchParams(location.search).get("view") === "compact";
+  document.body.classList.toggle("compact", COMPACT);
+
+  /**
+   * How many rows each table draws.
+   *
+   * Nothing is trimmed in the full view. It is read on a desktop by the one person who wants to know
+   * exactly what the run has learned, and a table that quietly stops at twelve rows is worse than a
+   * long one — it hides the very states that only turn up after hours of play. The compact view draws
+   * no tables at all, so its numbers never apply.
+   */
+  const MAX_ROWS = Infinity;
+  const MAX_CRAFT_ROWS = Infinity;
+  const MAX_PLACEMENT_ROWS = Infinity;
   const GIGABYTE = 1024 ** 3;
   // Where a heap stops being roomy and starts being the reason the game stutters.
   const HEAP_HOT = 0.9;
@@ -643,10 +696,9 @@
     text: {
       "objective": "Objective", "doing": "Now", "making": "Crafting",
       "goals": "What to do", "crafts": "What to make meanwhile",
-      "interrupts": "When it gets stuck", "interrupts.suffix": "times reconsidered",
       "planner": "The planner", "placement": "Where to dig and build",
       "position": "Which way to go", "water": "When it is in the water",
-      "head.situation": "Situation", "head.craft": "What it is short of", "head.stuck": "Stuck on",
+      "head.situation": "Situation", "head.craft": "What it is short of",
       "head.placement": "Doing what, going where",
       "head.position": "Going where, been where",
       "head.water": "How deep, how much air",
@@ -660,7 +712,6 @@
       "trail.FRESH": "new ground", "trail.CIRCLING": "going in circles", "trail.PINNED": "not moving",
       "empty.goals": "Nothing learned yet — join a world.",
       "empty.crafts": "nothing to make so far",
-      "empty.interrupts": "not stuck yet",
       "empty.planner": "it has not been asked anything yet",
       "empty.placement": "it has not dug or built anywhere yet",
       "empty.position": "it has not been anywhere yet",
@@ -673,6 +724,7 @@
       "status.connecting": "connecting…", "status.live": "live",
       "status.offline": "Minecraft is not open",
       "tally.decisions": "%s decisions", "tally.random": "%s %% at random",
+      "tally.stalls": "%s times cut short",
       "verdict.avoid": "avoids", "verdict.none": "no opinion yet",
       "qualifier.wall": "wall", "qualifier.blocks": "carrying blocks",
       "qualifier.hungry": "hungry",
@@ -699,10 +751,6 @@
     },
     distance: { NONE: "", CLOSE: "close", NEAR: "mid", FAR: "far" },
     health: { LOW: "low health", MID: "half health", HIGH: "full health" },
-    rescue: {
-      CONTINUE: "carry on", MINE_WALL: "dig the wall", PLACE: "place a block",
-      WANDER: "go elsewhere",
-    },
     craft: {
       NOTHING: "nothing", PLANKS: "planks", STICK: "sticks",
       CRAFTING_TABLE: "a crafting table", SWORD: "a sword", PICKAXE: "a pickaxe",
@@ -805,7 +853,6 @@
     const fixed = {
       "t-objective": "objective", "t-doing": "doing", "t-making": "making",
       "t-goals": "goals", "t-crafts": "crafts",
-      "t-interrupts": "interrupts", "t-interrupts-suffix": "interrupts.suffix",
       "t-planner": "planner", "t-placement": "placement", "t-position": "position",
       "t-water": "water",
       "t-machine": "machine", "t-cpu": "cpu", "t-memory": "memory",
@@ -838,14 +885,6 @@
   const qualifiers = flags =>
     QUALIFIERS.filter(([letter]) => flags && flags.includes(letter))
       .map(([, key]) => " · " + t(key)).join("");
-
-  // The interrupt table is keyed differently: "<goal>|stuck|<flags>" — the goal that stalled and what the
-  // body could see about the bind it stalled in.
-  function stuckLabel(key, verdict) {
-    const [goal, , flags] = key.split("|");
-    return `<span class="focus">${word("action", goal)}</span>` +
-           `<span class="qualifier">${qualifiers(flags)}</span>` + verdict;
-  }
 
   // Three things a row can be saying, and they are not the same. It has found something worth doing; or
   // the best it knows is an untried column and all it has really learned is what hurt; or it knows nothing.
@@ -968,13 +1007,38 @@
    * itself has to stay short enough to skim, and the question a viewer actually has — what did it say —
    * is one hover away rather than absent.
    */
+  /** The revision the drawn history belongs to, so it is fetched once per change and not per decision. */
+  let plannerRevision = null;
+
+  /** The last history drawn, kept so a change of language redraws without asking for it again. */
+  let plannerEntries = [];
+
+  /**
+   * Asks for the planner's whole conversation.
+   *
+   * <p>Relative, so the same page works on loopback inside OBS and through the proxy in the panel,
+   * where the credential is added on the way past.
+   */
+  async function fetchPlanner() {
+    try {
+      const answer = await fetch("planner");
+      if (!answer.ok) {
+        return;
+      }
+      plannerEntries = (await answer.json()).entries || [];
+      renderPlanner(plannerEntries);
+    } catch {
+      // The run going away is the ordinary end of this, not a fault worth drawing.
+    }
+  }
+
   function renderPlanner(entries) {
     const talk = el("planner");
     if (!entries.length) {
       talk.innerHTML = `<div class="talk-empty">${t("empty.planner")}</div>`;
       return;
     }
-    talk.innerHTML = entries.map(entry => {
+    talk.innerHTML = [...entries].reverse().map(entry => {
       const kind = String(entry.kind || "").toLowerCase();
       const tip = entry.detail ? ` title="${escape(entry.detail)}"` : "";
       // The objective travels as its key so it can be named here, in the same words the rest of the
@@ -1023,13 +1087,8 @@
         ? " · " + t("tip.memory.machine", gigabytes(stats.ramUsed), gigabytes(stats.ramTotal)) : "");
   }
 
-  /**
-   * The interrupt table: what to do about a move that has stopped getting anywhere. Its rows are keyed by
-   * the goal that got stuck and what was around, so they read as "this goal, in this bind".
-   */
+  /** Everything the panel draws from one snapshot: the objective, the move of the moment, the tables. */
   function render(data) {
-    el("interruption-count").textContent = count(data.interruptions);
-
     el("phase").textContent = objectiveLabel(data.phase);
     // Only there when a planner chose the objective and said why; the fixed ladder has nothing to add.
     const reason = el("phase-reason");
@@ -1058,13 +1117,6 @@
     });
 
     renderTable({
-      headId: "int-header", bodyId: "int-rows", sideHead: "head.stuck",
-      actions: data.interruptActions || [], rows: data.interruptRows || [],
-      group: "rescue", label: stuckLabel, max: MAX_INTERRUPT_ROWS, current: null,
-      empty: "empty.interrupts",
-    });
-
-    renderTable({
       headId: "ground-header", bodyId: "ground-rows", sideHead: "head.position",
       actions: data.positionActions || [], rows: data.positionRows || [],
       group: "ground", label: groundLabel, max: MAX_PLACEMENT_ROWS, current: null,
@@ -1085,12 +1137,19 @@
       empty: "empty.water",
     });
 
-    renderPlanner(data.planner || []);
+    // The conversation is not in the snapshot — it is whole prompts and whole replies, and it would
+    // be resent on every decision to say nothing new. The snapshot carries a revision, and this asks
+    // for the history only when that has moved. Never in the compact view, which does not draw it.
+    if (!COMPACT && data.plannerRevision !== plannerRevision) {
+      plannerRevision = data.plannerRevision;
+      fetchPlanner();
+    }
 
     // The counters that used to sit in tiles at the top live down here now, where they inform without
     // taking the first thing a viewer looks at.
     el("tally").textContent = t("tally.decisions", count(data.decisions)) + " · "
-      + t("tally.random", Math.round((data.epsilon || 0) * 100));
+      + t("tally.random", Math.round((data.epsilon || 0) * 100)) + " · "
+      + t("tally.stalls", count(data.stalls));
     el("status").textContent = t("status.live");
     el("status").classList.remove("offline");
   }
@@ -1115,6 +1174,11 @@
     applyLabels();
     if (latest) {
       render(latest);
+    }
+    // render() only redraws the conversation when the log itself moved, so a change of language has
+    // to redraw it from what is already held rather than ask the server for it again.
+    if (!COMPACT && plannerEntries.length) {
+      renderPlanner(plannerEntries);
     }
     renderStats(latestStats);
   });

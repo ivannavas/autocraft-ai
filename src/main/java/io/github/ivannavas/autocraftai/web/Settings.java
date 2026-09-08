@@ -152,9 +152,14 @@ public final class Settings {
      *
      * <p>OBS renders this itself rather than picking it off the desktop, so it stays on loopback even when
      * {@link #bind()} does not: the browser is inside OBS, on the same machine as the game.
+     *
+     * <p>The compact view by default: what belongs on a broadcast is the objective and the move being
+     * made, not a wall of numbers nobody watching a video can read. The same page without the
+     * parameter is the full one, which is what the control panel embeds.
      */
     public String overlayUrl() {
-        return value("overlay.url", "http://127.0.0.1:" + QTableServer.PORT + QTableServer.BASE);
+        return value("overlay.url",
+                "http://127.0.0.1:" + QTableServer.PORT + QTableServer.BASE + "?view=compact");
     }
 
     /**

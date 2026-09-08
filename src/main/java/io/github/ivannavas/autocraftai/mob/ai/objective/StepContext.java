@@ -25,6 +25,13 @@ import net.minecraft.world.phys.Vec3;
  * bare-handed changes nothing about the body, the bag or the ground it stands on, which is exactly why it
  * had to be counted as it happened rather than worked out afterwards.
  *
+ * <p>{@link #stalledSteps()} is the same kind of fact and the more general one: how many of this move's
+ * seconds the goal running it had nothing at all to show for. A block that finished breaking ten seconds
+ * ago, a wall that will not be walked through, a spot that cannot be reached — from a pair of snapshots
+ * all of them read as a step where nothing much happened, which is also what a slow but perfectly good
+ * step reads as. Only the goal itself knows the difference, and this is it saying so. See
+ * {@link io.github.ivannavas.autocraftai.mob.MobGoal#stalledTicks()}.
+ *
  * <p>{@link #pinned()} reaches further back than one step, and has to: whether the body is stuck is not a
  * fact about the last second but about the last minute of them, which is what
  * {@link io.github.ivannavas.autocraftai.mob.ai.Territory} is for.
@@ -43,6 +50,7 @@ public record StepContext(
         InventoryCensus obtained,
         int steps,
         int wastedTicks,
+        int stalledSteps,
         int foodBefore,
         int foodAfter,
         int airBefore,

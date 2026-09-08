@@ -52,6 +52,7 @@ public final class AttackSightingGoal implements MobGoal {
 
     private int ticksRunning;
     private boolean armed;
+    private final Advance advance = new Advance();
 
     public AttackSightingGoal(Sighting sighting) {
         this.sighting = sighting;
@@ -73,10 +74,21 @@ public final class AttackSightingGoal implements MobGoal {
         return canUse(body) && ticksRunning < GIVE_UP_TICKS;
     }
 
+    /**
+     * Ground covered while closing, and blows landed once close. Waiting out the cooldown is not stalling
+     * — it is what makes the next blow worth three of a hurried one — and it never lasts long enough to
+     * register, since a full swing charges in well under a second.
+     */
+    @Override
+    public int stalledTicks() {
+        return advance.stalledTicks();
+    }
+
     @Override
     public void start(MobBody body) {
         ticksRunning = 0;
         armed = false;
+        advance.reset();
     }
 
     @Override
@@ -87,6 +99,7 @@ public final class AttackSightingGoal implements MobGoal {
 
         if (!withinReach(body, aim)) {
             body.moveControl().moveTo(target.position(), SPEED);
+            advance.walking(body);
             return;
         }
 
@@ -98,6 +111,7 @@ public final class AttackSightingGoal implements MobGoal {
             gameMode().ifPresent(mode -> mode.attack(body.player(), target));
             body.player().swing(InteractionHand.MAIN_HAND);
             body.player().resetAttackStrengthTicker();
+            advance.progress();
         }
     }
 
