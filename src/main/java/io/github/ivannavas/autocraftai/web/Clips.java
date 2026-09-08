@@ -1,0 +1,222 @@
+package io.github.ivannavas.autocraftai.web;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
+
+import lombok.extern.slf4j.Slf4j;
+
+/**
+ * Keeps the last minute of the run in memory and writes it out whenever an objective is reached.
+ *
+ * <h2>Why a buffer rather than a recording</h2>
+ * The interesting part of a run is the minute before something happened, and the rest is a body walking
+ * about. Recording continuously and cutting it up afterwards means writing gigabytes an hour to throw
+ * nearly all of it away, on a box whose disk also holds the world. OBS's replay buffer keeps its window
+ * in memory and lets the rest fall off the end, so discarding is not a job anybody has to do — it is
+ * what the thing does when left alone.
+ *
+ * <h2>Off the game thread</h2>
+ * Reaching an objective is announced from the client tick. Saving means a websocket round trip and then
+ * waiting for OBS to finish encoding a minute of video, which is seconds — so what the game thread does
+ * here is drop a name into a queue and carry on. One worker, because two saves at once would have the
+ * pair of them racing to name the same file and OBS writing one buffer twice.
+ */
+@Slf4j
+public final class Clips {
+
+    /** Sortable and unambiguous, and it puts the clips in order in any file listing. */
+    private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss");
+
+    private final Settings settings;
+
+    /**
+     * One thread, and a daemon.
+     *
+     * <p>Single so saves queue rather than collide. Daemon because a clip half-written at shutdown is
+     * not worth holding the process open for — the game closing is a worse thing to delay than a
+     * recording is to lose.
+     */
+    private final ExecutorService worker = Executors.newSingleThreadExecutor(task -> {
+        Thread thread = new Thread(task, "autocraft-ai-clips");
+        thread.setDaemon(true);
+        return thread;
+    });
+
+    private final AtomicInteger saved = new AtomicInteger();
+
+    public Clips(Settings settings) {
+        this.settings = settings;
+    }
+
+    /** How many clips this run has written. Reported by the status endpoint. */
+    public int count() {
+        return saved.get();
+    }
+
+    /** Where the clips are, or empty when OBS was left to record wherever it already did. */
+    public Path directory() {
+        String configured = settings.clipsDir();
+        return configured.isBlank() ? null : Path.of(configured);
+    }
+
+    /**
+     * The clips on disk, newest first.
+     *
+     * <p>Only files matching what this wrote. The recording directory may hold other things, and a
+     * listing that offers to hand out whatever is in a folder is a much worse thing to get wrong.
+     */
+    public List<Path> list() {
+        Path directory = directory();
+        if (directory == null || !Files.isDirectory(directory)) {
+            return List.of();
+        }
+        try (Stream<Path> files = Files.list(directory)) {
+            return files.filter(Files::isRegularFile)
+                    .filter(Clips::isClip)
+                    .sorted(Comparator.comparing(Clips::touched).reversed())
+                    .toList();
+        } catch (IOException e) {
+            log.warn("Could not list {}", directory, e);
+            return List.of();
+        }
+    }
+
+    /**
+     * Resolves one clip by name, for serving it.
+     *
+     * <p>The name arrives from a URL, so it is matched against the shape this writes rather than
+     * trusted: anything else — a path, a traversal, a file somebody else put there — resolves to
+     * nothing. Belt and braces, the result is also checked to be a direct child of the directory.
+     *
+     * @return the file, or null if there is no such clip
+     */
+    public Path find(String name) {
+        Path directory = directory();
+        if (directory == null || name == null || !isClip(Path.of(name).getFileName())) {
+            return null;
+        }
+        Path candidate = directory.resolve(name).normalize();
+        if (!candidate.getParent().equals(directory.normalize()) || !Files.isRegularFile(candidate)) {
+            return null;
+        }
+        return candidate;
+    }
+
+    /**
+     * Asks for the buffer to be written out, naming the file after what was just achieved.
+     *
+     * <p>Safe to call from the game thread: it returns immediately.
+     */
+    public void reached(String objective) {
+        worker.execute(() -> save(objective));
+    }
+
+    private void save(String objective) {
+        try {
+            String written = Obs.with(settings, obs -> {
+                // Reaching an objective is also the moment most likely to find the buffer stopped —
+                // OBS may have been restarted since the scene was built — so make sure before saving
+                // rather than discovering it from an empty answer.
+                obs.buffer();
+                return obs.save();
+            });
+            if (written.isBlank()) {
+                log.warn("Asked OBS for a clip of '{}' but no file appeared", objective);
+                return;
+            }
+            Path clip = rename(Path.of(written), objective);
+            saved.incrementAndGet();
+            log.info("Clip of '{}' saved to {}", objective, clip);
+            prune(clip.getParent());
+        } catch (Obs.ObsException e) {
+            // Losing a clip is not worth interrupting a run over. It is worth being told about.
+            log.warn("Could not save a clip of '{}': {}", objective, e.getMessage());
+        }
+    }
+
+    /**
+     * Renames the file OBS wrote so it says what it is.
+     *
+     * <p>OBS names replays after the clock alone, which makes a directory of them unreadable — the one
+     * thing you want to know when looking for a clip is which objective it is of. Renaming rather than
+     * asking OBS to do it because its filename format is a profile-wide setting, and this should not
+     * change how the rest of somebody's OBS behaves.
+     *
+     * @return where the clip ended up, which is the original path if it could not be moved
+     */
+    private static Path rename(Path written, String objective) {
+        String extension = written.getFileName().toString().replaceFirst("^.*(?=\\.)", "");
+        String name = LocalDateTime.now().format(WHEN) + "_" + slug(objective) + extension;
+        Path target = written.resolveSibling(name);
+        try {
+            return Files.move(written, target, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            log.warn("Could not rename {} to {}; leaving it where OBS put it", written, name, e);
+            return written;
+        }
+    }
+
+    /** Objective names are prose — "get 4 logs" — and a filename is not. */
+    private static String slug(String objective) {
+        String cleaned = objective.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-");
+        String trimmed = cleaned.replaceAll("(^-|-$)", "");
+        return trimmed.isEmpty() ? "objective" : trimmed;
+    }
+
+    /**
+     * Deletes the oldest clips once there are more than were asked for.
+     *
+     * <p>A minute of 720p is tens of megabytes and a run reaches objectives all day. Unbounded, this
+     * fills the disk the world is stored on, which is a much worse outcome than losing the clip of
+     * something that happened yesterday.
+     */
+    private void prune(Path directory) {
+        int keep = settings.clipsKeep();
+        if (keep <= 0 || directory == null) {
+            return;
+        }
+        try (Stream<Path> files = Files.list(directory)) {
+            List<Path> clips = files.filter(Files::isRegularFile)
+                    .filter(Clips::isClip)
+                    .sorted(Comparator.comparing(Clips::touched).reversed())
+                    .toList();
+            for (Path old : clips.stream().skip(keep).toList()) {
+                Files.deleteIfExists(old);
+                log.info("Removed the oldest clip {} to stay under {}", old.getFileName(), keep);
+            }
+        } catch (IOException e) {
+            log.warn("Could not tidy up {}", directory, e);
+        }
+    }
+
+    /**
+     * Only files this wrote.
+     *
+     * <p>The recording directory is somewhere a person may also keep things, and a routine that deletes
+     * the oldest file in a folder is a much worse thing to get wrong than one that leaves a stray clip.
+     */
+    private static boolean isClip(Path file) {
+        String name = file.getFileName().toString();
+        return name.matches("\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}_.+\\..+");
+    }
+
+    /** Unreadable sorts oldest, so a file that cannot be stat'd is never mistaken for a recent one. */
+    private static long touched(Path file) {
+        try {
+            return Files.getLastModifiedTime(file).toMillis();
+        } catch (IOException e) {
+            return Long.MIN_VALUE;
+        }
+    }
+}

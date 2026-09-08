@@ -120,8 +120,13 @@ public final class Control {
                 reply(exchange, 401, "{\"ok\":false,\"error\":\"Missing or wrong bearer token\"}");
                 return;
             }
+            if (path.startsWith(QTableServer.BASE + "clips/")) {
+                require(exchange, method, "GET", this::clip);
+                return;
+            }
             switch (path) {
                 case QTableServer.BASE + "status" -> require(exchange, method, "GET", this::status);
+                case QTableServer.BASE + "clips" -> require(exchange, method, "GET", this::listClips);
                 case QTableServer.BASE + "planner" -> require(exchange, method, "GET", this::planner);
                 case QTableServer.BASE + "learning/reset" -> require(exchange, method, "POST", this::resetLearning);
                 case QTableServer.BASE + "world/new" -> require(exchange, method, "POST", this::startWorld);
@@ -213,6 +218,62 @@ public final class Control {
                 + ",\"overlayPort\":" + QTableServer.PORT
                 + ",\"settings\":" + settings.describe()
                 + "}");
+    }
+
+    /**
+     * What clips are on disk, newest first.
+     *
+     * <p>Names, sizes and ages only. The files are tens of megabytes each and the panel wants a list to
+     * choose from, not the contents.
+     */
+    private void listClips(HttpExchange exchange) throws IOException {
+        long now = System.currentTimeMillis();
+        StringBuilder out = new StringBuilder("{\"ok\":true,\"clips\":[");
+        boolean first = true;
+        for (java.nio.file.Path clip : clips.list()) {
+            if (!first) {
+                out.append(',');
+            }
+            first = false;
+            long size = 0;
+            long age = 0;
+            try {
+                size = java.nio.file.Files.size(clip);
+                age = Math.max(0, now - java.nio.file.Files.getLastModifiedTime(clip).toMillis());
+            } catch (IOException e) {
+                // A clip that vanished between listing and asking is simply gone; report it as empty
+                // rather than failing the whole listing over one file.
+            }
+            out.append("{\"name\":").append(quote(clip.getFileName().toString()))
+                    .append(",\"bytes\":").append(size)
+                    .append(",\"ago\":").append(age).append('}');
+        }
+        reply(exchange, 200, out.append("]}").toString());
+    }
+
+    /**
+     * Hands over one clip.
+     *
+     * <p>Streamed rather than read into memory: these are tens of megabytes and the server has a small
+     * fixed thread pool. {@code Content-Disposition} so a browser saves it instead of trying to play it
+     * in a tab the panel opened.
+     */
+    private void clip(HttpExchange exchange) throws IOException {
+        String name = java.net.URLDecoder.decode(
+                exchange.getRequestURI().getPath().substring((QTableServer.BASE + "clips/").length()),
+                StandardCharsets.UTF_8);
+        java.nio.file.Path file = clips.find(name);
+        if (file == null) {
+            reply(exchange, 404, error("No such clip"));
+            return;
+        }
+        exchange.getResponseHeaders().set("Content-Type", "video/mp4");
+        exchange.getResponseHeaders().set("Content-Disposition",
+                "attachment; filename=\"" + file.getFileName() + "\"");
+        exchange.sendResponseHeaders(200, java.nio.file.Files.size(file));
+        try (OutputStream out = exchange.getResponseBody()) {
+            java.nio.file.Files.copy(file, out);
+        }
     }
 
     /**
