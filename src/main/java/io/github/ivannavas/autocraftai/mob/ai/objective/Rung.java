@@ -1,6 +1,7 @@
 package io.github.ivannavas.autocraftai.mob.ai.objective;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Predicate;
 
@@ -57,6 +58,26 @@ public enum Rung implements Phase {
 
     public int required() {
         return gather.amount();
+    }
+
+    @Override
+    public Map<Resource, Integer> needs() {
+        return gather.needs();
+    }
+
+    @Override
+    public Map<Resource, Integer> reserved() {
+        return gather.reserved();
+    }
+
+    @Override
+    public boolean minesWhatItSees() {
+        return gather.minesWhatItSees();
+    }
+
+    @Override
+    public Optional<Resource> scores() {
+        return gather.scores();
     }
 
     @Override

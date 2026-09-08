@@ -2,7 +2,6 @@ package io.github.ivannavas.autocraftai.mob.ai.objective;
 
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.function.Predicate;
 
 import net.minecraft.core.component.DataComponents;
@@ -84,19 +83,24 @@ public enum Resource {
     public static final int ENOUGH_FOOD = 8;
 
     /**
-     * What each craftable is made of, one step back.
+     * What each craftable is made of, one step back, and how many of each it takes.
      *
      * <p>Written out rather than read off the recipe book, and for the same reason the rest of the
      * vocabulary is: this is the shape of the plan, not the shape of Minecraft. It is the same five lines
      * the planner's brief already states in prose, and having them here as well is what lets the run tell
      * a craft that is on the way to the objective from one that is a detour away from it.
+     *
+     * <p>The counts are what {@link Reserve} needs. "Has it got a spare one of each ingredient" is the
+     * right answer for planks and the wrong one for a pickaxe, which eats three planks and two sticks —
+     * a bag with two spare planks in it can pay for neither, and a reserve that could not say so would be
+     * broken by exactly the craft it was put there to prevent.
      */
-    private static final Map<Resource, Set<Resource>> MADE_FROM = Map.of(
-            PLANKS, Set.of(LOG),
-            STICK, Set.of(PLANKS),
-            CRAFTING_TABLE, Set.of(PLANKS),
-            SWORD, Set.of(PLANKS, STICK),
-            PICKAXE, Set.of(PLANKS, STICK));
+    private static final Map<Resource, Map<Resource, Integer>> MADE_FROM = Map.of(
+            PLANKS, Map.of(LOG, 1),
+            STICK, Map.of(PLANKS, 2),
+            CRAFTING_TABLE, Map.of(PLANKS, 4),
+            SWORD, Map.of(PLANKS, 1, STICK, 1),
+            PICKAXE, Map.of(PLANKS, 3, STICK, 2));
 
     /**
      * Whether having this is a step towards having {@code target} — the thing itself, or something it is
@@ -109,12 +113,22 @@ public enum Resource {
         if (this == target) {
             return true;
         }
-        for (Resource ingredient : MADE_FROM.getOrDefault(target, Set.of())) {
+        for (Resource ingredient : target.ingredients().keySet()) {
             if (contributesTo(ingredient)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * What making one of these costs, one step back: each ingredient and how many of it.
+     *
+     * <p>Empty for everything that is found rather than made, which is the honest answer — a log costs a
+     * walk and an axe swing, and neither of those is something the bag can be short of.
+     */
+    public Map<Resource, Integer> ingredients() {
+        return MADE_FROM.getOrDefault(this, Map.of());
     }
 
     /** The resource a stack counts as, or empty when it is not one the run has a name for. */

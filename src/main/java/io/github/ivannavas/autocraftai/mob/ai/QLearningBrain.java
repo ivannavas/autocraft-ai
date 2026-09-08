@@ -14,6 +14,7 @@ import io.github.ivannavas.autocraftai.mob.ai.objective.GeneralObjectives;
 import io.github.ivannavas.autocraftai.mob.ai.objective.InventoryCensus;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Objective;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Progression;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Reserve;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.PlannerLog;
 import io.github.ivannavas.autocraftai.mob.ai.objective.StepContext;
@@ -50,6 +51,8 @@ import net.minecraft.world.phys.Vec3;
  *       the one above it, the one under the feet. See {@link Spot}.</li>
  *   <li><b>position</b>: for the two moves that take the body somewhere, <em>which way</em> — onward,
  *       back, or towards ground it has not covered. See {@link Ground}.</li>
+ *   <li><b>water</b>: what to do about being in water, asked only while the body is in some. See
+ *       {@link Swim}, and {@link Water} for the state it is keyed by.</li>
  * </ul>
  *
  * <p>One table over the cross-product would be {@code 6 x 3 x 6 x 4} columns, and every new goal would
@@ -100,6 +103,15 @@ public final class QLearningBrain {
      * wrong without it.
      */
     private static final int COMMITTED_GRACE_STEPS = 5;
+    /**
+     * Above everything, including a craft at a table: not drowning outranks making a pickaxe.
+     *
+     * <p>The water table's answer is not a rival to the goal table's, it is a veto over it, and the way a
+     * veto is expressed here is a control claim the primary cannot outrank. The moment the body is out of
+     * the water the swim goal stops wanting the body and the primary gets it back, without either of them
+     * having to know about the other.
+     */
+    private static final int SWIM_PRIORITY = 0;
     /** Ticks spent on the death screen before asking to come back. Long enough to see what killed you. */
     private static final int RESPAWN_DELAY_TICKS = 40;
 
@@ -114,6 +126,7 @@ public final class QLearningBrain {
     private final Table interrupts;
     private final Table placement;
     private final Table position;
+    private final Table water;
     private final List<Table> tables;
 
     /** Where a copy of what the brain knows goes after every decision. No-op until something wants it. */
@@ -129,18 +142,22 @@ public final class QLearningBrain {
     private MobGoal installedGoal;
     private Object installedTarget;
     private CraftingGoal craftGoal;
+    private MobGoal swimGoal;
+    private Swim swimChoice = Swim.CARRY_ON;
 
     private Vec3 stepPosition;
     private long interruptionCount;
 
     private float lastHealth;
     private int lastFood;
+    private int lastAir;
     private Vec3 lastPosition;
     private InventoryCensus lastCensus = InventoryCensus.empty();
     private InventoryCensus obtained = InventoryCensus.empty();
     private InventoryCensus previousStepCensus;
     private int wastedTicks;
     private List<Resource> craftedThisStep = List.of();
+    private boolean sawWhatItNeeds;
     private int ticksSinceStep;
     private int decisionsSinceSave;
     private int decisionsSinceReport;
@@ -157,7 +174,8 @@ public final class QLearningBrain {
         this.interrupts = new Table(names(Interruption.values()), directory.resolve("interrupts.txt"));
         this.placement = new Table(names(Spot.values()), directory.resolve("placement.txt"));
         this.position = new Table(names(Ground.values()), directory.resolve("position.txt"));
-        this.tables = List.of(goals, timing, crafting, interrupts, placement, position);
+        this.water = new Table(names(Swim.values()), directory.resolve("water.txt"));
+        this.tables = List.of(goals, timing, crafting, interrupts, placement, position, water);
         tables.forEach(Table::load);
     }
 
@@ -336,11 +354,11 @@ public final class QLearningBrain {
         Observation observation = Observation.of(player, context, progression.stateKey());
 
         boolean[] legalGoals = legalGoals(context);
-        boolean[] legalCrafts = legalCrafts(context);
+        boolean[] legalCrafts = legalCrafts(context, step.after());
 
         // All three learn from the same reward over the same move: each one's share of the credit is
         // whatever its own column was doing while that reward was earned.
-        String craftKey = CraftSituation.key(progression.stateKey(), step.after());
+        String craftKey = CraftSituation.key(progression.needs(), step.after());
         goals.learn(observation.key(), reward, step.steps(), legalGoals);
         crafting.learn(craftKey, reward, step.steps(), legalCrafts);
 
@@ -364,6 +382,7 @@ public final class QLearningBrain {
 
         install(action, context, aim);
         installCraft(craft, player);
+        installSwim(chooseSwim(context, reward, step.steps()), context);
 
         commitment = chosen;
         stepsRun = 0;
@@ -371,6 +390,7 @@ public final class QLearningBrain {
         lastObservation = observation;
         lastHealth = step.healthAfter();
         lastFood = player.getFoodData().getFoodLevel();
+        lastAir = player.getAirSupply();
         lastPosition = step.positionAfter();
         lastCensus = step.after();
         wastedTicks = 0;
@@ -400,6 +420,14 @@ public final class QLearningBrain {
             return null;
         }
         BlockPos sighted = context.sighting().isBlock() ? context.sighting().blockPos() : null;
+        if (action == GoalAction.MINE && fetchesWhatItSees(context)) {
+            // The rule says which block as well as which verb: "go and break that one". Leaving the spot
+            // to the placement table would let it answer with the block above it or the one under the
+            // feet, which is the same learning the rule exists to skip.
+            placement.learnTerminal(reward);
+            placement.forget();
+            return sighted;
+        }
         boolean[] legal = legalSpots(player, action, sighted);
         String key = Placement.key(action, progression.shape(), context.flags());
         placement.learn(key, reward, steps, legal);
@@ -437,6 +465,70 @@ public final class QLearningBrain {
         int column = position.choose(key, position.everything);
         return column < 0 ? OptionalDouble.empty()
                 : Ground.values()[column].headingFor(player, territory);
+    }
+
+    /**
+     * What to do about the water the body is in, or nothing at all when it is not in any.
+     *
+     * <p>Keyed on the water alone — how deep, how much breath, where the ways out are — and on nothing
+     * about the objective. Drowning is drowning whether the run was after wood or after iron, and keying
+     * this on the rung would split one short lesson across every plan the run ever has and make it learn
+     * the same thing from scratch each time.
+     *
+     * @return what to do, which is {@link Swim#CARRY_ON} whenever the body is dry
+     */
+    private Swim chooseSwim(ActionContext context, double reward, int steps) {
+        if (!context.water().present()) {
+            // On dry land the question does not arise, so whatever this table last chose is settled with
+            // no continuation rather than left hanging on a state that will not come round again.
+            water.learnTerminal(reward);
+            water.forget();
+            return Swim.CARRY_ON;
+        }
+        boolean[] legal = legalSwims(context);
+        String key = context.water().key();
+        water.learn(key, reward, steps, legal);
+
+        int column = water.choose(key, legal);
+        return column < 0 ? Swim.CARRY_ON : Swim.values()[column];
+    }
+
+    /** Doing nothing always works; the rest need somewhere to swim to or something to stand on. */
+    private boolean[] legalSwims(ActionContext context) {
+        Swim[] options = Swim.values();
+        boolean[] allowed = new boolean[options.length];
+        for (int i = 0; i < options.length; i++) {
+            allowed[i] = options[i].isApplicable(context);
+        }
+        return allowed;
+    }
+
+    /**
+     * Puts the water choice in place, on top of whatever the goal table is doing.
+     *
+     * <p>Left alone while the choice is unchanged, for the same reason a craft is: a swim to the surface
+     * restarted every second is a body treading water. A choice that has changed replaces it, and
+     * {@link Swim#CARRY_ON} — which is what every decision on dry land answers — takes it away.
+     */
+    private void installSwim(Swim choice, ActionContext context) {
+        if (swimGoal != null && choice == swimChoice && engine.isRunning(swimGoal)) {
+            return;
+        }
+        removeSwim();
+        swimChoice = choice;
+        MobGoal goal = choice.create(context);
+        if (goal != null) {
+            swimGoal = goal;
+            engine.addGoal(SWIM_PRIORITY, goal);
+        }
+    }
+
+    private void removeSwim() {
+        if (swimGoal != null) {
+            engine.removeGoal(swimGoal);
+            swimGoal = null;
+        }
+        swimChoice = Swim.CARRY_ON;
     }
 
     /** Which spots the world allows: you cannot mine air, and a block needs something to rest against. */
@@ -508,8 +600,8 @@ public final class QLearningBrain {
         Observation observation = Observation.of(player, context, progression.stateKey());
 
         goals.learn(observation.key(), reward, step.steps(), legalGoals(context));
-        crafting.learn(CraftSituation.key(progression.stateKey(), step.after()), reward, step.steps(),
-                legalCrafts(context));
+        crafting.learn(CraftSituation.key(progression.needs(), step.after()), reward, step.steps(),
+                legalCrafts(context, step.after()));
         timing.learn(observation.key(), reward + INTERRUPTION_PENALTY, step.steps(), timing.everything);
         // The rescue picks its own block and its own direction, so whatever those two last chose ends
         // here.
@@ -534,6 +626,7 @@ public final class QLearningBrain {
         lastObservation = observation;
         lastHealth = step.healthAfter();
         lastFood = player.getFoodData().getFoodLevel();
+        lastAir = player.getAirSupply();
         lastPosition = step.positionAfter();
         lastCensus = step.after();
         wastedTicks = 0;
@@ -559,17 +652,27 @@ public final class QLearningBrain {
     /** Everything around the body, gathered once so the sighting and the map agree with each other. */
     private ActionContext surroundings(Minecraft client, LocalPlayer player) {
         Sighting sighting = perception.look(client, player, progression.wanted());
+        // Noted here because this is where the eyes are: arriving somewhere with what the plan is after
+        // in view is the thing the position table exists to learn, and it cannot see it any other way.
+        sawWhatItNeeds = sighting.kind() == FocusKind.RESOURCE;
+        Reserve reserve = progression.reserved();
         return new ActionContext(
                 sighting,
                 Recipes.craftableNow(player),
                 Perception.wallAhead(player),
-                PlaceBlockGoal.hotbarSlotWithBlock(player) >= 0,
+                // Asked with the reserve, so a body whose only blocks are being held back has nothing to
+                // build with as far as every table is concerned. Which is the truth of it.
+                PlaceBlockGoal.hotbarSlotWithBlock(player, reserve) >= 0,
                 Perception.canDigDown(player),
                 toolFor(player, sighting.blockPos()),
                 Perception.isHungry(player),
                 Perception.canEat(player),
                 Perception.wellFed(player),
-                progression.worthDigging(player.getBlockY()));
+                progression.worthDigging(player.getBlockY()),
+                progression.heightWanted(player.getBlockY()),
+                Water.around(player),
+                reserve,
+                progression.minesWhatItSees() && sighting.kind() == FocusKind.RESOURCE);
     }
 
     /**
@@ -601,8 +704,11 @@ public final class QLearningBrain {
                 wastedTicks,
                 fresh ? player.getFoodData().getFoodLevel() : lastFood,
                 player.getFoodData().getFoodLevel(),
+                fresh ? player.getAirSupply() : lastAir,
+                player.getAirSupply(),
                 craftedThisStep,
-                territory.pinned());
+                territory.pinned(),
+                sawWhatItNeeds);
     }
 
     /**
@@ -635,15 +741,55 @@ public final class QLearningBrain {
         for (int i = 0; i < actions.length; i++) {
             allowed[i] = actions[i].isApplicable(context);
         }
+        if (!fetchesWhatItSees(context) || !allowed[GoalAction.MINE.ordinal()]) {
+            return allowed;
+        }
+        // The plan named the blocks its resource comes off and the eyes have found one. There is nothing
+        // left in the question, so there is nothing left to choose between: everything but breaking it
+        // comes off the table. Eating stays, because a body that starves in front of the tree has not
+        // gathered anything, and it is only ever legal when the body is hungry with food in hand.
+        for (int i = 0; i < actions.length; i++) {
+            allowed[i] = actions[i] == GoalAction.MINE
+                    || (actions[i] == GoalAction.EAT && allowed[i]);
+        }
         return allowed;
     }
 
-    /** Making nothing is always on the table; making a thing needs the ingredients for it. */
-    private boolean[] legalCrafts(ActionContext context) {
+    /**
+     * Whether the rule applies right now, which is nearly the same question as {@link
+     * ActionContext#mineOnSight()} and differs in one case that matters.
+     *
+     * <p>A rule with no way out of it would insist on the same block for the rest of the run. When the
+     * mine already installed on that very block has given up — in reach of it and getting nowhere, which
+     * is what a log behind a wall looks like — the rule yields and the goal table gets the decision back.
+     * The body walks off, the nearest block becomes a different one, and the rule applies again to that.
+     */
+    private boolean fetchesWhatItSees(ActionContext context) {
+        if (!context.mineOnSight()) {
+            return false;
+        }
+        return !(installedGoal instanceof MineSightingGoal mine
+                && mine.gaveUp()
+                && Objects.equals(installedTarget, context.sighting().blockPos()));
+    }
+
+    /**
+     * Making nothing is always on the table; making a thing needs the ingredients for it, and needs them
+     * to be ingredients the plan is willing to part with.
+     *
+     * <p>The reserve is a mask rather than a price, and this is the whole of what that means for crafting.
+     * A run holding three planks back for a pickaxe is not offered the craft that would turn them into
+     * sticks, so it cannot take it — no matter what the table thinks that craft is worth, and without
+     * having to have learned anything first.
+     */
+    private boolean[] legalCrafts(ActionContext context, InventoryCensus held) {
         CraftChoice[] choices = CraftChoice.values();
         boolean[] allowed = new boolean[choices.length];
         for (int i = 0; i < choices.length; i++) {
-            allowed[i] = !choices[i].makesSomething() || context.craftable().contains(choices[i].resource());
+            Resource made = choices[i].resource();
+            allowed[i] = made == null
+                    || (context.craftable().contains(made)
+                            && context.reserve().allowsMaking(made, held));
         }
         return allowed;
     }
@@ -753,7 +899,8 @@ public final class QLearningBrain {
                 interrupts.columns, interrupts.table.rows(), CraftLog.get().recent(),
                 PlannerLog.get().recent(),
                 placement.columns, placement.table.rows(),
-                position.columns, position.table.rows()));
+                position.columns, position.table.rows(),
+                water.columns, water.table.rows()));
     }
 
     /**
@@ -767,6 +914,9 @@ public final class QLearningBrain {
             tables.forEach(table -> table.learnTerminal(DEATH_PENALTY));
             forget();
         }
+        // The plan goes with the life. A body that has just died is somewhere else with an empty bag, and
+        // the objective it was chasing was chosen for a situation that no longer exists.
+        progression.restart();
         if (++ticksDead == RESPAWN_DELAY_TICKS) {
             log.info("Died; respawning");
             player.respawn();
@@ -799,6 +949,7 @@ public final class QLearningBrain {
     private void forget() {
         uninstall();
         removeCraft();
+        removeSwim();
         tables.forEach(Table::forget);
         lastObservation = null;
         lastCensus = InventoryCensus.empty();

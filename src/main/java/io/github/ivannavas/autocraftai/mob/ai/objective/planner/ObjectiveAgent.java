@@ -119,6 +119,35 @@ public class ObjectiveAgent extends AgentExecutor {
             - Travelling anywhere: the surface, because that is where you can walk.
             - Leave it out only when the plan genuinely has no opinion, which is rare.
 
+            Also set "needs": everything the player has to be holding for the objective to be reachable,
+            not only the objective's own item. It is what the crafting decisions are keyed by, and anything
+            on it that leaves the inventory is charged for — used up in a craft, or put down as a block. So
+            list the whole chain, not just the end of it.
+              "needs": [{"item": "PICKAXE", "amount": 1}, {"item": "PLANKS", "amount": 3},
+                        {"item": "STICK", "amount": 2}, {"item": "LOG", "amount": 1}]
+            Use the same words as a GATHER target. Leaving it out is allowed and means "just the objective's
+            own item", which is right for a plain gathering objective and wrong for anything that has to be
+            made out of something else.
+
+            You may also set "reserve": items the player is not allowed to spend at all while it pursues
+            this objective. "needs" only makes losing something expensive; "reserve" makes it impossible —
+            a craft that would eat into it is not offered, and a reserved block cannot be put down.
+              "reserve": [{"item": "OBSIDIAN", "amount": 10}]
+            It is a rule about the item, not about the bag, so reserve things the player has not got yet.
+            That is the normal way to use it: put ten obsidian aside before it has found one, and every
+            obsidian it digs up on the way is still there when it reaches the portal. It may spend only
+            what it holds above the line, so a player ten short may spend none of them at all.
+            Use it where losing one item is losing the objective. Leave it out otherwise, and the player
+            may spend what it likes.
+            You do not need to reserve what a GATHER is already asking for. Asking for N of something
+            already means the player must end up holding N of them, so it will not craft them away by
+            itself. Reserve the other things: what the objective will need later, or what it is carrying
+            that a craft would eat.
+            Two things not to reserve. Do not reserve what this objective is meant to consume: reserving
+            the planks a WORKBENCH is made of stops it being built. And do not reserve every block it is
+            carrying — dirt and cobblestone are how it climbs out of holes, and a player forbidden to put
+            any block down is a player that stays in the hole.
+
             Every "target" is one of the words listed under its own shape. They are the only words the
             player understands: an objective naming anything else is thrown away, and the player carries on
             with whatever it was already doing.
@@ -127,6 +156,8 @@ public class ObjectiveAgent extends AgentExecutor {
             {"objective": "<SHAPE>", "target": "<TARGET FOR THAT SHAPE>", "amount": <integer>,
              "sources": [{"block": "<id>", "tool": "<TOOL>"}],
              "bounds": {"floor": <integer>, "ceiling": <integer>},
+             "needs": [{"item": "<RESOURCE>", "amount": <integer>}],
+             "reserve": [{"item": "<RESOURCE>", "amount": <integer>}],
              "reason": "<one short sentence, in the player's language named in the situation>"}
             DESCEND and ASCEND need no target; TRAVEL and BUILD need neither amount nor sources; and
             "bounds" is optional on all of them.

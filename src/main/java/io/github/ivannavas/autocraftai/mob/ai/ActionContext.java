@@ -1,7 +1,9 @@
 package io.github.ivannavas.autocraftai.mob.ai;
 
+import java.util.OptionalInt;
 import java.util.Set;
 
+import io.github.ivannavas.autocraftai.mob.ai.objective.Reserve;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Tool;
 import net.minecraft.core.BlockPos;
@@ -23,14 +25,23 @@ import net.minecraft.core.BlockPos;
  * @param canEat     there is a mouthful in the hotbar and room for it
  * @param wellFed    the larder is full enough that another animal is not worth killing
  * @param worthDigging going down is a route to what the plan wants, rather than a way of leaving it
+ * @param heightWanted the height the body ought to be at, when it is not at it
+ * @param water       the water the body is in, and the ways out of it
+ * @param reserve     what the plan will not let it spend
+ * @param mineOnSight the block in view is one the plan came here to break
  */
 public record ActionContext(Sighting sighting, Set<Resource> craftable, BlockPos wall,
                             boolean hasBlocks, boolean canDigDown, Tool tool,
-                            boolean hungry, boolean canEat, boolean wellFed, boolean worthDigging) {
+                            boolean hungry, boolean canEat, boolean wellFed, boolean worthDigging,
+                            OptionalInt heightWanted, Water water, Reserve reserve,
+                            boolean mineOnSight) {
 
     public ActionContext {
         craftable = Set.copyOf(craftable);
         tool = tool == null ? Tool.HAND : tool;
+        heightWanted = heightWanted == null ? OptionalInt.empty() : heightWanted;
+        water = water == null ? Water.dry() : water;
+        reserve = reserve == null ? Reserve.none() : reserve;
     }
 
     /**
@@ -79,6 +90,37 @@ public record ActionContext(Sighting sighting, Set<Resource> craftable, BlockPos
      */
     public boolean worthDigging() {
         return worthDigging;
+    }
+
+    /**
+     * The water the body is in, and where the ways out of it are.
+     *
+     * <p>Deliberately not folded into {@link #flags()}. It is the state of a table of its own rather than
+     * one more letter on everybody else's — {@link Swim} says why, and says it better than a line here
+     * could.
+     */
+    public Water water() {
+        return water;
+    }
+
+    /**
+     * What the plan will not let the body spend, which is a legality question and so belongs here beside
+     * the other two. See {@link Reserve}.
+     */
+    public Reserve reserve() {
+        return reserve;
+    }
+
+    /**
+     * Whether what is in view is the thing the plan sent the body out for.
+     *
+     * <p>Legality again, and the strongest of them: when this is true the only move on the table is
+     * breaking it. The planner named the blocks the resource comes off, the eyes found one, and there is
+     * nothing left in the question that a table could learn an answer to. See
+     * {@link io.github.ivannavas.autocraftai.mob.ai.objective.Phase#minesWhatItSees()}.
+     */
+    public boolean mineOnSight() {
+        return mineOnSight;
     }
 
     public String flags() {

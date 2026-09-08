@@ -7,6 +7,8 @@ import java.util.Set;
 import io.github.ivannavas.autocraftai.mob.MobBody;
 import io.github.ivannavas.autocraftai.mob.MobControl;
 import io.github.ivannavas.autocraftai.mob.MobGoal;
+import io.github.ivannavas.autocraftai.mob.ai.objective.InventoryCensus;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Reserve;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.client.player.LocalPlayer;
@@ -48,18 +50,28 @@ public final class PlaceBlockGoal implements MobGoal {
     private static final float SPEED = 1.0F;
 
     private final BlockPos target;
+    private final Reserve reserve;
 
     private int ticksRunning;
     private boolean placed;
 
     /** Pillars under the body, which is what this goal did before it could be told anything else. */
     public PlaceBlockGoal() {
-        this(null);
+        this(null, Reserve.none());
     }
 
     /** @param target where the block goes, or null to pillar under the body wherever it is standing */
     public PlaceBlockGoal(BlockPos target) {
+        this(target, Reserve.none());
+    }
+
+    /**
+     * @param target  where the block goes, or null to pillar under the body wherever it is standing
+     * @param reserve what the plan is holding back, which never reaches the hand
+     */
+    public PlaceBlockGoal(BlockPos target, Reserve reserve) {
         this.target = target == null ? null : target.immutable();
+        this.reserve = reserve == null ? Reserve.none() : reserve;
     }
 
     @Override
@@ -69,7 +81,7 @@ public final class PlaceBlockGoal implements MobGoal {
 
     @Override
     public boolean canUse(MobBody body) {
-        return !placed && hotbarSlotWithBlock(body.player()) >= 0;
+        return !placed && hotbarSlotWithBlock(body.player(), reserve) >= 0;
     }
 
     @Override
@@ -86,7 +98,7 @@ public final class PlaceBlockGoal implements MobGoal {
     @Override
     public void tick(MobBody body) {
         ticksRunning++;
-        int slot = hotbarSlotWithBlock(body.player());
+        int slot = hotbarSlotWithBlock(body.player(), reserve);
         if (slot < 0) {
             return;
         }
@@ -198,13 +210,31 @@ public final class PlaceBlockGoal implements MobGoal {
 
     /** Whether the body has something it could put down. Also what makes this action legal at all. */
     public static int hotbarSlotWithBlock(LocalPlayer player) {
+        return hotbarSlotWithBlock(player, Reserve.none());
+    }
+
+    /**
+     * The first block in the hotbar the plan will let go of.
+     *
+     * <p>The one place a reserve has to be honoured, and it is a slot rather than a rule: a block the
+     * plan is holding back is simply never the thing in the hand, so nothing downstream has to know the
+     * reserve exists. Every way the body puts a block down goes through here.
+     *
+     * @return the hotbar slot, or -1 when there is nothing spare to build with
+     */
+    public static int hotbarSlotWithBlock(LocalPlayer player, Reserve reserve) {
         if (player == null) {
             return -1;
         }
         Inventory inventory = player.getInventory();
+        // Counted once for the whole hotbar rather than once per slot, and not at all when there is
+        // nothing being held back, which is nearly every decision of nearly every run.
+        InventoryCensus held = reserve.isEmpty() ? InventoryCensus.empty()
+                : InventoryCensus.of(inventory);
         for (int slot = 0; slot < Inventory.SELECTION_SIZE; slot++) {
             ItemStack stack = inventory.getItem(slot);
-            if (!stack.isEmpty() && stack.getItem() instanceof BlockItem) {
+            if (!stack.isEmpty() && stack.getItem() instanceof BlockItem
+                    && reserve.allowsPlacing(stack, held)) {
                 return slot;
             }
         }

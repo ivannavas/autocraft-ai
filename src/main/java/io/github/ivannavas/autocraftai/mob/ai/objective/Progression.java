@@ -3,7 +3,9 @@ package io.github.ivannavas.autocraftai.mob.ai.objective;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.function.Predicate;
 
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.ClaudePlanner;
@@ -59,6 +61,14 @@ public final class Progression {
     /** Paid once, on reaching an objective. Deliberately large: this is the point of the whole run. */
     private static final double ADVANCE_BONUS = 25.0;
 
+    /**
+     * Paid once for getting somewhere that has what the plan needs, at a height the plan wants.
+     *
+     * <p>Worth about two logs: enough that crossing a valley to the right forest beats wandering, and not
+     * so much that finding the same forest twice is a living.
+     */
+    private static final double ARRIVAL_BONUS = 8.0;
+
     /** Key used while the planner is being waited on. */
     private static final String PLANNING = "PLANNING";
 
@@ -88,8 +98,20 @@ public final class Progression {
     private final List<Phase> fallback;
     private final List<String> achieved = new ArrayList<>();
 
+    /**
+     * What a broken reserve costs, as a multiple of what the thing itself is worth.
+     *
+     * <p>The mask is what actually stops a reserved item being spent, so this is for the ways round it the
+     * mask cannot see: an item dropped, burnt, or eaten by a craft the recipe book counts differently from
+     * the plan. Priced at several times the item so that no chain of small gains adds up to a reason.
+     */
+    private static final double RESERVE_WEIGHT = 3.0;
+
     private Phase current;
     private Bounds bounds = Bounds.anywhere();
+    private Map<Resource, Integer> needs = Map.of();
+    private Reserve reserved = Reserve.none();
+    private boolean wasSomewhereUseful;
     private int fallbackIndex;
     private int stepsOnCurrent;
 
@@ -138,6 +160,69 @@ public final class Progression {
      */
     public Bounds bounds() {
         return bounds;
+    }
+
+    /**
+     * Everything the run has to be holding for the plan to come off, and how much of each.
+     *
+     * <p>What the crafting table is keyed by, and what the plan charges for losing.
+     */
+    public Map<Resource, Integer> needs() {
+        return needs;
+    }
+
+    /**
+     * What the plan will not let the body spend.
+     *
+     * <p>Read by the legality masks rather than by the rewards: this is the half of the plan that is not
+     * up for negotiation. See {@link Reserve}.
+     */
+    public Reserve reserved() {
+        return reserved;
+    }
+
+    /**
+     * Whether seeing one of the blocks the plan is after settles what to do about it.
+     *
+     * <p>True while gathering and false otherwise. See {@link Phase#minesWhatItSees()} for why this is a
+     * rule rather than something the goal table is left to work out.
+     */
+    public boolean minesWhatItSees() {
+        return current != null && current.minesWhatItSees();
+    }
+
+    /**
+     * The height the body ought to be heading for, or empty when it is already where it should be.
+     *
+     * <p>Two sources, in order. An objective that is <em>about</em> a height names one outright; otherwise
+     * it is the nearest edge of the band, when there is a band and the body is outside it. Both come out
+     * as one number so the move that answers them does not have to know which it was.
+     */
+    public OptionalInt heightWanted(int y) {
+        if (current != null) {
+            OptionalInt named = current.height();
+            if (named.isPresent()) {
+                return named.getAsInt() == y ? OptionalInt.empty() : named;
+            }
+        }
+        return bounds.bind() && !bounds.contains(y)
+                ? OptionalInt.of(bounds.nearestEdge(y)) : OptionalInt.empty();
+    }
+
+    /**
+     * Drops the plan, so the next decision asks for a new one.
+     *
+     * <p>Called when an episode ends. A body that has just died is standing somewhere else with an empty
+     * bag, and the objective it was pursuing was chosen for a situation that no longer exists — carrying it
+     * over means the run spends its first minutes back working towards a plan made for a corpse.
+     */
+    public void restart() {
+        current = null;
+        wasSomewhereUseful = false;
+        bounds = Bounds.anywhere();
+        needs = Map.of();
+        reserved = Reserve.none();
+        stepsOnCurrent = 0;
     }
 
     /**
@@ -190,11 +275,18 @@ public final class Progression {
      * it goes away when the plan does.
      */
     public double score(StepContext context) {
-        double towards = current == null ? 0.0 : current.score(context);
-        if (context.player() == null) {
-            return towards;
+        double total = (current == null ? 0.0 : current.score(context))
+                + shoppingList(context) + reserveBroken(context);
+
+        // Height is the only part that needs a body to read it off. With no body the band cannot be
+        // charged for, and "at the right height" is true exactly when there is no band to be at odds with.
+        OptionalInt y = context.player() == null
+                ? OptionalInt.empty() : OptionalInt.of(context.player().getBlockY());
+        total += arrived(context, y.isPresent() ? bounds.contains(y.getAsInt()) : !bounds.bind());
+        if (y.isPresent()) {
+            total += bounds.charge(y.getAsInt(), context.steps());
         }
-        return towards + bounds.charge(context.player().getBlockY(), context.steps());
+        return total;
     }
 
     /**
@@ -267,6 +359,8 @@ public final class Progression {
             }
             current = planned.get().objective();
             bounds = planned.get().bounds();
+            needs = planned.get().needs();
+            reserved = planned.get().reserved();
             stepsOnCurrent = 0;
             return;
         }
@@ -281,10 +375,94 @@ public final class Progression {
         if (!planner.pending()) {
             current = fallbackIndex < fallback.size() ? fallback.get(fallbackIndex) : null;
             // The ladder has no opinion about height: it was written before there was a way to have one,
-            // and inventing a band for it would be charging the body against a rule nobody set.
+            // and inventing a band for it would be charging the body against a rule nobody set. Its rungs
+            // do know what they take, though, which is what the crafting table keys on.
             bounds = Bounds.anywhere();
+            needs = current == null ? Map.of() : current.needs();
+            // No planner means nothing put aside on purpose, but a rung is a Gather like any other and
+            // still holds back what it is gathering: the two sources of objectives have to behave the
+            // same or the run learns different lessons depending on whether the network was up.
+            reserved = current == null ? Reserve.none() : Reserve.fromCrafts(current.reserved());
             stepsOnCurrent = 0;
         }
+    }
+
+    /**
+     * What the rest of the shopping list did over the step: paid for what turned up, charged for what left.
+     *
+     * <p>The same arithmetic a gathering objective applies to its own resource, applied to everything else
+     * the plan is going to need. It is what makes putting a needed block into a wall cost something, and
+     * crafting one away too — neither of which the objective's own scoring can see, because neither is
+     * about the thing the objective is named after.
+     *
+     * <p>What the objective already scores for itself is left out, so nothing is counted twice and a
+     * {@link Build} is not charged for the very blocks it is trying to put down.
+     */
+    private double shoppingList(StepContext context) {
+        if (needs.isEmpty()) {
+            return 0.0;
+        }
+        Resource own = current == null ? null : current.scores().orElse(null);
+        double total = 0.0;
+        for (Resource needed : needs.keySet()) {
+            if (needed != own) {
+                total += context.netChange(needed) * needed.worth();
+            }
+        }
+        return total;
+    }
+
+    /**
+     * What eating into the reserve costs.
+     *
+     * <p>Only the part of a loss that falls below the line is charged. Spending the fourth of four logs
+     * when three were being held back costs nothing here — that log was spare and spending it was allowed.
+     * Spending the third is what this is about.
+     *
+     * <h2>One direction only</h2>
+     * It charges for going down and pays nothing for coming back up, and the asymmetry is the point: a
+     * reserve is a prohibition, not a bounty. Obeying it is the baseline rather than an achievement.
+     *
+     * <p>Paying both ways looked symmetrical and was a hole. A reserve does not have to be about something
+     * the body is carrying — the usual case is the opposite, ten obsidian put aside before a single one
+     * has been found — and a body starting ten short would have collected the reserve's whole weight for
+     * every one it picked up, on top of what the thing is worth and what the shopping list already pays.
+     * Three times the worth of an obsidian is more than finishing an objective pays. Gathering is already
+     * rewarded for being gathering; this term has no business paying for it twice.
+     *
+     * <p>Something both needed and reserved is charged twice on a loss, once by each, and that is meant:
+     * the plan is making two different statements about it and both of them are true.
+     */
+    private double reserveBroken(StepContext context) {
+        if (reserved.isEmpty()) {
+            return 0.0;
+        }
+        double total = 0.0;
+        for (Resource resource : reserved.kept().keySet()) {
+            int deeper = reserved.shortfall(resource, context.after().count(resource))
+                    - reserved.shortfall(resource, context.before().count(resource));
+            total -= Math.max(0, deeper) * resource.worth() * RESERVE_WEIGHT;
+        }
+        return total;
+    }
+
+    /**
+     * What being in the right place is worth, paid once on getting there.
+     *
+     * <p>The one thing the position table had no way to learn. Going somewhere paid only for the ground
+     * covered, so every direction was worth the same and arriving was worth nothing at all — the body could
+     * walk past the forest it had been sent to find and be no worse off for it. This pays for the arrival:
+     * something the plan needs in view, at a height the plan approves of.
+     *
+     * <p>Paid on the transition rather than for every second of standing there, which is the difference
+     * between a reason to travel and a reason to stare at a tree. Losing sight of it and finding it again
+     * costs a walk, so the going rate for farming this is worse than the rate for doing the job.
+     */
+    private double arrived(StepContext context, boolean atTheRightHeight) {
+        boolean somewhereUseful = context.resourceInSight() && atTheRightHeight;
+        boolean paid = somewhereUseful && !wasSomewhereUseful;
+        wasSomewhereUseful = somewhereUseful;
+        return paid ? ARRIVAL_BONUS : 0.0;
     }
 
     /** Lets go of the planner's thread. Called on the way out of the game. */

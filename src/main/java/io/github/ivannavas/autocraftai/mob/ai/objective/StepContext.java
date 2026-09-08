@@ -28,6 +28,9 @@ import net.minecraft.world.phys.Vec3;
  * <p>{@link #pinned()} reaches further back than one step, and has to: whether the body is stuck is not a
  * fact about the last second but about the last minute of them, which is what
  * {@link io.github.ivannavas.autocraftai.mob.ai.Territory} is for.
+ *
+ * <p>{@link #resourceInSight()} is the eyes' answer, passed through because nothing else can see: whether
+ * the body ended the step somewhere that has what the plan is after.
  */
 public record StepContext(
         LocalPlayer player,
@@ -42,8 +45,11 @@ public record StepContext(
         int wastedTicks,
         int foodBefore,
         int foodAfter,
+        int airBefore,
+        int airAfter,
         List<Resource> crafted,
-        boolean pinned) {
+        boolean pinned,
+        boolean resourceInSight) {
 
     /** Twenty ticks to the second, which is Minecraft's clock and not this class's opinion. */
     private static final double TICKS_PER_SECOND = 20.0;
@@ -55,6 +61,18 @@ public record StepContext(
     /** Points of hunger restored; zero when it only ticked down, which is not this term's business. */
     public int foodGained() {
         return Math.max(0, foodAfter - foodBefore);
+    }
+
+    /**
+     * Breath gained, and lost when it went the other way.
+     *
+     * <p>Counted both ways, unlike hunger. Hunger ticks down all day whatever the body is doing, so
+     * charging for the fall would be charging for the passage of time; air only falls while the head is
+     * under water, and that fall is the whole danger. A dive that comes back up nets to nothing, and one
+     * that does not is a run of charges leading up to the damage rather than a surprise when it starts.
+     */
+    public int airDelta() {
+        return airAfter - airBefore;
     }
 
     /** Half-hearts gained; negative when the body took a hit. */

@@ -26,6 +26,7 @@ import io.github.ivannavas.autocraftai.mob.ai.objective.Bounds;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Gather;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Phase;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Plan;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Reserve;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Source;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Structure;
@@ -171,11 +172,19 @@ public final class ClaudePlanner implements ObjectivePlanner {
             String reply = agent.execute(CONVERSATION, prompt).response();
             Optional<Phase> errand = parse(reply);
             if (errand.isPresent()) {
-                Bounds band = bounds(reply);
-                log.info("Next objective: {} ({}) - {}", errand.get(), band, errand.get().reason());
-                PlannerLog.get().answered(errand.get().name(),
-                        band.bind() ? errand.get().reason() + " · " + band : errand.get().reason(), reply);
-                answer.set(new Plan(errand.get(), band));
+                // Built before it is logged: an empty list is filled in from the objective, and the line
+                // in the log should say what the run is actually going to work to.
+                Plan plan = new Plan(errand.get(), bounds(reply), needs(reply), reserved(reply));
+                log.info("Next objective: {} ({}) needing {}{} - {}",
+                        plan.objective(), plan.bounds(), plan.needs(),
+                        plan.reserved().isEmpty() ? "" : ", holding back " + plan.reserved().kept(),
+                        plan.objective().reason());
+                PlannerLog.get().answered(plan.objective().name(),
+                        plan.bounds().bind()
+                                ? plan.objective().reason() + " · " + plan.bounds()
+                                : plan.objective().reason(),
+                        reply);
+                answer.set(plan);
                 return;
             }
             // Nothing to take, but for two very different reasons, and only one of them is a problem.
@@ -220,6 +229,42 @@ public final class ClaudePlanner implements ObjectivePlanner {
                 .filter(node -> node.has("floor") && node.has("ceiling"))
                 .map(node -> new Bounds(node.path("floor").asInt(), node.path("ceiling").asInt()))
                 .orElseGet(Bounds::anywhere);
+    }
+
+    /**
+     * Everything the reply says the run will need, and how much of each.
+     *
+     * <p>Anything outside the vocabulary is dropped rather than sinking the objective, and an empty list
+     * means the plan falls back to whatever the objective itself implies. Both are the same judgement as
+     * everywhere else here: a good answer with one bad line in it is still a good answer.
+     */
+    private Map<Resource, Integer> needs(String reply) {
+        return amounts(reply, "needs");
+    }
+
+    /**
+     * What the reply puts aside, as a reserve the masks can enforce.
+     *
+     * <p>Read exactly like the shopping list and meaning something much stronger — see
+     * {@link Reserve}. Same forgiveness, for the same reason: a name outside the vocabulary is dropped
+     * rather than sinking an otherwise good objective, and nothing put aside is a perfectly ordinary
+     * answer.
+     */
+    private Reserve reserved(String reply) {
+        return new Reserve(amounts(reply, "reserve"));
+    }
+
+    /** A list of {@code {"item": ..., "amount": ...}} under one key, with anything unrecognised dropped. */
+    private Map<Resource, Integer> amounts(String reply, String field) {
+        Map<Resource, Integer> listed = new java.util.LinkedHashMap<>();
+        object(reply).map(node -> node.path(field)).filter(JsonNode::isArray).ifPresent(entries -> {
+            for (JsonNode entry : entries) {
+                named(Resource.class, entry.path("item").asText(""))
+                        .ifPresent(resource -> listed.merge(resource,
+                                Math.max(1, entry.path("amount").asInt(1)), Math::max));
+            }
+        });
+        return listed;
     }
 
     /** The sentence that came with a reply, for the overlay. Empty when there was none. */

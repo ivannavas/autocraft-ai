@@ -14,48 +14,75 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * Goes somewhere. Picks a heading and keeps to it, which is the whole difference from wandering.
+ * Goes somewhere, and keeps going there.
  *
  * <p>{@link RandomStrollGoal} re-rolls its destination every few seconds, so over a minute it covers a
- * circle about ten blocks across — fine for milling about, useless for leaving a desert. This one holds one
- * bearing and walks it, aiming at a spot a few blocks ahead each time so the straight-line steering always
- * has somewhere loaded to head for, and only turns when the ground gives it no choice.
+ * circle about ten blocks across — fine for milling about, useless for leaving a desert. This one is handed
+ * a line by the position table (see {@link io.github.ivannavas.autocraftai.mob.ai.Ground}) and walks it.
  *
- * <p>Turning by a fixed angle rather than re-rolling is deliberate. A body that turns randomly whenever it
- * is blocked wanders on the spot in front of a wall; one that turns forty-five degrees and tries again
- * walks along the wall until it ends.
+ * <h2>The bearing is the journey; the heading is only this second</h2>
+ * The two used to be one number, and that is why the body walked in circles. Meeting a wall turned the
+ * heading forty-five degrees and left it turned, so a run along a coastline or through a forest — anything
+ * that deflects you the same way twice — came round on itself by construction, and eight deflections was a
+ * full circle. Nothing ever brought the body back to the line it set off on, because after the first wall
+ * there was no such line any more.
  *
- * <p>Which line it sets off on is not this goal's business any more. The position table picks it — see
- * {@link io.github.ivannavas.autocraftai.mob.ai.Ground} — and a journey that starts towards ground the
- * body has not covered is the difference between exploring and walking a loop. With nothing chosen it
- * sets off the way it is already facing, which is what it always did.
+ * <p>So the bearing is kept, untouched, for the whole journey, and a wall buys a <em>detour</em>: the
+ * nearest heading to the bearing that is actually walkable, tried at forty-five, ninety and a hundred and
+ * thirty-five degrees off it, and finally straight back. Every second the line itself is offered first
+ * again, so the moment the obstacle ends the body is back on it. Detours are tried on whichever side the
+ * last one went before the other, which is what keeps the body following one face of a wall to its end
+ * instead of sidestepping back and forth in front of the middle of it.
+ *
+ * <h2>Progress is measured along the bearing, not in footsteps</h2>
+ * The old test for being stuck was how far the body moved between re-aims, which a body walking a circle
+ * passes with room to spare — it is moving, briskly, in a ring. What counts here is how far along the
+ * bearing it has got from where it started, ratcheted: the journey has to keep beating its own record, or
+ * it is not a journey and the decision goes back to the brain.
  */
 public final class TravelGoal implements MobGoal {
 
     private static final Set<MobControl> CONTROLS = EnumSet.of(MobControl.MOVE, MobControl.LOOK);
 
-    /** How far ahead to aim. Far enough to be a direction, near enough to be loaded and walkable. */
-    private static final int AIM_AHEAD = 10;
-    /** Ticks between re-aims. The destination is reached long before this on open ground. */
+    /** The furthest ahead to aim. Far enough to be a direction, near enough to be loaded and walkable. */
+    private static final int AIM_FURTHEST = 12;
+    /** The nearest. Closer than this the destination is under the body's own feet and steering is noise. */
+    private static final int AIM_NEAREST = 4;
+    /** How far apart the points along a line are sampled. */
+    private static final int AIM_STEP = 4;
+    /** Ticks between re-aims, which is also how often the detour is dropped and the bearing tried again. */
     private static final int REAIM_TICKS = 20;
-    /** Under this much ground covered between re-aims, the way ahead is blocked. */
-    private static final double PROGRESS = 1.5;
-    /** How far to turn when the way ahead is blocked. */
+    /** How far a detour turns, and so how far apart the detours that get tried are. */
     private static final double TURN = Math.PI / 4.0;
+    /** How many turns to either side are worth trying before giving up on going forwards at all. */
+    private static final int DETOURS = 3;
+    /** Blocks of new ground along the bearing that count as having got somewhere. */
+    private static final double ADVANCE = 4.0;
+    /** Ticks allowed without making that much new ground. A ring of any size fails this. */
+    private static final int STALL_TICKS = 200;
     /** Long: this is a journey, and the brain's commitment is what really ends it. */
     private static final int GIVE_UP_TICKS = 1200;
-    /** Tries this many turns before admitting there is nowhere to go from here. */
-    private static final int TURN_ATTEMPTS = 8;
     private static final int FLOOR_SEARCH_UP = 3;
     private static final int FLOOR_SEARCH_DOWN = 4;
     private static final float SPEED = 1.0F;
 
     private final OptionalDouble told;
 
-    private double heading;
+    /**
+     * The journey, which outlives a restart.
+     *
+     * <p>A goal can be started several times inside one decision — something with a higher claim takes the
+     * legs and gives them back — and a journey that forgot where it set off from every time that happened
+     * could never tell a body that had walked in a ring from one that had only just arrived.
+     */
+    private boolean underway;
+    private double bearing;
+    private Vec3 origin;
+    private double furthest;
+    private int detourSide = 1;
     private int ticksRunning;
     private int ticksSinceAim;
-    private Vec3 lastAimPosition;
+    private int ticksSinceGain;
     private boolean stranded;
 
     /** Sets off whichever way the body is facing. */
@@ -63,7 +90,7 @@ public final class TravelGoal implements MobGoal {
         this(OptionalDouble.empty());
     }
 
-    /** @param told the heading to set off on, or empty to use whichever way the body is facing */
+    /** @param told the bearing to walk, or empty to use whichever way the body is facing */
     public TravelGoal(OptionalDouble told) {
         this.told = told == null ? OptionalDouble.empty() : told;
     }
@@ -75,7 +102,11 @@ public final class TravelGoal implements MobGoal {
 
     @Override
     public boolean canUse(MobBody body) {
-        return body.onGround() && !body.player().isPassenger();
+        // Being stranded has to bar the start as well as the continuation. The engine offers a stopped goal
+        // the body again on the very next tick, so without this the giving up is a stutter rather than a
+        // handover, and the decision never gets back to the brain that has to learn from it.
+        return !stranded && ticksRunning < GIVE_UP_TICKS
+                && body.onGround() && !body.player().isPassenger();
     }
 
     @Override
@@ -85,28 +116,30 @@ public final class TravelGoal implements MobGoal {
 
     @Override
     public void start(MobBody body) {
-        ticksRunning = 0;
+        if (!underway) {
+            underway = true;
+            // Whatever the position table chose, or the way the body is already facing. It was looking at
+            // something a moment ago, and spinning on the spot before walking reads as a bug.
+            bearing = told.orElseGet(() -> Math.toRadians(body.player().getYRot()));
+            origin = body.position();
+            furthest = 0.0;
+        }
+        // What the stop actually undid: the destination was dropped. Everything else belongs to the
+        // journey, and the journey did not begin again just because the body came back.
         ticksSinceAim = 0;
-        stranded = false;
-        // Whatever was chosen, or the way the body is already facing. It was looking at something a
-        // moment ago, and spinning on the spot before walking is the sort of thing that reads as a bug.
-        heading = told.orElseGet(() -> Math.toRadians(body.player().getYRot()));
-        lastAimPosition = body.position();
         aim(body);
     }
 
     @Override
     public void tick(MobBody body) {
         ticksRunning++;
-        if (++ticksSinceAim < REAIM_TICKS) {
-            return;
+        noteProgress(body);
+        // Re-aimed on a timer, so the bearing is offered again every second, and on arrival, so a short
+        // detour does not leave the body standing at its destination waiting for the timer.
+        if (++ticksSinceAim >= REAIM_TICKS || !body.moveControl().hasDestination()) {
+            ticksSinceAim = 0;
+            aim(body);
         }
-        ticksSinceAim = 0;
-        if (body.position().distanceTo(lastAimPosition) < PROGRESS) {
-            heading += TURN;
-        }
-        lastAimPosition = body.position();
-        aim(body);
     }
 
     @Override
@@ -114,21 +147,76 @@ public final class TravelGoal implements MobGoal {
         body.moveControl().stop();
     }
 
-    /** Points the body at a spot along the current heading, turning until one of them is walkable. */
+    /**
+     * How the journey is doing, in the only terms that tell a line from a loop.
+     *
+     * <p>A ratchet against the best the journey has ever managed rather than against the last reading, so
+     * rounding a lake — which spends a while going sideways and some of it going backwards — is not
+     * mistaken for being stuck. What it will not forgive is ending up where it started.
+     */
+    private void noteProgress(MobBody body) {
+        double advanced = advanced(body.position());
+        if (advanced > furthest + ADVANCE) {
+            furthest = advanced;
+            ticksSinceGain = 0;
+            return;
+        }
+        if (++ticksSinceGain >= STALL_TICKS) {
+            stranded = true;
+        }
+    }
+
+    /** How far along the bearing the body has got from where the journey started. */
+    private double advanced(Vec3 position) {
+        double dx = position.x - origin.x;
+        double dz = position.z - origin.z;
+        return dx * -Math.sin(bearing) + dz * Math.cos(bearing);
+    }
+
+    /** Points the body along the bearing, or along the least of the detours from it that is walkable. */
     private void aim(MobBody body) {
-        for (int attempt = 0; attempt < TURN_ATTEMPTS; attempt++) {
-            Vec3 ahead = body.position().add(
-                    -Math.sin(heading) * AIM_AHEAD, 0.0, Math.cos(heading) * AIM_AHEAD);
-            Vec3 spot = standingSpot(body, BlockPos.containing(ahead));
-            if (spot != null) {
+        for (int turn = 0; turn <= DETOURS; turn++) {
+            for (int side : turn == 0 ? new int[] {1} : new int[] {detourSide, -detourSide}) {
+                Vec3 spot = furthestWalkable(body, bearing + side * turn * TURN);
+                if (spot == null) {
+                    continue;
+                }
+                if (turn > 0) {
+                    // Remembered so the next wall is taken on the same side. Alternating sides in front of
+                    // a long wall is how a body sidesteps for a minute without ever getting past it.
+                    detourSide = side;
+                }
                 body.lookControl().lookAt(spot);
                 body.moveControl().moveTo(spot, SPEED);
                 return;
             }
-            heading += TURN;
         }
-        // Every direction is a cliff, a wall or unloaded chunk. Hand the decision back rather than shove.
+        // Every way out is a cliff, a wall or unloaded chunk. Hand the decision back rather than shove.
         stranded = true;
+    }
+
+    /**
+     * The furthest point along a line the body could walk to without the ground giving out on the way.
+     *
+     * <p>Sampled outwards and stopped at the first gap, rather than asked about the far end alone. A single
+     * tree trunk twelve blocks off used to condemn a whole direction, and a direction condemned was a turn,
+     * and the turns were the circling. This aims short of the trunk instead, and a second later the tree is
+     * beside the body and the line is clear again.
+     *
+     * @return where to walk, or null when even the first step that way is not walkable
+     */
+    private Vec3 furthestWalkable(MobBody body, double heading) {
+        Vec3 best = null;
+        for (int ahead = AIM_NEAREST; ahead <= AIM_FURTHEST; ahead += AIM_STEP) {
+            Vec3 point = body.position().add(
+                    -Math.sin(heading) * ahead, 0.0, Math.cos(heading) * ahead);
+            Vec3 spot = standingSpot(body, BlockPos.containing(point));
+            if (spot == null) {
+                break;
+            }
+            best = spot;
+        }
+        return best;
     }
 
     /**

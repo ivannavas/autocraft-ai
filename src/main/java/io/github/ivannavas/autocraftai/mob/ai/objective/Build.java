@@ -1,6 +1,7 @@
 package io.github.ivannavas.autocraftai.mob.ai.objective;
 
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Predicate;
 
@@ -24,6 +25,17 @@ public record Build(Structure structure, String reason) implements Phase {
 
     public Build {
         reason = reason == null ? "" : reason.strip();
+    }
+
+    @Override
+    public Map<Resource, Integer> needs() {
+        return Map.of(structure.material(), structure.count());
+    }
+
+    /** Its material, so the plan does not charge for the very blocks this objective wants put down. */
+    @Override
+    public Optional<Resource> scores() {
+        return Optional.of(structure.material());
     }
 
     @Override

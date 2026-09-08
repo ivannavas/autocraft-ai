@@ -76,6 +76,14 @@ public record Bounds(int floor, int ceiling) {
         return -perSecond * Math.max(1, seconds);
     }
 
+    /** The nearest height inside the band, which is where a body outside it should be heading. */
+    public int nearestEdge(int y) {
+        if (y < floor) {
+            return floor;
+        }
+        return y > ceiling ? ceiling : y;
+    }
+
     /** Where a height sits relative to the band, in a word, for the state key. */
     public String where(int y) {
         if (!bind()) {

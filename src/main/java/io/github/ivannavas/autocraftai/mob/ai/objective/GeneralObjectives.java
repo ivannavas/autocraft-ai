@@ -47,6 +47,16 @@ public final class GeneralObjectives {
      */
     private static final double NOURISHMENT_WEIGHT = 0.6;
 
+    /**
+     * Per tick of breath, so a whole lungful is worth about a log and a half.
+     *
+     * <p>Drowning damage is already priced by survival, and by the time it starts the body has about four
+     * seconds to live. This is the fifteen seconds before that: a signal that gets worse the longer the
+     * head stays under, so the water table has something to learn from besides the corpse. Small on
+     * purpose — a run that never gets its feet wet should not be collecting anything for it.
+     */
+    private static final double BREATH_WEIGHT = 0.02;
+
     private static final List<Objective> ALL = List.of(
             objective("survival", context -> context.healthDelta() * HEALTH_WEIGHT),
             // Both are per-second quantities, so both scale with how long the move was held. Without that
@@ -58,7 +68,8 @@ public final class GeneralObjectives {
             objective("impatience", context -> -IDLE_COST * context.steps()),
             // Already a per-second quantity, since it is counted in ticks as they pass.
             objective("wasted effort", context -> -WASTED_EFFORT_COST * context.wastedSeconds()),
-            objective("nourishment", context -> context.foodGained() * NOURISHMENT_WEIGHT));
+            objective("nourishment", context -> context.foodGained() * NOURISHMENT_WEIGHT),
+            objective("breath", context -> context.airDelta() * BREATH_WEIGHT));
 
     private GeneralObjectives() {
     }

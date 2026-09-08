@@ -13,6 +13,7 @@ import io.github.ivannavas.autocraftai.mob.ai.Interruption;
 import io.github.ivannavas.autocraftai.mob.ai.Ground;
 import io.github.ivannavas.autocraftai.mob.ai.Perception;
 import io.github.ivannavas.autocraftai.mob.ai.Spot;
+import io.github.ivannavas.autocraftai.mob.ai.Swim;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Rung;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Structure;
@@ -58,12 +59,17 @@ final class Labels {
     private static final List<String> TEXT = List.of(
             "objective", "doing", "making",
             "goals", "crafts", "interrupts", "interrupts.suffix", "planner", "placement", "position",
-            "head.placement", "head.position",
+            "water",
+            "head.placement", "head.position", "head.water",
+            "depth.WADING", "depth.SWIMMING", "depth.SUBMERGED",
+            "air.FULL", "air.LOW", "air.EMPTY",
+            "breath.ABOVE", "breath.NEAR", "breath.FAR", "breath.NONE",
+            "shore.NEAR", "shore.FAR", "shore.NONE",
             "band.IN", "band.BELOW", "band.ABOVE", "band.ANY",
             "trail.FRESH", "trail.CIRCLING", "trail.PINNED",
             "head.situation", "head.craft", "head.stuck",
             "empty.goals", "empty.crafts", "empty.interrupts", "empty.planner", "empty.placement",
-            "empty.position",
+            "empty.position", "empty.water",
             "ago", "going.GET", "going.GO", "going.DOWN", "going.UP", "going.BUILD", "going.NONE",
             "machine", "cpu", "memory",
             "key.worse", "key.better", "key.bar", "key.best", "key.distance", "key.tables",
@@ -71,7 +77,7 @@ final class Labels {
             "tally.decisions", "tally.random",
             "verdict.avoid", "verdict.none",
             "qualifier.wall", "qualifier.blocks", "qualifier.hungry",
-            "bag.empty", "bag.holding",
+            "bag.empty", "bag.holding", "needs.nothing", "needs.short",
             "shape.gather", "shape.travel", "shape.descend", "shape.ascend", "shape.build",
             "tip.cpu", "tip.cpu.machine", "tip.memory", "tip.memory.machine");
 
@@ -94,6 +100,7 @@ final class Labels {
         groups.put("planner", enums("planner", PlannerLog.Kind.values()));
         groups.put("spot", enums("spot", Spot.values()));
         groups.put("ground", enums("ground", Ground.values()));
+        groups.put("swim", enums("swim", Swim.values()));
         // The seven fixed rungs, plus the two states that are not an objective at all.
         Map<String, String> objectives = enums("objective", Rung.values());
         objectives.putAll(words("objective.", List.of("PLANNING", "DONE")));

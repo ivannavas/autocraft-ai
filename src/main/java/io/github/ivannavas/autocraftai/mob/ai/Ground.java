@@ -53,7 +53,7 @@ public enum Ground {
             case STAY -> OptionalDouble.empty();
             case BACK -> territory.back();
             case ONWARD -> OptionalDouble.of(facing(player));
-            case FRESH -> territory.towardsFresh(player.position());
+            case FRESH -> territory.towardsFresh(player.position(), facing(player));
             case LEFT -> OptionalDouble.of(facing(player) - QUARTER);
             case RIGHT -> OptionalDouble.of(facing(player) + QUARTER);
         };

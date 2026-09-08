@@ -54,6 +54,8 @@ final class Json {
         out.append("\"positionRows\":").append(rows(snapshot.positionRows())).append(',');
         out.append("\"placementActions\":").append(strings(snapshot.placementActions())).append(',');
         out.append("\"placementRows\":").append(rows(snapshot.placementRows())).append(',');
+        out.append("\"waterActions\":").append(strings(snapshot.waterActions())).append(',');
+        out.append("\"waterRows\":").append(rows(snapshot.waterRows())).append(',');
         out.append("\"interruptActions\":").append(strings(snapshot.interruptActions())).append(',');
         out.append("\"interruptRows\":").append(rows(snapshot.interruptRows())).append(',');
         out.append("\"rows\":").append(rows(snapshot));

@@ -50,11 +50,13 @@ public final class DigDownGoal implements MobGoal {
     private static final int BOTTOM = -59;
     /** A block that has not given way in this long is not going to. */
     private static final int GIVE_UP_TICKS = 400;
-    /** Unable to draw a line to the floor for this long: something is in the way that will not move. */
-    private static final int BLIND_TICKS = 30;
+    /** Getting nowhere for this long: something is wrong that standing there will not fix. */
+    private static final int STALLED_TICKS = 30;
 
+    // Counted from when this goal was made, not from when it was last started: a restart cancels the
+    // break, so counting from each one lets a goal that keeps being interrupted try for ever.
     private int ticksRunning;
-    private int ticksBlind;
+    private int ticksStalled;
     private boolean breaking;
     private boolean unsafe;
     private BlockPos equippedFor;
@@ -82,10 +84,7 @@ public final class DigDownGoal implements MobGoal {
 
     @Override
     public void start(MobBody body) {
-        ticksRunning = 0;
-        ticksBlind = 0;
         breaking = false;
-        unsafe = false;
         equippedFor = null;
     }
 
@@ -160,28 +159,33 @@ public final class DigDownGoal implements MobGoal {
 
     private void swing(MobBody body, BlockPos target) {
         BlockHitResult hit = aimedAt(body, target);
-        if (hit == null) {
-            // Still turning to look down. Swinging now would ask the server to break whatever is in the
-            // way instead, which is the wall in front rather than the floor.
+        if (hit == null || !strike(body, target, hit)) {
+            // Still turning to look down, something in the way, or a blow the game would not take.
             breaking = false;
-            if (++ticksBlind >= BLIND_TICKS) {
+            if (++ticksStalled >= STALLED_TICKS) {
                 unsafe = true;
             }
             return;
         }
-        ticksBlind = 0;
-        gameMode().ifPresent(gameMode -> {
-            if (gameMode.continueDestroyBlock(hit.getBlockPos(), hit.getDirection())) {
-                Minecraft.getInstance().level.addBreakingBlockEffect(hit.getBlockPos(), hit.getDirection());
-                body.player().swing(InteractionHand.MAIN_HAND);
-                breaking = true;
-                // A shaft through stone with no pickaxe still gets deeper, very slowly, and comes up with
-                // nothing on the way. The depth is the objective's business; the waste is charged here.
-                if (!body.player().hasCorrectToolForDrops(body.level().getBlockState(target))) {
-                    WastedEffort.get().wastedSwing();
-                }
-            }
-        });
+        ticksStalled = 0;
+    }
+
+    /** One blow. False when the game would not take it, which is a tick that got nowhere like any other. */
+    private boolean strike(MobBody body, BlockPos target, BlockHitResult hit) {
+        MultiPlayerGameMode gameMode = Minecraft.getInstance().gameMode;
+        if (gameMode == null
+                || !gameMode.continueDestroyBlock(hit.getBlockPos(), hit.getDirection())) {
+            return false;
+        }
+        Minecraft.getInstance().level.addBreakingBlockEffect(hit.getBlockPos(), hit.getDirection());
+        body.player().swing(InteractionHand.MAIN_HAND);
+        breaking = true;
+        // A shaft through stone with no pickaxe still gets deeper, very slowly, and comes up with nothing
+        // on the way. The depth is the objective's business; the waste is charged here.
+        if (!body.player().hasCorrectToolForDrops(body.level().getBlockState(target))) {
+            WastedEffort.get().wastedSwing();
+        }
+        return true;
     }
 
     /**

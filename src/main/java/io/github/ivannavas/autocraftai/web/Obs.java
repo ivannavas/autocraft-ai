@@ -176,15 +176,17 @@ public final class Obs implements AutoCloseable {
     /**
      * Points OBS at TikTok and starts sending.
      *
-     * <p>{@code rtmp_custom} rather than one of OBS's known services: TikTok hands out an ingest URL per
-     * broadcast, and a custom server is the only kind that takes one.
+     * <p>{@code rtmp_custom} rather than one of OBS's named services. A named service would tie the
+     * scene to one platform and hide the address; a custom one takes whatever ingest it is given, so the
+     * destination is a setting rather than a code change. The default happens to be YouTube's.
      *
      * @return false if it was already streaming, which is not a failure — it is the state that was asked for
      */
     public boolean go(String server, String key) throws ObsException {
         if (server.isBlank() || key.isBlank()) {
-            throw new ObsException("No RTMP server or stream key. Send them in the request body, or set "
-                    + "stream.server and stream.key in control.properties.");
+            throw new ObsException("No stream key. Paste it in the panel, or set stream.key in "
+                    + "control.properties. YouTube's is in YouTube Studio under Go Live -> Stream "
+                    + "settings, and it does not change between broadcasts.");
         }
         call("SetStreamServiceSettings", JSON.createObjectNode()
                 .put("streamServiceType", "rtmp_custom")

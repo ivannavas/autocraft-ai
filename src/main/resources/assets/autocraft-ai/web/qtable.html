@@ -566,6 +566,14 @@
   </section>
 
   <section class="block">
+    <div class="section-label" id="t-water">When it is in the water</div>
+    <table>
+      <thead><tr id="water-header"></tr></thead>
+      <tbody id="water-rows"></tbody>
+    </table>
+  </section>
+
+  <section class="block">
     <div class="section-label" id="t-planner">The planner</div>
     <div class="talk" id="planner"></div>
   </section>
@@ -637,10 +645,16 @@
       "goals": "What to do", "crafts": "What to make meanwhile",
       "interrupts": "When it gets stuck", "interrupts.suffix": "times reconsidered",
       "planner": "The planner", "placement": "Where to dig and build",
-      "position": "Which way to go",
-      "head.situation": "Situation", "head.craft": "Objective and bag", "head.stuck": "Stuck on",
+      "position": "Which way to go", "water": "When it is in the water",
+      "head.situation": "Situation", "head.craft": "What it is short of", "head.stuck": "Stuck on",
       "head.placement": "Doing what, going where",
       "head.position": "Going where, been where",
+      "head.water": "How deep, how much air",
+      "depth.WADING": "wading", "depth.SWIMMING": "swimming", "depth.SUBMERGED": "underwater",
+      "air.FULL": "air fine", "air.LOW": "air running out", "air.EMPTY": "no air left",
+      "breath.ABOVE": "air overhead", "breath.NEAR": "air close by", "breath.FAR": "air far off",
+      "breath.NONE": "no air in reach",
+      "shore.NEAR": "shore close by", "shore.FAR": "shore far off", "shore.NONE": "no way out",
       "band.IN": "in its band", "band.BELOW": "below its band", "band.ABOVE": "above its band",
       "band.ANY": "no band set",
       "trail.FRESH": "new ground", "trail.CIRCLING": "going in circles", "trail.PINNED": "not moving",
@@ -650,6 +664,7 @@
       "empty.planner": "it has not been asked anything yet",
       "empty.placement": "it has not dug or built anywhere yet",
       "empty.position": "it has not been anywhere yet",
+      "empty.water": "it has not been in the water yet",
       "ago": "%s ago",
       "machine": "Machine", "cpu": "CPU", "memory": "Memory",
       "key.worse": "worse", "key.better": "better", "key.bar": "the bar is how much",
@@ -662,6 +677,7 @@
       "qualifier.wall": "wall", "qualifier.blocks": "carrying blocks",
       "qualifier.hungry": "hungry",
       "bag.empty": "empty-handed", "bag.holding": "holding %s",
+      "needs.nothing": "has all it needs", "needs.short": "short of %s",
       "shape.gather": "get %1$s %2$s", "shape.travel": "go to %s",
       "shape.descend": "dig down to height %s", "shape.ascend": "climb to height %s",
       "shape.build": "build %s",
@@ -675,6 +691,7 @@
     action: {
       WANDER: "wander", APPROACH: "approach", FLEE: "flee", WATCH: "watch", MINE: "mine",
       PLACE: "place", TRAVEL: "travel", DIG_DOWN: "dig down", ATTACK: "attack", EAT: "eat",
+      REACH_BAND: "find the way up or down",
     },
     focus: {
       NOTHING: "nothing", BLOCK: "block", RESOURCE: "resource", ITEM: "item",
@@ -790,6 +807,7 @@
       "t-goals": "goals", "t-crafts": "crafts",
       "t-interrupts": "interrupts", "t-interrupts-suffix": "interrupts.suffix",
       "t-planner": "planner", "t-placement": "placement", "t-position": "position",
+      "t-water": "water",
       "t-machine": "machine", "t-cpu": "cpu", "t-memory": "memory",
       "t-key-worse": "key.worse", "t-key-better": "key.better", "t-key-bar": "key.bar",
       "t-key-best": "key.best", "t-key-distance": "key.distance", "t-key-tables": "key.tables",
@@ -854,11 +872,14 @@
   // The crafting table is keyed by "<objective>|<what is held>": what the run is after and what is already
   // in the bag, which is what actually decides a craft.
   function craftLabel(key, verdict) {
-    const [objective, held] = key.split("|");
+    const [short, held] = key.split("|");
+    const wanted = !short || short === "-"
+      ? t("needs.nothing")
+      : t("needs.short", short.split("+").map(r => word("resource", r)).join(", "));
     const holding = !held || held === "-"
       ? t("bag.empty")
-      : t("bag.holding", held.split("+").map(r => word("craft", r)).join(", "));
-    return `<span class="focus">${objectiveLabel(objective)}</span>` +
+      : t("bag.holding", held.split("+").map(r => word("resource", r)).join(", "));
+    return `<span class="focus">${wanted}</span>` +
            `<span class="qualifier"> · ${holding}</span>` + verdict;
   }
 
@@ -873,6 +894,19 @@
     const height = band && band !== "ANY" ? " · " + t("band." + band) : "";
     return `<span class="focus">${t("trail." + (trail || "FRESH"))}</span>` +
            `<span class="qualifier">${going}${height}${qualifiers(flags)}</span>` + verdict;
+  }
+
+  /**
+   * The water table is keyed by "<how deep>|<how much air>|<where air is>|<where land is>". How deep and
+   * how much air is the danger; the other two are what can be done about it, which is why a row with no
+   * way out in it reads so differently from one with the shore next door.
+   */
+  function waterLabel(key, verdict) {
+    const [depth, air, breath, shore] = key.split("|");
+    const left = t("air." + (air || "FULL"));
+    const ways = [t("breath." + (breath || "NONE")), t("shore." + (shore || "NONE"))].join(" · ");
+    return `<span class="focus">${t("depth." + (depth || "SWIMMING"))} · ${left}</span>` +
+           `<span class="qualifier"> · ${ways}</span>` + verdict;
   }
 
   /**
@@ -1042,6 +1076,13 @@
       actions: data.placementActions || [], rows: data.placementRows || [],
       group: "spot", label: spotLabel, max: MAX_PLACEMENT_ROWS, current: null,
       empty: "empty.placement",
+    });
+
+    renderTable({
+      headId: "water-header", bodyId: "water-rows", sideHead: "head.water",
+      actions: data.waterActions || [], rows: data.waterRows || [],
+      group: "swim", label: waterLabel, max: MAX_PLACEMENT_ROWS, current: null,
+      empty: "empty.water",
     });
 
     renderPlanner(data.planner || []);

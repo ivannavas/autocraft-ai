@@ -2,6 +2,7 @@ package io.github.ivannavas.autocraftai.mob.ai.objective;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Predicate;
 
@@ -39,6 +40,36 @@ public record Gather(Resource resource, int amount, List<Source> sources, String
     /** A gathering objective with nothing to say for itself, which is what the fallback ladder's rungs are. */
     public static Gather of(Resource resource, int amount) {
         return new Gather(resource, amount, List.of(), "");
+    }
+
+    @Override
+    public Map<Resource, Integer> needs() {
+        return Map.of(resource, amount);
+    }
+
+    /**
+     * Everything it gathers, held back.
+     *
+     * <p>Not a precaution: it is what the objective means. {@link #isComplete} asks whether the body is
+     * <em>holding</em> this much, so anything that spends one takes the run backwards, and the commonest
+     * way to spend one is the crafting table turning it into the next thing up the chain. The planner may
+     * add to this; it cannot take it away, because taking it away would leave an objective that undoes
+     * itself.
+     */
+    @Override
+    public Map<Resource, Integer> reserved() {
+        return Map.of(resource, amount);
+    }
+
+    /** Told where the resource comes from, seeing one of those blocks is not a decision. */
+    @Override
+    public boolean minesWhatItSees() {
+        return true;
+    }
+
+    @Override
+    public Optional<Resource> scores() {
+        return Optional.of(resource);
     }
 
     @Override

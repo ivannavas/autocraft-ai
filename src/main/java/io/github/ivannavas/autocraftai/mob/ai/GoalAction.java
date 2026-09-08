@@ -9,6 +9,7 @@ import io.github.ivannavas.autocraftai.mob.goal.FleeSightingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.MineSightingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.PlaceBlockGoal;
 import io.github.ivannavas.autocraftai.mob.goal.RandomStrollGoal;
+import io.github.ivannavas.autocraftai.mob.goal.ReachBandGoal;
 import io.github.ivannavas.autocraftai.mob.goal.TravelGoal;
 import io.github.ivannavas.autocraftai.mob.goal.WatchSightingGoal;
 
@@ -109,7 +110,7 @@ public enum GoalAction {
     PLACE {
         @Override
         public MobGoal create(ActionContext context, Aim aim) {
-            return new PlaceBlockGoal(aim.spot());
+            return new PlaceBlockGoal(aim.spot(), context.reserve());
         }
 
         @Override
@@ -171,6 +172,31 @@ public enum GoalAction {
         @Override
         public boolean isApplicable(ActionContext context) {
             return context.canDigDown() && context.worthDigging();
+        }
+
+        @Override
+        public boolean usesSighting() {
+            return false;
+        }
+    },
+
+    /**
+     * Find the way to the height the plan wants.
+     *
+     * <p>Not a shaft and not a pillar, though it will fall back to either. It walks: hillsides, ledges and
+     * cave mouths go up and down for free, and a body that could only ever go straight up or straight down
+     * from where it stood was the reason so many runs ended in a pit of their own making.
+     */
+    REACH_BAND {
+        @Override
+        public MobGoal create(ActionContext context, Aim aim) {
+            return new ReachBandGoal(context.heightWanted().orElse(context.sighting().isBlock()
+                    ? context.sighting().blockPos().getY() : 0), context.reserve());
+        }
+
+        @Override
+        public boolean isApplicable(ActionContext context) {
+            return context.heightWanted().isPresent();
         }
 
         @Override

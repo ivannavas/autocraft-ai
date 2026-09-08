@@ -1,6 +1,8 @@
 package io.github.ivannavas.autocraftai.mob.ai.objective;
 
+import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.function.Predicate;
 
 import net.minecraft.world.level.block.state.BlockState;
@@ -47,6 +49,64 @@ public interface Phase extends Objective {
      */
     default Optional<Predicate<BlockState>> wanted() {
         return Optional.empty();
+    }
+
+    /**
+     * What the run has to be holding for this to be reachable, and how much of each.
+     *
+     * <p>Only what the objective itself implies. The planner can say more — the whole shopping list for a
+     * pickaxe is logs and planks and sticks, and none of that is visible from the word "pickaxe" — and
+     * whatever it says replaces this. What this is for is the case where it says nothing, so that the
+     * crafting table still has something true to key on.
+     */
+    default Map<Resource, Integer> needs() {
+        return Map.of();
+    }
+
+    /**
+     * What pursuing this objective must not spend, and how much of each.
+     *
+     * <p>Unlike {@link #needs()} the planner does not replace this, it adds to it. Some objectives are a
+     * statement about what may not be spent — "get three logs" is finished by <em>holding</em> three logs,
+     * so a run that turns the first one into planks has not made a slightly worse choice, it has undone
+     * the objective — and that has to hold whether or not the model thought to say so. It went wrong
+     * exactly that way: the planner asked for logs and the body made planks out of the first one it cut,
+     * because a shopping list is a price and a price can be outvoted.
+     */
+    default Map<Resource, Integer> reserved() {
+        return Map.of();
+    }
+
+    /**
+     * Whether seeing one of the blocks this objective is after settles what to do about it.
+     *
+     * <p>True for gathering and false for everything else. When the planner has already said which blocks
+     * the resource comes off, "there is one in front of you" leaves nothing worth deciding: going to break
+     * it is the objective, spelled out. Learning that from rewards means spending a run's exploration
+     * rediscovering something the plan stated in the prompt.
+     */
+    default boolean minesWhatItSees() {
+        return false;
+    }
+
+    /**
+     * The resource this objective already pays and charges for on its own, if any.
+     *
+     * <p>The plan scores what it needs, and this is how it avoids scoring the same thing twice. It also
+     * settles a genuine disagreement: a {@link Build} wants its material to leave the bag and go into a
+     * wall, so charging that as a loss would make the objective punish itself for being carried out.
+     */
+    default Optional<Resource> scores() {
+        return Optional.empty();
+    }
+
+    /**
+     * The height this objective is about, when it is about one.
+     *
+     * <p>{@link Ascend} and {@link Descend} are; everything else leaves the question to the plan's band.
+     */
+    default OptionalInt height() {
+        return OptionalInt.empty();
     }
 
     /**

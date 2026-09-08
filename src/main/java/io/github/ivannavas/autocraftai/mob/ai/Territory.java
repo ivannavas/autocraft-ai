@@ -109,9 +109,19 @@ public final class Territory {
      * <p>Only the eight neighbours are considered. Somewhere genuinely new might be a hundred blocks off,
      * but the body cannot aim at what it has never seen; what it can do is take the next step away from
      * where it has been, and repeat.
+     *
+     * <p>Ties go to whichever of them is nearest the way the body is already going, and that is not a
+     * detail. On open ground every neighbour is equally untrodden, so the tie is the normal case, and
+     * settled by the order the loop happens to run in it picked a fixed compass direction regardless of
+     * where the body was pointed — which meant each decision could send it back across the one it had just
+     * made. Untrodden ground straight ahead is untrodden ground; going to it in a straight line is the
+     * difference between exploring and zig-zagging.
+     *
+     * @param facing which way the body is going now, as a yaw in radians
      */
-    public OptionalDouble towardsFresh(Vec3 from) {
-        double best = Double.MAX_VALUE;
+    public OptionalDouble towardsFresh(Vec3 from, double facing) {
+        int fewest = Integer.MAX_VALUE;
+        double straightest = Double.MAX_VALUE;
         double heading = 0.0;
         boolean found = false;
         for (int dx = -1; dx <= 1; dx++) {
@@ -121,14 +131,23 @@ public final class Territory {
                 }
                 Vec3 neighbour = from.add(dx * CELL, 0.0, dz * CELL);
                 int seen = visits.getOrDefault(cellOf(neighbour), 0);
-                if (seen < best) {
-                    best = seen;
-                    heading = Math.atan2(-dx, dz);
+                double towards = Math.atan2(-dx, dz);
+                double turn = turnBetween(towards, facing);
+                if (seen < fewest || (seen == fewest && turn < straightest)) {
+                    fewest = seen;
+                    straightest = turn;
+                    heading = towards;
                     found = true;
                 }
             }
         }
         return found ? OptionalDouble.of(heading) : OptionalDouble.empty();
+    }
+
+    /** The smaller of the two ways round between two yaws, in radians, so it is never more than a half. */
+    private static double turnBetween(double from, double to) {
+        double difference = Math.abs(from - to) % (Math.PI * 2.0);
+        return difference > Math.PI ? Math.PI * 2.0 - difference : difference;
     }
 
     /** The way the body came, as a yaw in radians, or empty when it has not been anywhere. */

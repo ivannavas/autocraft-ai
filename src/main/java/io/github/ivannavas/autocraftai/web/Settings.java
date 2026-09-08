@@ -157,22 +157,44 @@ public final class Settings {
         return value("overlay.url", "http://127.0.0.1:" + QTableServer.PORT + QTableServer.BASE);
     }
 
-    /** TikTok's RTMP ingest. Handed out per broadcast, so there is no useful default. */
+    /**
+     * Where the broadcast is sent.
+     *
+     * <p>YouTube's ingest is a fixed address, unlike the per-broadcast URL TikTok hands out, so it can
+     * usefully be a default and leave only the key to be pasted. RTMPS rather than RTMP because it is
+     * the same endpoint over TLS and YouTube asks for it on anything that matters; the plain
+     * {@code rtmp://a.rtmp.youtube.com/live2} still works if a build turns out to lack TLS.
+     *
+     * <p>Nothing here is YouTube-specific beyond this string — the scene is published through
+     * {@code rtmp_custom}, so any ingest that speaks RTMP works by overriding it.
+     */
     public String streamServer() {
-        return value("stream.server", "");
+        return value("stream.server", "rtmps://a.rtmps.youtube.com:443/live2");
     }
 
+    /**
+     * The key that says which channel this is.
+     *
+     * <p>YouTube's persists across broadcasts, so unlike TikTok's it is worth keeping on the box rather
+     * than pasting before every stream.
+     */
     public String streamKey() {
         return value("stream.key", "");
     }
 
-    /** Vertical by default. A stream that arrives 16:9 is letterboxed into a quarter of a phone screen. */
+    /**
+     * Horizontal by default, which is what a YouTube stream is.
+     *
+     * <p>720p rather than 1080p on purpose: every pixel here is drawn by a CPU that is also encoding
+     * them, and the measured headroom at this size is large enough to be comfortable rather than merely
+     * sufficient. Raise it if the box ever gets a graphics card.
+     */
     public int width() {
-        return number("stream.width", 1080);
+        return number("stream.width", 1280);
     }
 
     public int height() {
-        return number("stream.height", 1920);
+        return number("stream.height", 720);
     }
 
     public int fps() {
@@ -185,12 +207,18 @@ public final class Settings {
     }
 
     public double overlayHeight() {
-        return fraction("overlay.height", 0.42);
+        return fraction("overlay.height", 0.32);
     }
 
-    /** Measured from the top. The default parks the panel across the bottom of a vertical canvas. */
+    /**
+     * Measured from the top. The default parks the panel across the bottom third.
+     *
+     * <p>The overlay is drawn over the game rather than beside it, so this is how much of the picture it
+     * costs. A third is enough for the objective and the top of the goal table on a 16:9 canvas, and
+     * leaves the game — including its own HUD — the part people are actually watching.
+     */
     public double overlayTop() {
-        return fraction("overlay.top", 0.58);
+        return fraction("overlay.top", 0.68);
     }
 
     /**

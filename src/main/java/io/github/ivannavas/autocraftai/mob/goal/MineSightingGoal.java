@@ -38,9 +38,17 @@ import net.minecraft.world.phys.Vec3;
  * be reporting a floating log while the body stood there, aimed at the tree, mining nothing. This one asks
  * only about blocks.
  *
- * <p>When even that says the body is aimed at something else, the block really is behind something and no
- * amount of standing there will change it: the goal gives up after {@link #BLIND_TICKS} and hands the
- * decision back rather than staring for the rest of its commitment.
+ * <h2>Any tick that gets nowhere counts, and the count survives a restart</h2>
+ * Not being able to see the block is only one way to get nowhere. The swing can be refused — the server
+ * says no, the slot is wrong, the game is between block-break delays — and that looks identical from the
+ * outside: aimed at the tree, arm not moving. So the counter is about progress rather than about sight,
+ * and any tick that does not land a blow adds to it.
+ *
+ * <p>And it is not reset when the goal starts. A goal can be started several times inside one decision —
+ * something with a higher claim on the legs takes them for a while and gives them back — and each of those
+ * cancels the break in progress. Counting from each restart meant a goal that was being interrupted every
+ * two seconds could never reach any limit at all, and would sit there aiming for the rest of its
+ * commitment. The count belongs to the attempt, and the attempt is the whole decision.
  *
  * <h2>The right thing in the hand</h2>
  * Before the first swing it puts the block's tool in the hand if the hotbar has one. Which tool that is
@@ -68,16 +76,18 @@ public final class MineSightingGoal implements MobGoal {
     private static final double REACH_MARGIN = 0.5;
     /** A block that has not given way in this long is not going to; let the brain choose again. */
     private static final int GIVE_UP_TICKS = 300;
-    /** In reach and unable to draw a line to it for this long: something is in the way that will not move. */
-    private static final int BLIND_TICKS = 30;
+    /** In reach and getting nowhere for this long: something is wrong that standing there will not fix. */
+    private static final int STALLED_TICKS = 30;
     private static final float SPEED = 1.0F;
 
     private final Sighting sighting;
     private final BlockPos target;
     private final Tool tool;
 
+    // Counted from when this goal was made rather than from when it was last started, because a restart
+    // is a symptom of the problem and not a fresh chance at it.
     private int ticksRunning;
-    private int ticksBlind;
+    private int ticksStalled;
     private boolean breaking;
     private boolean equipped;
     private boolean blocked;
@@ -104,6 +114,17 @@ public final class MineSightingGoal implements MobGoal {
         return !blocked && ticksRunning < GIVE_UP_TICKS && canUse(body);
     }
 
+    /**
+     * Whether this attempt has been abandoned: in reach of the block, and getting nowhere at it.
+     *
+     * <p>Asked by the brain, and only because of the rule that forces mining on sight. A rule with no way
+     * out would insist on the same unreachable log for the rest of the run, so it yields to a block the
+     * body has already proved it cannot get at.
+     */
+    public boolean gaveUp() {
+        return blocked;
+    }
+
     /** Only once the block is actually coming apart — before that there is no progress worth protecting. */
     @Override
     public boolean isInterruptable() {
@@ -112,11 +133,11 @@ public final class MineSightingGoal implements MobGoal {
 
     @Override
     public void start(MobBody body) {
-        ticksRunning = 0;
-        ticksBlind = 0;
+        // Only what the stop actually undid: the break was cancelled and the held item may have changed
+        // hands. The counters are the attempt's, and the attempt did not start again just because the
+        // body came back.
         breaking = false;
         equipped = false;
-        blocked = false;
     }
 
     @Override
@@ -167,26 +188,34 @@ public final class MineSightingGoal implements MobGoal {
 
     private void swing(MobBody body) {
         BlockHitResult hit = aimedAtTarget(body);
-        if (hit == null) {
-            // Still turning, or something solid got between the body and the block. Swinging now would
-            // only ask the server to break whatever is in the way instead.
+        if (hit == null || !strike(body, hit)) {
+            // Still turning, something solid in the way, or a blow the game would not take. All of them
+            // look the same from here and all of them mean this tick got nowhere.
             breaking = false;
-            if (++ticksBlind >= BLIND_TICKS) {
+            if (++ticksStalled >= STALLED_TICKS) {
                 blocked = true;
             }
             return;
         }
-        ticksBlind = 0;
-        gameMode().ifPresent(gameMode -> {
-            // continueDestroyBlock starts the break itself when the target is new, so this one call covers
-            // both the first tick and every one after it.
-            if (gameMode.continueDestroyBlock(hit.getBlockPos(), hit.getDirection())) {
-                Minecraft.getInstance().level.addBreakingBlockEffect(hit.getBlockPos(), hit.getDirection());
-                body.player().swing(InteractionHand.MAIN_HAND);
-                breaking = true;
-                chargeForABareHandedSwing(body);
-            }
-        });
+        ticksStalled = 0;
+    }
+
+    /** One blow. False when the game would not take it, which is a tick that got nowhere like any other. */
+    private boolean strike(MobBody body, BlockHitResult hit) {
+        MultiPlayerGameMode gameMode = Minecraft.getInstance().gameMode;
+        if (gameMode == null) {
+            return false;
+        }
+        // continueDestroyBlock starts the break itself when the target is new, so this one call covers
+        // both the first tick and every one after it.
+        if (!gameMode.continueDestroyBlock(hit.getBlockPos(), hit.getDirection())) {
+            return false;
+        }
+        Minecraft.getInstance().level.addBreakingBlockEffect(hit.getBlockPos(), hit.getDirection());
+        body.player().swing(InteractionHand.MAIN_HAND);
+        breaking = true;
+        chargeForABareHandedSwing(body);
+        return true;
     }
 
     /**

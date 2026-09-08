@@ -31,6 +31,11 @@ public record Descend(int level, String reason) implements Phase {
     }
 
     @Override
+    public java.util.OptionalInt height() {
+        return java.util.OptionalInt.of(level);
+    }
+
+    @Override
     public String shape() {
         return "DOWN";
     }
