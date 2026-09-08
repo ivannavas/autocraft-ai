@@ -142,6 +142,20 @@ public final class QTable {
         learn(state, action, reward);
     }
 
+    /**
+     * Plants a value at a state and action outright, as a lesson taught rather than a reward earned.
+     *
+     * <p>The mentor uses this to hand the local policy an answer it could not find fast enough on its own:
+     * make the escape move attractive in the state it kept failing in, so epsilon-greedy takes it and,
+     * because the value is written into the table like any other, keeps it. Ordinary updates adjust it
+     * afterwards, so a lesson that turns out wrong is unlearned rather than frozen.
+     */
+    public void seed(String state, int action, double value) {
+        if (action >= 0 && action < actionCount) {
+            valuesFor(state)[action] = value;
+        }
+    }
+
     private void learn(String state, int action, double target) {
         double[] stateValues = valuesFor(state);
         stateValues[action] += LEARNING_RATE * (target - stateValues[action]);

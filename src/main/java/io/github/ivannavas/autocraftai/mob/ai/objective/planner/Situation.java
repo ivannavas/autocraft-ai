@@ -138,6 +138,31 @@ public record Situation(
         return !objective.isEmpty();
     }
 
+    /**
+     * A coarse fingerprint of the situation, for the planner's answer cache. Two situations with the same
+     * fingerprint get the same objective, so the second one is served from memory rather than the network.
+     * Deliberately lossy — the biome family, the time of day, the danger, and roughly what has been got —
+     * because that is what actually changes the answer, and finer detail would only turn every step into a
+     * cache miss.
+     */
+    public String signature() {
+        return dimension + '|' + biome + '|' + (night ? "night" : "day")
+                + '|' + (health < maxHealth / 2 ? "hurt" : "ok")
+                + '|' + (food < 10 ? "hungry" : "fed")
+                + '|' + (hostilesNearby > 0 ? "threat" : "safe")
+                + '|' + tierReached() + '|' + objective;
+    }
+
+    /** How far up the chain the run has got, in a word — what the next objective hangs on. */
+    private String tierReached() {
+        return obtained.entrySet().stream()
+                .filter(e -> e.getValue() > 0)
+                .map(e -> e.getKey().name())
+                .sorted()
+                .reduce((a, b) -> a + ',' + b)
+                .orElse("nothing");
+    }
+
     /** One line, for the overlay: enough to tell one call apart from the next. */
     public String summary() {
         return String.format(Locale.ROOT, "%s, Y %d, %.0f/%.0f HP, %d/%d food%s",

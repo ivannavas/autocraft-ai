@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.function.Consumer;
@@ -25,6 +26,10 @@ import io.github.ivannavas.autocraftai.mob.ai.objective.Phase;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Progression;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Pursuit;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Reserve;
+import io.github.ivannavas.autocraftai.mob.ai.objective.mentor.ClaudeMentor;
+import io.github.ivannavas.autocraftai.mob.ai.objective.mentor.Mentor;
+import io.github.ivannavas.autocraftai.mob.ai.objective.mentor.MentorAsk;
+import io.github.ivannavas.autocraftai.mob.ai.objective.mentor.Rescue;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.PlannerLog;
 import io.github.ivannavas.autocraftai.mob.ai.objective.StepContext;
@@ -193,6 +198,8 @@ public final class QLearningBrain {
     private final Perception perception = new Perception();
     private final Territory territory = new Territory();
     private final Progression progression;
+    /** Asked, and only on a real block, to teach the local policy the way out and keep it. */
+    private final Mentor mentor;
 
     private final Path directory;
     private final Table crafting;
@@ -285,6 +292,7 @@ public final class QLearningBrain {
         // The objectives are planned rather than scripted: the ladder that used to be the plan is now only
         // what the run climbs when there is nobody to ask.
         this.progression = Progression.planned(directory);
+        this.mentor = ClaudeMentor.create(directory);
         this.directory = directory;
         this.crafting = new Table(names(CraftChoice.values()), directory.resolve("crafting.txt"));
         this.water = new Table(names(Swim.values()), directory.resolve("water.txt"));
@@ -364,6 +372,7 @@ public final class QLearningBrain {
             // here — the body never stopped being in the world — and keeps its run, as it should.
             inWorld = true;
             progression.arrive(player);
+            mentor.reset();
         }
         if (++ticksSinceStep < STEP_TICKS) {
             return;
@@ -429,6 +438,38 @@ public final class QLearningBrain {
                 || installedGoal.stalledTicks() >= STALL_TICKS;
     }
 
+    /**
+     * Plants any lesson the mentor has sent into the folder and state it was taught for. The block that
+     * prompted it is thereby resolved in the table itself, so it holds across the rest of the run and no
+     * mentor is called for it again.
+     */
+    private void applyLessons() {
+        Optional<Rescue> rescue = mentor.take();
+        if (rescue.isEmpty()) {
+            return;
+        }
+        Suite suite = suites.get(rescue.get().pursuit());
+        if (suite == null) {
+            return;
+        }
+        rescue.get().lessons().forEach(lesson ->
+                suite.goals.seed(rescue.get().state(), lesson.action(), lesson.value()));
+        log.info("Applied {} lessons to {} at {}", rescue.get().lessons().size(),
+                rescue.get().pursuit(), rescue.get().state());
+    }
+
+    /** The best a folder's goal table thinks any legal move in this state is worth; zero when it knows none. */
+    private static double bestLegal(Table goals, String state, boolean[] legal) {
+        double[] values = goals.table.valuesFor(state);
+        double best = 0.0;
+        for (int i = 0; i < values.length; i++) {
+            if (legal[i]) {
+                best = Math.max(best, values[i]);
+            }
+        }
+        return best;
+    }
+
     /** Whether this goal has taken the body off the primary and is getting somewhere with it. */
     private boolean busy(MobGoal goal) {
         return goal != null && !goal.controls().isEmpty() && engine.isRunning(goal)
@@ -459,6 +500,7 @@ public final class QLearningBrain {
     public void close() {
         save();
         progression.close();
+        mentor.close();
     }
 
     /**
@@ -548,6 +590,19 @@ public final class QLearningBrain {
         active.goals.learn(observation.key(), reward, step.steps(), legalGoals);
         crafting.learn(craftKey, reward, step.steps(), legalCrafts);
 
+        // A block the body is pinned in and its own table has no good answer for is the mentor's to
+        // teach. Asked before choosing so a lesson that has just arrived can change this very decision;
+        // the mentor dedups and throttles, so calling whenever the block holds costs nothing extra.
+        applyLessons();
+        if (territory.pinned() && !objectiveCraftable(legalCrafts)
+                && bestLegal(active.goals, observation.key(), legalGoals) <= 1.0E-4) {
+            String stuck = observation.key();
+            String folder = pursuit.name();
+            List<String> moves = names(GoalAction.values());
+            mentor.consider(() -> new MentorAsk(
+                    progression.blockSituation(player, obtained), folder, stuck, moves));
+        }
+
         int goalIndex = active.goals.choose(observation.key(), legalGoals);
         if (goalIndex < 0) {
             // WANDER is always legal, so this cannot happen; bail rather than index nothing.
@@ -615,6 +670,24 @@ public final class QLearningBrain {
      * <p>The table's pending claim is credited before the rule takes over, so a forced craft is never
      * mistaken for the table's own choice.
      */
+    /**
+     * Whether the very thing this objective scores can be crafted right this decision. When it can, a block
+     * the body is standing at is not what is holding it up — the craft is — so the mentor is not troubled
+     * for it: the craft layer makes the thing and the objective moves on.
+     */
+    private boolean objectiveCraftable(boolean[] legalCrafts) {
+        Resource after = progression.current().flatMap(Phase::scores).orElse(null);
+        if (after == null) {
+            return false;
+        }
+        for (CraftChoice choice : CraftChoice.values()) {
+            if (choice.resource() == after && legalCrafts[choice.ordinal()]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private CraftChoice chooseCraft(String craftKey, boolean[] legalCrafts) {
         Resource after = progression.current().flatMap(Phase::scores).orElse(null);
         if (after != null) {
@@ -1343,7 +1416,11 @@ public final class QLearningBrain {
             // Its own kind of work — a furnace, not a grid — and it claims the body like a table craft.
             craftGoal = new SmeltGoal(choice.resource(), choice.input());
             engine.addGoal(CRAFT_AT_TABLE_PRIORITY, craftGoal);
-        } else if (CraftAtTableGoal.tableAvailable(player)) {
+        } else if (!choice.handheld() && CraftAtTableGoal.tableAvailable(player)) {
+            // Only a three-wide recipe is worth walking to a table for. A two-by-two one is made in the
+            // inventory even when a table is right there: it claims no controls, so it gets made while the
+            // body does whatever else it is doing — and it still gets made when the body is pinned somewhere
+            // it cannot take the step to a table, which is exactly the spot a stuck planks craft died in.
             craftGoal = new CraftAtTableGoal(choice.resource());
             engine.addGoal(CRAFT_AT_TABLE_PRIORITY, craftGoal);
         } else {
@@ -1621,6 +1698,14 @@ public final class QLearningBrain {
             pendingState = state;
             pendingColumn = column;
             return column;
+        }
+
+        /** Plants a taught value at a state and a named column, ignoring a column this table does not have. */
+        private void seed(String state, String action, double value) {
+            int column = columns.indexOf(action);
+            if (column >= 0) {
+                table.seed(state, column, value);
+            }
         }
 
         private void forget() {

@@ -89,6 +89,17 @@ public final class NewWorld {
 
     private final AtomicReference<Request> queued = new AtomicReference<>();
 
+    /**
+     * Told once the saved worlds have actually been deleted. No-op until something wants it.
+     *
+     * <p>What listens is the clip store: the recordings are of the run that has just been thrown away, so
+     * they go at the same moment its world does. Here rather than in the endpoint because this is the step
+     * that does the deleting — a request that never gets that far, because another one was already in
+     * flight, must not take the clips of a run that is still going with it.
+     */
+    private Runnable onWiped = () -> {
+    };
+
     /** Whether the world already on disk should be walked back into when the game comes up. */
     private final boolean autoOpen;
 
@@ -157,6 +168,11 @@ public final class NewWorld {
                 atTitle = true;
             }
         });
+    }
+
+    /** Tells {@code listener} about every later wipe of the saves folder. */
+    public void onWiped(Runnable listener) {
+        this.onWiped = listener;
     }
 
     /**
@@ -449,6 +465,7 @@ public final class NewWorld {
         try {
             int removed = wipe(saves);
             log.info("Removed {} saved world(s) from {}", removed, saves);
+            onWiped.run();
             waited = 0;
             step = Step.CREATING;
             create(client);

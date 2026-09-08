@@ -86,6 +86,14 @@ public final class ClaudePlanner implements ObjectivePlanner {
     private static final String CONVERSATION = "run";
     /** How long to leave a failing planner alone before asking it again. */
     private static final long RETRY_AFTER_MILLIS = 60_000L;
+    /**
+     * The least time between any two questions, answered or not. The planner is a strategist, not a
+     * reflex: asking it more than once a stretch spends tokens to hear the same thing. A block that needs
+     * a faster hand goes to the mentor, not to more planner calls.
+     */
+    private static final long MIN_INTERVAL_MILLIS = 20_000L;
+    /** How long a cached answer stands for a situation that has not meaningfully changed. */
+    private static final long CACHE_TTL_MILLIS = 120_000L;
     /** What the planner says when the objective it was asked about is still the right one. */
     private static final String KEEP = "KEEP";
     /** Read when the environment has no key. It is a secret: never logged, never echoed. */
@@ -104,6 +112,12 @@ public final class ClaudePlanner implements ObjectivePlanner {
     private final AtomicReference<Plan> answer = new AtomicReference<>();
     private final AtomicBoolean asking = new AtomicBoolean();
     private final AtomicLong silentUntil = new AtomicLong();
+    /** When the last question actually went out, for the minimum interval between them. */
+    private final AtomicLong lastAsked = new AtomicLong();
+    /** The last situation answered and what it was answered with, so an identical one skips the network. */
+    private final AtomicReference<String> cachedSignature = new AtomicReference<>("");
+    private final AtomicReference<Plan> cachedPlan = new AtomicReference<>();
+    private final AtomicLong cachedAt = new AtomicLong();
     /**
      * Which world this is, counted from the first. Names the conversation, and is captured by every
      * request on its way out so that a reply landing after the world it was asked about is gone can be
@@ -163,24 +177,37 @@ public final class ClaudePlanner implements ObjectivePlanner {
 
     @Override
     public void consider(Supplier<Situation> situation) {
-        if (System.currentTimeMillis() < silentUntil.get() || !asking.compareAndSet(false, true)) {
+        long now = System.currentTimeMillis();
+        if (now < silentUntil.get() || now - lastAsked.get() < MIN_INTERVAL_MILLIS
+                || !asking.compareAndSet(false, true)) {
             return;
         }
         // The description is built on the caller's thread, and that is where it has to be built: it reads
         // the world, and the world is only safe to read from the game thread.
         Situation asked = situation.get();
+        // The same situation, recently answered, is served from memory: the strategist would only say the
+        // same thing, and saying it again costs a call for nothing.
+        String signature = asked.signature();
+        if (signature.equals(cachedSignature.get()) && now - cachedAt.get() < CACHE_TTL_MILLIS
+                && cachedPlan.get() != null) {
+            answer.set(cachedPlan.get());
+            asking.set(false);
+            PlannerLog.get().kept("from memory (same situation)", signature);
+            return;
+        }
+        lastAsked.set(now);
         String prompt = asked.describe();
         PlannerLog.get().asked(asked.summary(), prompt);
         thread.execute(() -> {
             try {
-                ask(prompt);
+                ask(signature, prompt);
             } finally {
                 asking.set(false);
             }
         });
     }
 
-    private void ask(String prompt) {
+    private void ask(String signature, String prompt) {
         long asked = world.get();
         try {
             String reply = agent.execute(conversation(asked), prompt).response();
@@ -200,6 +227,9 @@ public final class ClaudePlanner implements ObjectivePlanner {
                         plan.objective().reason());
                 PlannerLog.get().answered(plan, plan.objective().reason(), reply);
                 answer.set(plan);
+                cachedSignature.set(signature);
+                cachedPlan.set(plan);
+                cachedAt.set(System.currentTimeMillis());
                 return;
             }
             // Nothing to take, but for two very different reasons, and only one of them is a problem.

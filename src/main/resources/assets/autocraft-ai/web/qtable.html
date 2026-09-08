@@ -747,6 +747,11 @@
     <div id="planner"></div>
   </section>
 
+  <section class="block">
+    <div class="section-label" id="t-mentor">The mentor</div>
+    <div id="mentor"></div>
+  </section>
+
   <div class="load">
     <span class="load-label" id="t-machine">Machine</span>
     <span class="gauge" id="gauge-cpu">
@@ -813,7 +818,7 @@
     text: {
       "objective": "Objective", "pursuit": "Working on", "doing": "Now", "making": "Crafting",
       "goals": "What to do", "crafts": "What to make meanwhile",
-      "timing": "How long to hold it", "planner": "The planner",
+      "timing": "How long to hold it", "planner": "The planner", "mentor": "The mentor",
       "placement": "Where to dig and build", "position": "Which way to go",
       "water": "When it is in the water", "passage": "When the terrain is in the way",
       "head.passage": "Wants to go where, what is in the way",
@@ -856,6 +861,7 @@
       "empty.timing": "no durations learned yet",
       "empty.crafts": "nothing to make so far",
       "empty.planner": "it has not been asked anything yet",
+      "empty.mentor": "no block has needed unblocking yet",
       "empty.placement": "it has not dug or built anywhere yet",
       "empty.position": "it has not been anywhere yet",
       "empty.water": "it has not been in the water yet",
@@ -914,6 +920,9 @@
     },
     planner: {
       ASKED: "asked", ANSWERED: "answered", KEPT: "kept the objective", FAILED: "no answer",
+    },
+    mentor: {
+      ASKED: "stuck, asked", ANSWERED: "taught", KEPT: "taught", FAILED: "no lesson",
     },
     spot: {
       AT_SIGHT: "the block in view", ABOVE_SIGHT: "one above it", BELOW_SIGHT: "one below it",
@@ -1039,6 +1048,7 @@
     const fixed = {
       "t-objective": "objective", "t-pursuit": "pursuit", "t-doing": "doing", "t-making": "making",
       "t-plan": "plan", "t-pursuits": "pursuits", "t-shared": "shared", "t-planner": "planner",
+      "t-mentor": "mentor",
       "t-machine": "machine", "t-cpu": "cpu", "t-memory": "memory",
       "t-key-worse": "key.worse", "t-key-better": "key.better", "t-key-bar": "key.bar",
       "t-key-best": "key.best", "t-key-distance": "key.distance", "t-key-tables": "key.tables",
@@ -1382,9 +1392,28 @@
    * folded, one click away, so the page can be skimmed and still be checked.
    */
   function renderPlanner(entries) {
-    const talk = el("planner");
+    // Two conversations, kept apart: the planner chooses what to do next, the mentor is asked only when
+    // the run is stuck and teaches the way out. They arrive in one stream, tagged by source.
+    const planner = [];
+    const mentor = [];
+    for (const entry of entries) {
+      (entry.source === "MENTOR" ? mentor : planner).push(entry);
+    }
+    renderTalk("planner", planner, "planner", "empty.planner");
+    renderTalk("mentor", mentor, "mentor", "empty.mentor");
+  }
+
+  /**
+   * One conversation panel, newest first. @param words which word group names the kinds (the planner and
+   * the mentor label the same kinds differently — "answered" vs "taught").
+   */
+  function renderTalk(containerId, entries, words, emptyKey) {
+    const talk = el(containerId);
+    if (!talk) {
+      return;
+    }
     if (!entries.length) {
-      talk.innerHTML = `<div class="empty-line">${t("empty.planner")}</div>`;
+      talk.innerHTML = `<div class="empty-line">${t(emptyKey)}</div>`;
       return;
     }
     talk.innerHTML = [...entries].reverse().map(entry => {
@@ -1401,7 +1430,7 @@
           `<pre>${escape(entry.detail)}</pre></details>`
         : "";
       return `<article class="entry ${kind}">` +
-             `<div class="entry-head"><span class="talk-kind ${kind}">${word("planner", entry.kind)}</span>` +
+             `<div class="entry-head"><span class="talk-kind ${kind}">${word(words, entry.kind)}</span>` +
              `<span class="entry-title">${title}</span>` +
              `<span class="talk-ago">${t("ago", elapsed(entry.ago || 0))}</span></div>` +
              plan + raw + `</article>`;

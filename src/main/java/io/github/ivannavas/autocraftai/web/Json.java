@@ -127,7 +127,8 @@ final class Json {
     static String planner(List<PlannerLog.Entry> entries) {
         long now = System.currentTimeMillis();
         StringJoiner joiner = new StringJoiner(",", "[", "]");
-        entries.forEach(entry -> joiner.add("{\"kind\":" + string(entry.kind().name())
+        entries.forEach(entry -> joiner.add("{\"source\":" + string(entry.source().name())
+                + ",\"kind\":" + string(entry.kind().name())
                 + ",\"objective\":" + string(entry.objective())
                 + ",\"text\":" + string(entry.text())
                 + ",\"detail\":" + string(entry.detail())

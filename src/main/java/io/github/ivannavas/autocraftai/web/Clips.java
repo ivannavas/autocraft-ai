@@ -122,6 +122,40 @@ public final class Clips {
         worker.execute(() -> save(objective));
     }
 
+    /**
+     * Throws away every clip on disk.
+     *
+     * <p>Called when the worlds are deleted. A clip is a minute of a particular run, and once that run's
+     * world is gone the clip is of somewhere nobody can go back to — a list still offering "get 4 log"
+     * from a world that no longer exists is worse than an empty one. It is also the only thing that ever
+     * empties the directory on purpose: {@link #prune} only ever trims the tail.
+     *
+     * <p>Queued rather than done here, for the same reason saves are: a save asked for a moment before the
+     * world was wiped is still being encoded, and going through the one worker is what puts the clearing
+     * behind it instead of racing it and leaving the last clip of the old run behind.
+     */
+    public void clear() {
+        worker.execute(this::empty);
+    }
+
+    private void empty() {
+        int gone = 0;
+        for (Path clip : list()) {
+            try {
+                if (Files.deleteIfExists(clip)) {
+                    gone++;
+                }
+            } catch (IOException e) {
+                log.warn("Could not delete the clip {}", clip.getFileName(), e);
+            }
+        }
+        // The count is of this run, and there is about to be a different one.
+        saved.set(0);
+        if (gone > 0) {
+            log.info("Removed {} clip(s) belonging to the world that was just deleted", gone);
+        }
+    }
+
     private void save(String objective) {
         try {
             String written = Obs.with(settings, obs -> {

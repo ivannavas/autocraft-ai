@@ -51,6 +51,9 @@ public class AutocraftAiClient implements ClientModInitializer {
         // announces the moment; OBS has been holding that minute in memory the whole time.
         Clips clips = new Clips(settings);
         brain.progression().onReached(clips::reached);
+        // And the clips of a run go when its world does: /world/new deletes the saves, and a recording of
+        // a world that no longer exists is only clutter in the panel.
+        newWorld.onWiped(clips::clear);
 
         // The overlay reads a copy the brain hands over after each decision, never the live table. The
         // endpoints go on the same port: the panel that drives the run also embeds the page.

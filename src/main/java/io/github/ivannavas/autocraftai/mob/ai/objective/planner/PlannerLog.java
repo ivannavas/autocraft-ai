@@ -60,9 +60,20 @@ public final class PlannerLog {
     }
 
     /**
+     * Who the exchange was with. The planner decides what to do next; the mentor is asked only when the
+     * run is stuck, and teaches the local policy the way out. They share this record so the overlay can
+     * show both, but the page keeps them in panels of their own — the questions are nothing alike.
+     */
+    public enum Source {
+        PLANNER,
+        MENTOR
+    }
+
+    /**
      * One line of the conversation.
      *
      * @param at        when it happened, so the page can age it
+     * @param source    who it was with — the planner or the mentor
      * @param kind      which half, and how it went
      * @param objective the objective's key when the entry is about one, so the panel can name it in the
      *                  player's own language rather than in the one this code is written in; else empty
@@ -73,26 +84,42 @@ public final class PlannerLog {
      *                  kind of entry. The reply says the same in the model's words; this is what the run
      *                  actually took from them, which is the half a viewer cannot check by reading.
      */
-    public record Entry(long at, Kind kind, String objective, String text, String detail, Plan plan) {
+    public record Entry(long at, Source source, Kind kind, String objective, String text, String detail,
+                        Plan plan) {
     }
 
     /** A question going out, with the line of situation that goes with it. */
     public void asked(String summary, String prompt) {
-        add(new Entry(System.currentTimeMillis(), Kind.ASKED, "", summary, prompt, null));
+        add(new Entry(System.currentTimeMillis(), Source.PLANNER, Kind.ASKED, "", summary, prompt, null));
     }
 
     /** An objective coming back, with the whole plan the run made of it. */
     public void answered(Plan plan, String reason, String reply) {
-        add(new Entry(System.currentTimeMillis(), Kind.ANSWERED, plan.objective().name(), reason, reply,
-                plan));
+        add(new Entry(System.currentTimeMillis(), Source.PLANNER, Kind.ANSWERED, plan.objective().name(),
+                reason, reply, plan));
     }
 
     public void kept(String reason, String reply) {
-        add(new Entry(System.currentTimeMillis(), Kind.KEPT, "", reason, reply, null));
+        add(new Entry(System.currentTimeMillis(), Source.PLANNER, Kind.KEPT, "", reason, reply, null));
     }
 
     public void failed(String why, String detail) {
-        add(new Entry(System.currentTimeMillis(), Kind.FAILED, "", why, detail, null));
+        add(new Entry(System.currentTimeMillis(), Source.PLANNER, Kind.FAILED, "", why, detail, null));
+    }
+
+    /** The mentor being asked to break a block the run is stuck on, with the whole prompt behind it. */
+    public void mentorAsked(String summary, String prompt) {
+        add(new Entry(System.currentTimeMillis(), Source.MENTOR, Kind.ASKED, "", summary, prompt, null));
+    }
+
+    /** The lessons the mentor taught, planted into the local policy; the reply is kept for the record. */
+    public void mentorTaught(String reason, String reply) {
+        add(new Entry(System.currentTimeMillis(), Source.MENTOR, Kind.ANSWERED, "", reason, reply, null));
+    }
+
+    /** No lesson: the mentor could not be reached, or had nothing to add for this block. */
+    public void mentorFailed(String why, String detail) {
+        add(new Entry(System.currentTimeMillis(), Source.MENTOR, Kind.FAILED, "", why, detail, null));
     }
 
     /**

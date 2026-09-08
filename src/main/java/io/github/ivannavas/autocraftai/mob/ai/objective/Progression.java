@@ -455,30 +455,36 @@ public final class Progression {
             return;
         }
         stepsOnCurrent += Math.max(1, context.steps());
-        int window = context.pinned() ? REVIEW_WHEN_STUCK_STEPS : REVIEW_AFTER_STEPS;
-        if (stepsOnCurrent < window) {
+
+        // A pinned body is a block, and a block is the mentor's to answer, not the planner's — see the
+        // brain, which owns the tables the mentor teaches. The planner is spared the call; all that
+        // happens here is the local self-rescue, which is free and does not wait on the network: climb out
+        // of a hole, and if that was not it, drop out of the tree next time.
+        if (context.pinned()) {
+            if (context.player() != null) {
+                escapedUp = !escapedUp;
+                int y = context.player().getBlockY();
+                escapeTo = escapedUp ? y + ESCAPE_RISE : y - ESCAPE_RISE;
+            }
+            return;
+        }
+
+        // Not stuck, just long: ask the planner whether the objective is still right. Rarely, and the
+        // planner's own cache drops the call when nothing about the situation has changed since last time.
+        if (stepsOnCurrent < REVIEW_AFTER_STEPS) {
             return;
         }
         stepsOnCurrent = 0;
-        log.info("{} has {}; asking the planner to look at it", current.name(),
-                context.pinned() ? "the body stuck in one place" : "been going a while");
+        log.info("{} has been going a while; asking the planner to look at it", current.name());
         String objective = current.toString();
         planner.consider(() ->
                 Situation.of(context.player(), context.obtained(), achieved, objective));
-        // A pinned body whose planner cannot answer — no key, or the API turned it away — has no rescue
-        // coming, so it rescues itself the one way that gets out of a hole: climb. The planner, when it is
-        // there, does this better and this yields to it (any real answer clears the escape). Only when
-        // pinned, not merely slow: a body making its way across a desert is not trapped.
-        if (context.pinned() && !planner.pending() && context.player() != null) {
-            // Up first — a hole is the common trap — but a body still pinned after climbing was not in a
-            // hole: it is stuck up high, on a tree or a ledge, and down is the way out. So each pinned
-            // rescue that finds the last one did not work flips direction.
-            escapedUp = !escapedUp;
-            int y = context.player().getBlockY();
-            escapeTo = escapedUp ? y + ESCAPE_RISE : y - ESCAPE_RISE;
-            log.info("No planner to ask; heading {} to y{} to break out of the trap",
-                    escapedUp ? "up" : "down", escapeTo);
-        }
+    }
+
+    /** What the mentor is told about a block: the run as it stands, with the objective in hand. */
+    public Situation blockSituation(net.minecraft.client.player.LocalPlayer player,
+                                    InventoryCensus obtained) {
+        return Situation.of(player, obtained, achieved, current == null ? "" : current.toString());
     }
 
     /**
