@@ -33,6 +33,21 @@ public interface Phase extends Objective {
     boolean isComplete(StepContext context);
 
     /**
+     * How far along this objective the run is, as a number that only means anything compared with an
+     * earlier reading of itself: higher is nearer.
+     *
+     * <p>Not a reward. The reward says what a step was worth, and a step can be worth something without
+     * the objective being any nearer — walking pays a little, and a body walking in a ring collects it
+     * all day. This is the other question, "is it getting anywhere", which is what decides when the
+     * mentor is asked about an objective that is taking too long. A gather counts what it holds, a
+     * climb counts height, a build counts blocks standing; a journey has nothing to count and leaves it
+     * to the run, which knows where the journey started.
+     */
+    default double progress(StepContext context) {
+        return 0.0;
+    }
+
+    /**
      * A word for the direction this objective pulls in: {@code GET}, {@code GO}, {@code DOWN}, {@code UP},
      * {@code BUILD}.
      *

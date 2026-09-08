@@ -53,10 +53,19 @@ public final class ApproachSightingGoal implements MobGoal {
 
     @Override
     public boolean canContinueToUse(MobBody body) {
+        // A drop that is no longer there was picked up — by this body, nearly always, since it was
+        // walking onto it — and that is the job done rather than the target lost. Said here because the
+        // engine asks this before it would tick, and a goal that has stopped is never ticked again.
+        if (ticksRunning > 0 && sighting.kind() == FocusKind.ITEM && !sighting.isValid()) {
+            arrived = true;
+        }
         return canUse(body) && ticksRunning < GIVE_UP_TICKS;
     }
 
-    /** Arrived: within arm's length of something that is still there. Not the same as having lost it. */
+    /**
+     * Arrived: within arm's length of something that is still there, or a drop that is there no longer.
+     * Not the same as having lost a creature, which stays a goal that could not.
+     */
     @Override
     public boolean isDone() {
         return arrived;

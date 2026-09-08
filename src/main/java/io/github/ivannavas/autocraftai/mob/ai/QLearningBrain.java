@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -16,6 +17,7 @@ import java.util.OptionalInt;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
+import io.github.ivannavas.autocraftai.mob.DeathNotice;
 import io.github.ivannavas.autocraftai.mob.MobBody;
 import io.github.ivannavas.autocraftai.mob.MobEngine;
 import io.github.ivannavas.autocraftai.mob.MobGoal;
@@ -33,18 +35,24 @@ import io.github.ivannavas.autocraftai.mob.ai.objective.mentor.Rescue;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.PlannerLog;
 import io.github.ivannavas.autocraftai.mob.ai.objective.StepContext;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Terrain;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Tool;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Travel;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Way;
+import io.github.ivannavas.autocraftai.mob.goal.ApproachSightingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.CraftAtTableGoal;
 import io.github.ivannavas.autocraftai.mob.goal.CraftGoal;
 import io.github.ivannavas.autocraftai.mob.goal.CraftingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.MineSightingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.PlaceBlockGoal;
 import io.github.ivannavas.autocraftai.mob.goal.SmeltGoal;
+import io.github.ivannavas.autocraftai.mob.goal.TravelGoal;
 import lombok.extern.slf4j.Slf4j;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -209,10 +217,49 @@ public final class QLearningBrain {
     /** The last lesson applied and when, until its outcome — free again, or still pinned — is known. */
     private Rescue lastRescue;
     private long rescueDecision;
+    /** How often the objective had got nearer when the last stall lesson landed, for judging it. */
+    private long rescueProgress;
+    /** Drops the body gave up walking to, and until when each is left out of its sight. */
+    private final Map<Entity, Long> shunned = new HashMap<>();
+    /** Told what killed the body, once per death. No-op until something wants it. */
+    private Consumer<String> onDeath = cause -> {
+    };
+    /**
+     * The way to what the plan is after, when the loaded map shows it and the eyes do not — a fact rather
+     * than a choice, worked out once per decision and read by both the legality mask and the heading.
+     */
+    private OptionalDouble toldHeading = OptionalDouble.empty();
+    /**
+     * Whether the way is settled by facts this decision: the map shows the thing, or the body is in the
+     * wrong kind of place and holding a line out of it. Either way the position table is not asked and
+     * the goal table is not offered a stroll.
+     */
+    private boolean headingIsFact;
+    /** Whether the move in flight is a journey the map pointed, which ends the moment it arrives. */
+    private boolean followingTheMap;
     /** How many decisions after a lesson the body has to be free of the block for the lesson to count. */
     private static final int RESCUE_WINDOW = 30;
+    /**
+     * How many decisions after a lesson for a stall the objective has to get nearer for the lesson to
+     * count. Longer than a block's window: getting free is a matter of seconds, getting a log is a walk.
+     */
+    private static final int STALL_RESCUE_WINDOW = 120;
     /** How many decisions pinned before the mentor is asked: a stumble is not a block. */
     private static final int PINNED_BEFORE_MENTOR = 3;
+    /**
+     * Seconds the objective may go without getting any nearer before the mentor is asked about it.
+     *
+     * <p>Eight minutes. A body that is not pinned never reached the mentor before, and a body circling
+     * a forest it cannot find the trees in, or walking past stone without the pickaxe to break it, is
+     * not pinned. The planner's review runs on its own clock and reads the same record; this is the
+     * mentor's turn, which comes first because a lesson is cheaper than a new plan and usually the fix.
+     */
+    private static final int STALLED_BEFORE_MENTOR = 480;
+    /**
+     * How long a drop the body could not get to is left out of its sight, so the eyes move on to the
+     * next thing rather than reporting the same log in the canopy for the rest of the objective.
+     */
+    private static final long SHUN_MILLIS = 90_000L;
     /** How long a craft that gave up stays off the table, so the same trek is not started straight back. */
     private static final long CRAFT_BACKOFF_MILLIS = 60_000L;
     /** Crafts that gave up recently, and until when they are not to be tried again. */
@@ -272,6 +319,14 @@ public final class QLearningBrain {
      * eight minutes, and a straight line is the way to cross a biome you cannot see the end of.
      */
     private double exploring = Double.NaN;
+    /** When the line was last turned, so a trail that still reads as a loop does not turn it again at once. */
+    private long exploringTurnedAt;
+    /**
+     * The least time between two turns of the line. A quarter turn takes the trail half a minute to
+     * stop reading as a loop, and a line turned every decision while it did was a body spinning on the
+     * spot — a journey re-pointed a quarter round each second never got four blocks along any of them.
+     */
+    private static final long EXPLORING_TURN_MILLIS = 30_000L;
     /** The body as it was when the passage table last chose, or null while nothing is in its way. */
     private Moment stuckSince;
     /** Which way it wanted, and where, when it last chose: what its progress is measured against. */
@@ -362,6 +417,14 @@ public final class QLearningBrain {
         return progression;
     }
 
+    /**
+     * Hands every later death to {@code listener}, with the server's sentence on what did it. Called on
+     * the game thread, so whatever listens has to get out of the way quickly.
+     */
+    public void onDeath(Consumer<String> listener) {
+        this.onDeath = listener;
+    }
+
     public void tick(Minecraft client) {
         LocalPlayer player = client.player;
         if (player == null) {
@@ -422,8 +485,10 @@ public final class QLearningBrain {
         // Booked before the hold is tested, because whether the move has anything to show for the second
         // just gone is exactly what decides whether it keeps the body for the next one.
         // A goal that has done what it was for is not stuck, and the move is over the moment it says so:
-        // no second charged for the ones it did not use, and the tables choose again now.
-        doneNow = installedGoal != null && installedGoal.isDone() && !engine.isRunning(installedGoal);
+        // no second charged for the ones it did not use, and the tables choose again now. A journey the
+        // map pointed is done the moment what it was pointed at is in view, whatever the journey thinks.
+        doneNow = (installedGoal != null && installedGoal.isDone() && !engine.isRunning(installedGoal))
+                || arrived(player);
         stalledNow = !doneNow && gettingNowhere();
         if (stalledNow) {
             stalledSteps++;
@@ -448,11 +513,16 @@ public final class QLearningBrain {
      * move it displaced is not going anywhere and should not be charged for it.
      */
     private boolean gettingNowhere() {
-        if (busy(swimGoal) || busy(craftGoal) || busy(passageGoal) || crafting()) {
+        if (displaced()) {
             return false;
         }
         return installedGoal == null || !engine.isRunning(installedGoal)
                 || installedGoal.stalledTicks() >= STALL_TICKS;
+    }
+
+    /** Whether something with a higher claim — water, a craft, the terrain — has the body off the primary. */
+    private boolean displaced() {
+        return busy(swimGoal) || busy(craftGoal) || busy(passageGoal) || crafting();
     }
 
     /**
@@ -475,29 +545,49 @@ public final class QLearningBrain {
         rescue.passageLessons().forEach(lesson -> passage.seed(rescue.terrain(), lesson.action(), lesson.value()));
         // And the crafting table, for the block that is not terrain at all: a craft holding the body.
         rescue.craftLessons().forEach(lesson -> crafting.seed(rescue.craftKey(), lesson.action(), lesson.value()));
+        if (rescue.asksToReplan()) {
+            // The one lesson no table can hold: the objective itself is the problem. The plan goes and
+            // the planner is asked again with the mentor's sentence in the question; there is nothing to
+            // settle afterwards, because there is no objective left to have got nearer.
+            progression.replan(rescue.replan());
+            PlannerLog.get().mentorNoted("gave the objective up and asked the planner for another: "
+                    + rescue.replan());
+            log.info("Mentor gave up on the objective ({}) in {}", rescue.replan(), rescue.pursuit());
+            lastRescue = null;
+            return;
+        }
         lastRescue = rescue;
         rescueDecision = decisionsMade;
+        rescueProgress = progression.progressCount();
         log.info("Applied lessons ({}) to {} at {} / {}", rescue.summary(), rescue.pursuit(),
                 rescue.state(), rescue.terrain());
     }
 
     /**
      * Says what became of the last lesson, once: the body came unpinned within the window, or it did not.
-     * Written to the mentor's log so the page shows the coaching's record beside the coaching.
+     * For a stall the question is the other one — did the objective get any nearer — and the window is
+     * longer, because a log is further off than a way out. Written to the mentor's log so the page shows
+     * the coaching's record beside the coaching.
      */
     private void settleRescue() {
         if (lastRescue == null) {
             return;
         }
         long since = decisionsMade - rescueDecision;
-        if (!territory.pinned()) {
-            log.info("Mentor lesson worked: free after {} decisions ({})", since, lastRescue.summary());
-            PlannerLog.get().mentorNoted("worked: free after " + since + " decisions (" + lastRescue.summary() + ")");
+        boolean stall = lastRescue.stalled();
+        boolean worked = stall ? progression.progressCount() > rescueProgress : !territory.pinned();
+        long window = stall ? STALL_RESCUE_WINDOW : RESCUE_WINDOW;
+        String what = stall ? "the objective got nearer" : "free";
+        if (worked) {
+            log.info("Mentor lesson worked: {} after {} decisions ({})", what, since, lastRescue.summary());
+            PlannerLog.get().mentorNoted("worked: " + what + " after " + since + " decisions ("
+                    + lastRescue.summary() + ")");
             lastRescue = null;
-        } else if (since >= RESCUE_WINDOW) {
-            log.info("Mentor lesson did not work: still pinned after {} decisions ({})", since,
+        } else if (since >= window) {
+            String still = stall ? "no nearer" : "still pinned";
+            log.info("Mentor lesson did not work: {} after {} decisions ({})", still, since,
                     lastRescue.summary());
-            PlannerLog.get().mentorNoted("did not work: still pinned after " + since + " decisions ("
+            PlannerLog.get().mentorNoted("did not work: " + still + " after " + since + " decisions ("
                     + lastRescue.summary() + ")");
             lastRescue = null;
         }
@@ -640,6 +730,13 @@ public final class QLearningBrain {
 
         // Looking is also what settles which folder of tables this decision is made in.
         ActionContext context = surroundings(client, player);
+        // And where the map says to go, which is a fact the mask and the heading both read. Being in the
+        // wrong kind of place settles the question only when walking is the way there: stone is under
+        // the forest floor as well as in the mountain, and a plan that allows a shaft has left the choice
+        // between the walk and the shaft to the table.
+        toldHeading = wayThere(player, context);
+        headingIsFact = toldHeading.isPresent()
+                || (inTheWrongKindOfPlace(player) && !pursuit.where().allows(Way.DIG));
         Suite suite = suiteFor(pursuit);
         if (suite != active) {
             // The move just ended belongs to another folder. Its claims are settled with no continuation,
@@ -674,8 +771,16 @@ public final class QLearningBrain {
         applyLessons();
         // Not while a table craft or a smelt has the body and is getting on with it: standing at a table
         // is work, not a block, and a craft whose walk has stalled lets go on its own within seconds.
-        if (pinnedStreak >= PINNED_BEFORE_MENTOR && progression.current().isPresent()
+        //
+        // Two things bring the mentor in. A body pinned for several decisions is a block. A body that
+        // moves and has got the objective no nearer for eight minutes is a stall, which no amount of
+        // being unpinned ever caught: the mentor is asked about that too, with the objective's record,
+        // and may answer by giving the objective up rather than by teaching a way to it.
+        boolean pinned = pinnedStreak >= PINNED_BEFORE_MENTOR;
+        boolean stalled = progression.stepsWithoutProgress() >= STALLED_BEFORE_MENTOR;
+        if ((pinned || stalled) && progression.current().isPresent()
                 && !objectiveCraftable(legalCrafts) && !crafting()) {
+            MentorAsk.Reason reason = pinned ? MentorAsk.Reason.BLOCK : MentorAsk.Reason.STALL;
             String stuck = observation.key();
             String folder = pursuit.name();
             List<String> moves = names(GoalAction.values());
@@ -684,8 +789,9 @@ public final class QLearningBrain {
             int y = player.getBlockY();
             mentor.consider(() -> {
                 Obstruction ground = ground(player);
-                return new MentorAsk(progression.blockSituation(player, obtained), folder, stuck, moves,
-                        ground.key(), ground.words(), passageMoves, y, driver(), craftKey, craftMoves);
+                return new MentorAsk(reason, progression.blockSituation(player, obtained), folder, stuck,
+                        moves, ground.key(), ground.words(), passageMoves, y, driver(), craftKey,
+                        craftMoves);
             });
         }
 
@@ -723,8 +829,9 @@ public final class QLearningBrain {
             uninstall();
         }
 
-        install(action, context, aim);
+        install(action, context, aim, player);
         installCraft(craft, player);
+        followingTheMap = headingIsFact && action.usesGround();
 
         commitment = chosen;
         stepsRun = 0;
@@ -845,43 +952,37 @@ public final class QLearningBrain {
             active.position.forget();
             return OptionalDouble.empty();
         }
-        // When the planner named the kind of place and the loaded map has one in range, the way there is
-        // a fact and not a choice: the body is pointed at it, and the table is not credited for a heading
-        // it did not pick. It keeps the question for everywhere the map cannot answer.
-        // The block the plan is after, when the map shows one and the eyes do not: the same rule as the
-        // kind of place, one level down. A tree on the map is somewhere to walk, not something to learn.
-        if (context.sighting().kind() != FocusKind.RESOURCE && progression.wanted().isPresent()) {
-            OptionalDouble seen = Perception.bearingToBlock(player, progression.wanted().get());
-            if (seen.isPresent()) {
-                active.position.learnTerminal(reward);
-                active.position.forget();
-                exploring = Double.NaN;
-                return seen;
-            }
-        }
-        String biome = Travel.biomeAt(player);
-        if (!pursuit.where().terrain().isEmpty()
-                && "OUT".equals(pursuit.where().terrainKey(biome))) {
+        // When the loaded map shows the thing — the kind of place the planner named, or the very block
+        // the plan is after — the way there is a fact and not a choice: the body is pointed at it, and
+        // the table is not credited for a heading it did not pick. It keeps the question for everywhere
+        // the map cannot answer. See wayThere() for how the fact is read.
+        if (toldHeading.isPresent()) {
             active.position.learnTerminal(reward);
             active.position.forget();
-            OptionalDouble told = Perception.bearingTo(player, pursuit.where().terrain());
-            if (told.isPresent()) {
-                exploring = Double.NaN;
-                return told;
-            }
+            exploring = Double.NaN;
+            return toldHeading;
+        }
+        if (inTheWrongKindOfPlace(player)) {
+            active.position.learnTerminal(reward);
+            active.position.forget();
             // Nothing of the kind in the loaded map. Hold a line across what there is, and turn a quarter
-            // only when the trail says the line has stopped getting anywhere.
+            // only when the trail says the line has stopped getting anywhere — and then not again until
+            // the trail has had time to say so about the new line.
+            long now = System.currentTimeMillis();
             if (Double.isNaN(exploring)) {
                 exploring = Math.toRadians(player.getYRot());
-            } else if (territory.pinned() || territory.circling()) {
+                exploringTurnedAt = now;
+            } else if ((territory.pinned() || territory.circling())
+                    && now - exploringTurnedAt >= EXPLORING_TURN_MILLIS) {
                 exploring += Math.PI / 2.0;
+                exploringTurnedAt = now;
             }
             return OptionalDouble.of(exploring);
         }
         exploring = Double.NaN;
         String key = pursuit.source()
                 + '|' + pursuit.where().band().where(player.getBlockY())
-                + '|' + pursuit.where().terrainKey(biome)
+                + '|' + pursuit.where().terrainKey(Travel.biomeAt(player))
                 + '|' + territory.state()
                 + '|' + context.flags();
         active.position.learn(key, reward, steps, active.position.everything);
@@ -889,6 +990,59 @@ public final class QLearningBrain {
         int column = active.position.choose(key, active.position.everything);
         return column < 0 ? OptionalDouble.empty()
                 : Ground.values()[column].headingFor(player, territory);
+    }
+
+    /**
+     * The way to what the plan is after, as far as the loaded map can say, or empty when it cannot.
+     *
+     * <p>Two readings, the nearer thing first. The block the plan is after, when the map shows one at
+     * the surface and the eyes do not: a tree on the map is somewhere to walk, not something to learn.
+     * Failing that, the kind of place the planner said the thing is common in, when the body is not in
+     * one and the map has one in range. Both are facts about the map rather than lessons, and they are
+     * read once a decision here so the legality mask and the heading agree about them.
+     */
+    private OptionalDouble wayThere(LocalPlayer player, ActionContext context) {
+        // Only for what is broken on sight. Stone shows near the surface of most columns and is not
+        // walked to but dug to — see Gather#minesWhatItSees — and a body pointed at every exposed face
+        // the map showed would zigzag between them instead of sinking the shaft the plan allowed.
+        if (context.sighting().kind() != FocusKind.RESOURCE && progression.minesWhatItSees()
+                && progression.wanted().isPresent()) {
+            OptionalDouble seen = Perception.bearingToBlock(player, progression.wanted().get());
+            if (seen.isPresent()) {
+                return seen;
+            }
+        }
+        if (inTheWrongKindOfPlace(player)) {
+            return Perception.bearingTo(player, pursuit.where().terrain());
+        }
+        return OptionalDouble.empty();
+    }
+
+    /** Whether the planner named the kind of place the thing is found in, and the body is not in one. */
+    private boolean inTheWrongKindOfPlace(LocalPlayer player) {
+        List<Terrain> terrain = pursuit.where().terrain();
+        return !terrain.isEmpty() && "OUT".equals(pursuit.where().terrainKey(Travel.biomeAt(player)));
+    }
+
+    /**
+     * Whether a journey the map pointed has got where it was pointed: the block the plan is after is in
+     * the eyes' reach, or the body is in the kind of place it was sent to find.
+     *
+     * <p>Only for a move made on the map's word. A body already in the forest that chose to travel
+     * anyway has not "arrived" every second it is still in it; that move runs its commitment like any
+     * other. What this ends is the walk towards a tree eighty blocks off, which a commitment of ten
+     * seconds would otherwise carry straight past the tree — the eyes reach eight blocks, and at four
+     * blocks a second the whole window of seeing it is two seconds long.
+     */
+    private boolean arrived(LocalPlayer player) {
+        if (!followingTheMap || installedGoal == null) {
+            return false;
+        }
+        if (progression.wanted().isPresent() && perception.canSee(player, progression.wanted())) {
+            return true;
+        }
+        List<Terrain> terrain = pursuit.where().terrain();
+        return !terrain.isEmpty() && "IN".equals(pursuit.where().terrainKey(Travel.biomeAt(player)));
     }
 
     /**
@@ -1172,7 +1326,12 @@ public final class QLearningBrain {
 
     /** Everything around the body, gathered once so the sighting and the map agree with each other. */
     private ActionContext surroundings(Minecraft client, LocalPlayer player) {
-        Sighting sighting = perception.look(client, player, progression.wanted());
+        // A drop the body gave up walking to is left out of its sight for a while: reported again it
+        // would be walked to again, and the tree behind it never got chopped.
+        long now = System.currentTimeMillis();
+        shunned.values().removeIf(until -> until <= now);
+        Sighting sighting = perception.look(client, player, progression.wanted(),
+                item -> !shunned.containsKey(item), item -> prized(item.getItem()));
         // Noted here because this is where the eyes are: arriving somewhere with what the plan is after
         // in view is the thing the position table exists to learn, and it cannot see it any other way.
         sawWhatItNeeds = sighting.kind() == FocusKind.RESOURCE;
@@ -1300,18 +1459,119 @@ public final class QLearningBrain {
             allowed[i] = actions[i].isApplicable(context);
         }
         underThreat(context, allowed);
-        if (!fetchesWhatItSees(context) || !allowed[GoalAction.MINE.ordinal()]) {
+        if (fetchesWhatItSees(context) && allowed[GoalAction.MINE.ordinal()]) {
+            // The plan named the blocks its resource comes off and the eyes have found one. There is
+            // nothing left in the question, so there is nothing left to choose between: everything but
+            // breaking it comes off the table. Eating stays, because a body that starves in front of the
+            // tree has not gathered anything, and it is only ever legal when the body is hungry with food
+            // in hand.
+            only(allowed, GoalAction.MINE);
             return allowed;
         }
-        // The plan named the blocks its resource comes off and the eyes have found one. There is nothing
-        // left in the question, so there is nothing left to choose between: everything but breaking it
-        // comes off the table. Eating stays, because a body that starves in front of the tree has not
-        // gathered anything, and it is only ever legal when the body is hungry with food in hand.
-        for (int i = 0; i < actions.length; i++) {
-            allowed[i] = actions[i] == GoalAction.MINE
-                    || (actions[i] == GoalAction.EAT && allowed[i]);
+        if (fetchesWhatItDropped(context) && allowed[GoalAction.APPROACH.ordinal()]) {
+            // The log it just cut is lying at its feet. Walking over to it is the rest of the same move,
+            // and a table left to decide it strolled off with the log on the ground — then came back for
+            // it, then strolled off again. Same rule as the block, one second later.
+            only(allowed, GoalAction.APPROACH);
+            return allowed;
         }
+        goesWhereItIsTold(context, allowed);
         return allowed;
+    }
+
+    /**
+     * Whether a drop is one the plan is after: the objective's own item, anything on its list, or food,
+     * which is never not worth having. What outranks the block in view, and what walking to is a rule.
+     */
+    private boolean prized(net.minecraft.world.item.ItemStack stack) {
+        Resource dropped = Resource.of(stack).orElse(null);
+        if (dropped == null) {
+            return false;
+        }
+        Resource own = progression.current().flatMap(Phase::scores).orElse(null);
+        return dropped == own || dropped == Resource.FOOD || progression.needs().containsKey(dropped);
+    }
+
+    /** Leaves only the one move — and eating, when it was legal, for the reason given at the block rule. */
+    private static void only(boolean[] allowed, GoalAction move) {
+        GoalAction[] actions = GoalAction.values();
+        for (int i = 0; i < actions.length; i++) {
+            allowed[i] = actions[i] == move || (actions[i] == GoalAction.EAT && allowed[i]);
+        }
+    }
+
+    /**
+     * Whether the drop in view is one the plan is after, close enough to be worth the walk, and not one
+     * the body has already given up on.
+     *
+     * <p>The rule yields the same way the block rule does: an approach that has spent its time getting
+     * no nearer — the log is in the canopy, the cobblestone across a gap — is a drop the body cannot get
+     * to, and it is shunned for a while so the eyes report the next thing instead. The first mentor was
+     * asked three times about a cobblestone the body could see and not reach, and each time taught a
+     * lesson about the terrain, when the answer was to stop looking at it.
+     */
+    private boolean fetchesWhatItDropped(ActionContext context) {
+        Sighting sighting = context.sighting();
+        if (sighting.kind() != FocusKind.ITEM || !(sighting.entity() instanceof ItemEntity item)
+                || !prized(item.getItem())) {
+            return false;
+        }
+        Resource dropped = Resource.of(item.getItem()).orElse(null);
+        LocalPlayer player = Minecraft.getInstance().player;
+        if (player == null || Perception.distanceTo(player, sighting) == Perception.Distance.FAR) {
+            return false;
+        }
+        if (installedGoal instanceof ApproachSightingGoal approach && Objects.equals(installedTarget, item)
+                && !approach.isDone() && !displaced()
+                && (approach.stalledTicks() >= STALL_TICKS || !engine.isRunning(approach))) {
+            shunned.put(item, System.currentTimeMillis() + SHUN_MILLIS);
+            log.debug("Giving up on a dropped {} the body could not reach", dropped);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * When the way is a fact, walking it is the move.
+     *
+     * <p>The planner said what kind of place the thing is found in and the body is not in one, or the
+     * map shows the very block the plan is after: the position table has already been passed over for
+     * the heading, and there is as little left for the goal table in "travel or stroll" as there is for
+     * the position table in "which way". A stroll leans the way it is told and still rolls a spot within
+     * ten blocks, which over a minute is a ring; a journey holds the line. The body kept choosing the
+     * ring — a fresh folder explores at thirty per cent and a journey pays the same per block as a
+     * stroll — and that is the whole of why it circled the same field while the forest sat on the map.
+     *
+     * <p>What stays: travelling, eating, heading for the height the plan wants, and sinking a shaft when
+     * the plan allows one — stone is under the mountain as well as in it, and whether to walk to the one
+     * or dig to the other is a real question the table keeps. A creature in view is left to the table
+     * unless the body is hungry and the creature is dinner, and a hostile never reaches here at all.
+     * Something the plan is after in view — a block or a drop — is the other two rules' business.
+     */
+    private void goesWhereItIsTold(ActionContext context, boolean[] allowed) {
+        if (!headingIsFact) {
+            return;
+        }
+        FocusKind kind = context.sighting().kind();
+        if (kind == FocusKind.HOSTILE || kind == FocusKind.RESOURCE) {
+            return;
+        }
+        boolean afterFood = progression.current().flatMap(Phase::scores).orElse(null) == Resource.FOOD;
+        boolean dinner = kind == FocusKind.PASSIVE && (context.hungry() || afterFood);
+        // A drop the plan is not after — a stick out of the canopy — is a freebie, and whether it is
+        // worth the steps is the table's to weigh against getting on. The drops the plan is after never
+        // reach here; walking to those is the rule above.
+        boolean freebie = kind == FocusKind.ITEM;
+        GoalAction[] actions = GoalAction.values();
+        for (int i = 0; i < actions.length; i++) {
+            boolean kept = switch (actions[i]) {
+                case TRAVEL, EAT, REACH_BAND, DIG_DOWN -> true;
+                case ATTACK -> dinner;
+                case APPROACH -> dinner || freebie;
+                default -> false;
+            };
+            allowed[i] = allowed[i] && kept;
+        }
     }
 
     /**
@@ -1472,13 +1732,20 @@ public final class QLearningBrain {
      * move that just ended was going nowhere, in which case {@link #decide} has already taken the goal out
      * and what arrives here is a fresh attempt rather than the same stalled one.
      */
-    private void install(GoalAction action, ActionContext context, Aim aim) {
+    private void install(GoalAction action, ActionContext context, Aim aim, LocalPlayer player) {
         // For a move that acts on a block, the block is what identity means: the same verb aimed somewhere
         // else is a different move and has to replace what is running. A heading is not part of it — a
         // journey re-aimed every decision would never get anywhere, which is the thing this is here to fix.
         Object target = action.usesSpot() ? aim.spot()
                 : action.usesSighting() ? context.sighting().target() : null;
         if (installedGoal != null && action == installedAction && Objects.equals(target, installedTarget)) {
+            // With one exception, and it is not the table's heading. When the way is a fact — the map
+            // shows the forest, or the tree — it is read afresh from wherever the body has got to, and a
+            // journey kept on the line it set off on walks past what it was sent to. Steering the
+            // running journey keeps its stall clock and its detours; only the line changes.
+            if (headingIsFact && installedGoal instanceof TravelGoal journey) {
+                journey.steer(aim.heading(), player.position());
+            }
             return;
         }
         uninstall();
@@ -1620,6 +1887,19 @@ public final class QLearningBrain {
             tables().forEach(table -> table.learnTerminal(DEATH_PENALTY));
             forget();
         }
+        if (ticksDead == 0) {
+            // The first tick of being dead, and the one that says so to everyone who wants to know: the
+            // run's record, which the planner reads, and the clip that keeps the minute it went wrong in.
+            // The server's sentence arrives with the death screen, a tick before the health does, so it is
+            // there to be taken; when it is not, the client's own tracker gives a plainer one.
+            String cause = DeathNotice.take();
+            if (cause.isBlank()) {
+                cause = player.getCombatTracker().getDeathMessage().getString();
+            }
+            log.info("Died: {}", cause);
+            progression.died(cause);
+            onDeath.accept(cause);
+        }
         // The plan goes with the life. A body that has just died is somewhere else with an empty bag, and
         // the objective it was chasing was chosen for a situation that no longer exists.
         progression.restart();
@@ -1687,6 +1967,10 @@ public final class QLearningBrain {
         // A new life is not explained by the last one's wanderings.
         territory.clear();
         exploring = Double.NaN;
+        toldHeading = OptionalDouble.empty();
+        headingIsFact = false;
+        followingTheMap = false;
+        shunned.clear();
         // A tally of the moment, not a record of the run: an episode that ends takes it with it rather
         // than charging the next one for swings it never made.
         wastedTicks = 0;

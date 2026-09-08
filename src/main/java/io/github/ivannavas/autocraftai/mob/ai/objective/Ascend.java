@@ -52,6 +52,12 @@ public record Ascend(int level, String reason) implements Phase {
         return context.player() != null && context.player().getBlockY() >= level;
     }
 
+    /** Height: the higher the body, the further along. */
+    @Override
+    public double progress(StepContext context) {
+        return context.player() == null ? 0.0 : context.player().getBlockY();
+    }
+
     /**
      * Paid for going up and not charged for coming down, for the same reason {@link Descend} is not
      * charged for climbing: a body that has to drop off a ledge to find a way round should not be worse

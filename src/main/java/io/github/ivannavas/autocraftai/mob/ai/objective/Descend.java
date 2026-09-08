@@ -49,6 +49,12 @@ public record Descend(int level, String reason) implements Phase {
         return context.player() != null && context.player().getBlockY() <= level;
     }
 
+    /** Depth: the lower the body, the further along. */
+    @Override
+    public double progress(StepContext context) {
+        return context.player() == null ? 0.0 : -context.player().getBlockY();
+    }
+
     /**
      * Paid for going down and not charged for coming back up: the general objectives already charge for
      * wasted time, and charging here as well would make a body that has to climb over a ledge to find a

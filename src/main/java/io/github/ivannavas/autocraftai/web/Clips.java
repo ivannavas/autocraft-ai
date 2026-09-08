@@ -123,6 +123,40 @@ public final class Clips {
     }
 
     /**
+     * How much of the death screen to let into the clip before the buffer is written out.
+     *
+     * <p>The buffer holds the minute up to the moment it is saved, so saving at the instant the health
+     * hits zero would cut the clip on the blow. A couple of seconds more shows the screen and what the
+     * server said did it, which is the whole point of keeping a death: the body respawns two seconds in,
+     * so this is about as much as there is to see.
+     */
+    private static final long DEATH_TAIL_MILLIS = 2_000L;
+
+    /**
+     * Asks for the buffer to be written out because the body has just died, naming the file after what
+     * killed it.
+     *
+     * <p>The other moment worth a minute of video, and for the opposite reason: reaching an objective is
+     * the run at its best, and a death is the minute in which it went wrong — which is where the next
+     * thing worth changing tends to be. Safe to call from the game thread: it returns immediately, and
+     * the wait for the death screen happens on the worker.
+     *
+     * @param cause the server's own sentence, "Player was slain by Zombie", or empty when none came
+     */
+    public void died(String cause) {
+        String what = cause == null || cause.isBlank() ? "death" : "death " + cause;
+        worker.execute(() -> {
+            try {
+                Thread.sleep(DEATH_TAIL_MILLIS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            save(what);
+        });
+    }
+
+    /**
      * Throws away every clip on disk.
      *
      * <p>Called when the worlds are deleted. A clip is a minute of a particular run, and once that run's

@@ -120,9 +120,27 @@ public class ObjectiveAgent extends AgentExecutor {
             - Watch the hunger. Below about half a bar with nothing edible in the inventory it is urgent:
               ask for FOOD, and the player will hunt for it. A player that has food in the bag will eat it
               on its own when it needs to, so do not ask for more of it than a couple of meals.
+            - Readiness. The player is rewarded for already holding what an objective needs when the
+              objective arrives, and charged every second it pursues a block its tools cannot break. So
+              never set an objective whose tool is missing from the inventory — cobblestone with no
+              pickaxe, iron with no stone pickaxe — because the player cannot learn its way out of that:
+              the objective is the tool. And ask for the ingredients of the next step before the step
+              itself, so it learns to anticipate: a spare log or two before planks, sticks before the
+              pickaxe, cobblestone for a furnace while it is already down at the stone.
+            - Deaths. A death loses the whole bag and the running total of what was obtained restarts
+              from what is carried afterwards; "objectives already completed" stays as history only. After
+              a death plan from the inventory as it is now, not from the history, and let what killed
+              the player shape the plan: a sword or a shelter before the next night if a mob did it, food
+              if it starved, staying out of the water or away from lava if that was it.
+            - When the situation carries a note from the coach, it gave up on the last objective for the
+              reason quoted. Take the reason seriously and do not set that objective again.
 
             When the situation says REVIEW, the player already has an objective and has been at it for a
-            while without finishing. Read the moves listed with it before you answer:
+            while without finishing. Read the lines listed with it before you answer:
+            - "Still short for it" is what the objective needs and the bag lacks. The same shortage after
+              minutes of trying means the player cannot get it from here: the objective is that thing.
+            - "No progress for N minutes" says how long the objective has got no nearer. Ten minutes with
+              nothing to show is an objective to replace, however sensible it looked.
             - Moves that keep earning nothing, or keep losing points, mean it is not working.
             - The same move over and over, especially with a wall in the state, means it is stuck. A player
               that cannot get anywhere and is low down is in a hole, and the way out is ASCEND — after

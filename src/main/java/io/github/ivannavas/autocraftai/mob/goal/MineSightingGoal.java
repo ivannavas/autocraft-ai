@@ -99,6 +99,8 @@ public final class MineSightingGoal implements MobGoal {
     private boolean breaking;
     private boolean equipped;
     private boolean blocked;
+    /** The block came apart under this goal's own swings, which is the one way it finishes. */
+    private boolean broke;
     /** What the last swing hit instead of the block, while in reach of it; null when the line is clear. */
     private BlockPos occluder;
 
@@ -120,8 +122,26 @@ public final class MineSightingGoal implements MobGoal {
 
     @Override
     public boolean canContinueToUse(MobBody body) {
-        // The two flags first: when the answer is already no, there is no reason to go and read the world.
-        return !blocked && ticksRunning < GIVE_UP_TICKS && canUse(body);
+        // A block that was coming apart under the swings and is now air came apart: that is the job
+        // done, and it has to be told from the block simply not being there, which is the job impossible.
+        if (breaking && body.level().getBlockState(target).isAir()) {
+            broke = true;
+        }
+        // The flags first: when the answer is already no, there is no reason to go and read the world.
+        return !blocked && !broke && ticksRunning < GIVE_UP_TICKS && canUse(body);
+    }
+
+    /**
+     * Finished: the block it was after is gone, by its own hand.
+     *
+     * <p>Without this a broken log left a goal that could not run and a body standing in front of the
+     * hole for two seconds until the brain called the move stalled — and charged for the standing. A
+     * tree is one decision per log, so the pause between logs was most of the time a tree took. Saying
+     * "done" ends the move the second the block drops, for free, and the next decision sees the next log.
+     */
+    @Override
+    public boolean isDone() {
+        return broke;
     }
 
     /**

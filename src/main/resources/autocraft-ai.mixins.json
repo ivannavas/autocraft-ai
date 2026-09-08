@@ -5,7 +5,8 @@
   "client": [
     "KeyboardInputMixin",
     "MouseHandlerMixin",
-    "MultiPlayerGameModeMixin"
+    "MultiPlayerGameModeMixin",
+    "ClientPacketListenerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

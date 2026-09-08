@@ -113,6 +113,11 @@ public enum Rung implements Phase {
     }
 
     @Override
+    public double progress(StepContext context) {
+        return gather.progress(context);
+    }
+
+    @Override
     public double score(StepContext context) {
         return gather.score(context);
     }

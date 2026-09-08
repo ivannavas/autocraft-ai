@@ -113,6 +113,12 @@ public record Gather(Resource resource, int amount, List<Source> sources, String
         return context.after().count(resource) >= amount;
     }
 
+    /** How many of the thing are in the bag, up to the number asked for. */
+    @Override
+    public double progress(StepContext context) {
+        return Math.min(amount, context.after().count(resource));
+    }
+
     /**
      * Two terms: net progress towards the thing, less whatever was made that the plan has no use for.
      *

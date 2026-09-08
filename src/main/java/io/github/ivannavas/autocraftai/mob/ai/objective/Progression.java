@@ -2,11 +2,13 @@ package io.github.ivannavas.autocraftai.mob.ai.objective;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.function.Consumer;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 import java.util.function.Predicate;
 
 import io.github.ivannavas.autocraftai.mob.ai.FocusKind;
@@ -18,7 +20,9 @@ import lombok.extern.slf4j.Slf4j;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * What the run is after, and what that is worth.
@@ -104,8 +108,64 @@ public final class Progression {
      */
     private static final int REVIEW_WHEN_STUCK_STEPS = 60;
 
+    /**
+     * Paid once per item on the shopping list, the moment the bag first holds as many as the plan said
+     * it would need — for everything but the objective's own item, which the objective pays for itself.
+     *
+     * <p>This is what anticipating is worth. The list already pays per unit as they come in; this is the
+     * lump for having got there, so that stocking up on what the <em>next</em> step will need reads as an
+     * achievement of its own rather than as a slightly better way of passing the time. About a log and a
+     * half: enough to be worth a detour for, not enough to be worth more than the objective.
+     */
+    private static final double READY_BONUS = 5.0;
+    /**
+     * Paid once, on taking an objective the run is already equipped for: every prerequisite on its list
+     * in the bag and the tool its sources want in the hotbar. The reward for having anticipated, landing
+     * on whatever move set the run up that way.
+     */
+    private static final double PREPARED_BONUS = 8.0;
+    /**
+     * Charged once, on taking an objective whose sources cannot be broken by anything the body carries.
+     * A pursuit the body cannot complete is not a slow start, it is a mistake already made — and the
+     * charge lands on the move that left the run unprepared for it.
+     */
+    private static final double UNPREPARED_PENALTY = 5.0;
+    /**
+     * Per second spent on an objective whose blocks will not drop for anything in the hotbar.
+     *
+     * <p>Wasted effort already charges for the swings; this charges for the seconds either side of them,
+     * so that a body standing at the stone without a pickaxe is losing something every second it is not
+     * making one — and the crafting table, which learns from the same reward, finds the pickaxe worth
+     * making sooner. Small, because it is charged whatever the move is, and a standing charge that is
+     * large teaches the timing table to commit short rather than the crafting table to craft.
+     */
+    private static final double UNREADY_COST = 0.2;
+    /**
+     * Blocks of net distance from where a journey began that count as the journey getting somewhere.
+     *
+     * <p>A journey has nothing to count — there is no being nearer a biome you have not found — so what
+     * stands in for progress is new ground: the furthest the body has ever been from where the objective
+     * was set, in steps of this many blocks. A body circling never sets a new record, which is exactly
+     * the case the count exists to catch.
+     */
+    private static final double TRAVEL_PROGRESS_BLOCKS = 8.0;
+
     private final ObjectivePlanner planner;
     private final List<String> achieved = new ArrayList<>();
+    /** How many times the body has died in this world, and what the server said did it last. */
+    private int deaths;
+    private String lastDeath = "";
+    /** The mentor's word on why the last objective was given up, carried into the next question. */
+    private String mentorNote = "";
+    /** Where the body was when the objective in hand was taken, for measuring a journey's progress. */
+    private Vec3 startedAt;
+    /** The furthest along the objective the run has been, and how long since it last got further. */
+    private double bestProgress = Double.NEGATIVE_INFINITY;
+    private int stepsSinceProgress;
+    /** How many times the objective has got nearer, ever: what says a lesson was followed by progress. */
+    private long progressCount;
+    /** The items on the shopping list the bag has already reached, so each is paid for once. */
+    private final Set<Resource> readied = EnumSet.noneOf(Resource.class);
 
     /**
      * Told the name of each objective the moment it is reached. No-op until something wants it.
@@ -315,10 +375,161 @@ public final class Progression {
     public void arrive(LocalPlayer player) {
         restart();
         achieved.clear();
+        deaths = 0;
+        lastDeath = "";
+        mentorNote = "";
         planner.reset();
         log.info("Arrived in a world; asking the planner what to do first");
-        planner.consider(() -> Situation.of(player, InventoryCensus.of(player.getInventory()), achieved, ""));
+        planner.consider(() -> situation(player, InventoryCensus.of(player.getInventory()), ""));
         active = idle();
+    }
+
+    /**
+     * The body has died: the run's record says so from here on, and the plan goes with the life.
+     *
+     * <p>Counted, and the cause kept, because the planner reads both. A bag that reads "nothing" after a
+     * death is not a run that never started, and what killed the body is the one thing about the next
+     * plan that the world cannot show — a sword before dark, food before the next walk.
+     *
+     * @param cause the server's own sentence, or empty when none was caught
+     */
+    public void died(String cause) {
+        deaths++;
+        lastDeath = cause == null ? "" : cause.strip();
+        log.info("Death {}{}", deaths, lastDeath.isEmpty() ? "" : ": " + lastDeath);
+        restart();
+    }
+
+    /**
+     * Gives the objective up on the mentor's word and asks the planner for another, with that word in
+     * the question.
+     *
+     * <p>The one thing the mentor can do that a table cannot learn. An objective the body cannot reach
+     * from here — stone with no pickaxe, a forest that is not in the loaded map — is not a block to be
+     * taught out of, and the mentor saying so is worth more than any lesson it could plant.
+     */
+    public void replan(String why) {
+        if (current == null) {
+            return;
+        }
+        log.info("Giving up {} at the mentor's request: {}", current.name(), why);
+        mentorNote = why == null ? "" : why.strip();
+        current = null;
+        plan = null;
+        stepsOnCurrent = 0;
+        forgetProgress();
+        active = idle();
+    }
+
+    /** Seconds the objective in hand has gone without getting any nearer. Zero between orders. */
+    public int stepsWithoutProgress() {
+        return current == null ? 0 : stepsSinceProgress;
+    }
+
+    /** The same, in whole minutes, for telling a person. */
+    public int minutesWithoutProgress() {
+        return stepsWithoutProgress() / 60;
+    }
+
+    /** How many times the objective in hand has got nearer; rises on every new record and never falls. */
+    public long progressCount() {
+        return progressCount;
+    }
+
+    /** Everything the run knows about itself that the world does not show, attached to a situation. */
+    private Situation situation(LocalPlayer player, InventoryCensus obtained, String objective) {
+        Situation base = Situation.of(player, obtained, achieved, objective);
+        List<String> shortOf = current == null ? List.of()
+                : shortOf(InventoryCensus.of(player.getInventory()), player.getInventory());
+        return base.withRun(deaths, lastDeath, shortOf, minutesWithoutProgress(), mentorNote);
+    }
+
+    /**
+     * What the objective in hand needs and the bag lacks, in words the planner and the mentor can read.
+     *
+     * <p>Two kinds of shortage. Items on the shopping list the bag has fewer of than the plan said, less
+     * the objective's own item, which is what the objective is for. And a tool: a source the planner
+     * named that will not drop for anything in the hotbar, which is the shortage that makes the whole
+     * objective futile rather than merely unfinished.
+     */
+    public List<String> shortOf(InventoryCensus held, Inventory inventory) {
+        List<String> missing = new ArrayList<>();
+        if (current == null) {
+            return missing;
+        }
+        Resource own = current.scores().orElse(null);
+        for (Map.Entry<Resource, Integer> need : needs.entrySet()) {
+            if (need.getKey() != own && held.count(need.getKey()) < need.getValue()) {
+                missing.add((need.getValue() - held.count(need.getKey())) + " x " + need.getKey().name());
+            }
+        }
+        if (inventory != null) {
+            for (Source source : current.sources()) {
+                BlockState state = source.block().defaultBlockState();
+                if (state.requiresCorrectToolForDrops() && !Tool.canHarvest(inventory, state)) {
+                    missing.add("a " + toolFor(source).name() + " that " + source.name()
+                            + " will drop for (nothing in the hotbar does)");
+                }
+            }
+        }
+        return missing;
+    }
+
+    /** The tool a source is broken with: the planner's word, or the game's when the planner said hands. */
+    private static Tool toolFor(Source source) {
+        return source.tool() == Tool.HAND ? Tool.bestFor(source.block().defaultBlockState()) : source.tool();
+    }
+
+    /**
+     * The tools the objective's sources need that the hotbar does not hold.
+     *
+     * <p>Only the tools that are actually required: the game's own word on whether a block drops
+     * anything without the right tool, not the planner's. The planner names an axe for logs, and an axe
+     * is quicker, but a body without one is not unready for wood. Tier counts: a wooden pickaxe in the
+     * hotbar is still a pickaxe missing when the block is iron ore.
+     */
+    private Set<Tool> toolsMissing(Inventory inventory) {
+        Set<Tool> missing = EnumSet.noneOf(Tool.class);
+        if (current == null || inventory == null) {
+            return missing;
+        }
+        for (Source source : current.sources()) {
+            BlockState state = source.block().defaultBlockState();
+            if (state.requiresCorrectToolForDrops() && !Tool.canHarvest(inventory, state)) {
+                missing.add(toolFor(source));
+            }
+        }
+        return missing;
+    }
+
+    /**
+     * Whether the objective asks anything of the bag beyond its own item: a prerequisite on the list, or
+     * a source that will not drop without the right tool. What being prepared for it can mean at all.
+     */
+    private boolean demanding() {
+        if (current == null) {
+            return false;
+        }
+        Resource own = current.scores().orElse(null);
+        if (needs.keySet().stream().anyMatch(item -> item != own)) {
+            return true;
+        }
+        return current.sources().stream()
+                .anyMatch(source -> source.block().defaultBlockState().requiresCorrectToolForDrops());
+    }
+
+    /** Whether every prerequisite on the list is in the bag and every tool the sources want in the hotbar. */
+    private boolean prepared(InventoryCensus held, Inventory inventory) {
+        if (current == null) {
+            return false;
+        }
+        Resource own = current.scores().orElse(null);
+        for (Map.Entry<Resource, Integer> need : needs.entrySet()) {
+            if (need.getKey() != own && held.count(need.getKey()) < need.getValue()) {
+                return false;
+            }
+        }
+        return toolsMissing(inventory).isEmpty();
     }
 
     /**
@@ -339,6 +550,15 @@ public final class Progression {
         needs = Map.of();
         reserved = Reserve.none();
         stepsOnCurrent = 0;
+        forgetProgress();
+    }
+
+    /** The progress record belongs to an objective, and goes when it does. */
+    private void forgetProgress() {
+        startedAt = null;
+        bestProgress = Double.NEGATIVE_INFINITY;
+        stepsSinceProgress = 0;
+        readied.clear();
     }
 
     /**
@@ -391,7 +611,7 @@ public final class Progression {
      */
     public double score(StepContext context) {
         double total = (current == null ? 0.0 : current.score(context))
-                + shoppingList(context) + reserveBroken(context);
+                + shoppingList(context) + reserveBroken(context) + readiness(context);
 
         // Height is the only part that needs a body to read it off. With no body the band cannot be
         // charged for, and "at the right height" is true exactly when there is no band to be at odds with.
@@ -417,7 +637,7 @@ public final class Progression {
     public double advanceIfComplete(StepContext context) {
         double bonus = 0.0;
         while (true) {
-            adopt(context);
+            bonus += adopt(context);
             if (current == null || !current.isComplete(context)) {
                 break;
             }
@@ -427,10 +647,92 @@ public final class Progression {
             current = null;
             plan = null;
             stepsOnCurrent = 0;
+            forgetProgress();
             bonus += ADVANCE_BONUS;
         }
         reviewIfStale(context);
         return bonus;
+    }
+
+    /**
+     * What the step was worth for being, or becoming, equipped for the objective.
+     *
+     * <p>The reward for anticipating, in two parts. A lump the first time the bag holds as many of a
+     * listed item as the plan will need — the sticks before the pickaxe, the cobblestone before the
+     * furnace — and a standing charge for every second spent on an objective whose blocks nothing in
+     * the hotbar will break. Both reach the crafting table through the same reward as everything else,
+     * which is where a body short of a pickaxe learns to make one before walking to the stone.
+     */
+    private double readiness(StepContext context) {
+        if (current == null) {
+            return 0.0;
+        }
+        double total = 0.0;
+        Resource own = current.scores().orElse(null);
+        for (Map.Entry<Resource, Integer> need : needs.entrySet()) {
+            Resource item = need.getKey();
+            if (item == own || readied.contains(item)) {
+                continue;
+            }
+            if (context.after().count(item) >= need.getValue()) {
+                readied.add(item);
+                total += READY_BONUS;
+            }
+        }
+        if (context.player() != null && !toolsMissing(context.player().getInventory()).isEmpty()) {
+            total -= UNREADY_COST * Math.max(1, context.steps());
+        }
+        return total;
+    }
+
+    /**
+     * How far along the objective the run is, as a number to compare with its own earlier readings.
+     *
+     * <p>The objective's own measure, plus what the shopping list has got towards it, plus — for a
+     * journey, which cannot measure itself — new ground away from where it started. See
+     * {@link Phase#progress}.
+     */
+    private double progressOf(StepContext context) {
+        if (current == null) {
+            return 0.0;
+        }
+        double along = current.progress(context);
+        Resource own = current.scores().orElse(null);
+        for (Map.Entry<Resource, Integer> need : needs.entrySet()) {
+            if (need.getKey() != own) {
+                along += Math.min(need.getValue(), context.after().count(need.getKey()));
+            }
+        }
+        if (startedAt != null && context.positionAfter() != null && "GO".equals(current.shape())) {
+            along += Math.floor(flat(startedAt, context.positionAfter()) / TRAVEL_PROGRESS_BLOCKS);
+        }
+        return along;
+    }
+
+    /**
+     * Notes whether the step got the objective any nearer, and how long it has been since one did.
+     *
+     * <p>A record, not a reward: what counts is beating the best the objective has ever managed, so a
+     * body that gathers a log, loses it and gathers it again has not progressed twice.
+     */
+    private void noteProgress(StepContext context) {
+        if (current == null) {
+            return;
+        }
+        double now = progressOf(context);
+        if (now > bestProgress + 1.0E-6) {
+            bestProgress = now;
+            stepsSinceProgress = 0;
+            progressCount++;
+        } else {
+            stepsSinceProgress += Math.max(1, context.steps());
+        }
+    }
+
+    private static double flat(Vec3 from, Vec3 to) {
+        double dx = to.x - from.x;
+        double dz = to.z - from.z;
+        return Math.sqrt(dx * dx + dz * dz);
     }
 
     /**
@@ -445,6 +747,8 @@ public final class Progression {
             return;
         }
         stepsOnCurrent += Math.max(1, context.steps());
+        // Whether this step got anywhere, before anything below decides what to do about it not having.
+        noteProgress(context);
 
         // A pinned body is a block, and a block is the mentor's to answer, not the planner's — see the
         // brain, which owns the tables the mentor teaches. The planner is spared the call; all that
@@ -467,14 +771,13 @@ public final class Progression {
         stepsOnCurrent = 0;
         log.info("{} has been going a while; asking the planner to look at it", current.name());
         String objective = current.toString();
-        planner.consider(() ->
-                Situation.of(context.player(), context.obtained(), achieved, objective));
+        planner.consider(() -> situation(context.player(), context.obtained(), objective));
     }
 
     /** What the mentor is told about a block: the run as it stands, with the objective in hand. */
     public Situation blockSituation(net.minecraft.client.player.LocalPlayer player,
                                     InventoryCensus obtained) {
-        return Situation.of(player, obtained, achieved, current == null ? "" : current.toString());
+        return situation(player, obtained, current == null ? "" : current.toString());
     }
 
     /**
@@ -485,7 +788,11 @@ public final class Progression {
      * <p>Bounded, which is what lets the caller loop on it: the planner hands over at most one answer per
      * question and asks at most one question at a time.
      */
-    private void adopt(StepContext context) {
+    /**
+     * @return what taking the objective was worth: a lump for being already equipped for it, a charge for
+     *         being unable to break its blocks, and nothing when no objective was taken
+     */
+    private double adopt(StepContext context) {
         // Taken before the early return, because an answer may be a review's: the planner was asked about
         // the objective in hand and came back with a different one, and that is meant to take effect.
         Optional<Plan> planned = planner.take();
@@ -499,17 +806,57 @@ public final class Progression {
             needs = planned.get().needs();
             reserved = planned.get().reserved();
             stepsOnCurrent = 0;
+            // The note was for this question, and the question has been answered.
+            mentorNote = "";
             refocus(context);
-            return;
+            return taken(context);
         }
         if (current != null) {
-            return;
+            return 0.0;
         }
         // A supplier rather than a situation: reading the world costs an inventory walk and an entity
         // query, and there is no sense paying for either when the planner is going to ignore the question.
-        planner.consider(() -> Situation.of(context.player(), context.obtained(), achieved, ""));
+        planner.consider(() -> situation(context.player(), context.obtained(), ""));
         // Whether that put a question, owes one, or could do neither is what the idle pursuit reads.
         refocus(context);
+        return 0.0;
+    }
+
+    /**
+     * Starts the objective's own record — where the run was, how far along it already is, which of the
+     * list it already holds — and says what arriving so equipped, or not, was worth.
+     *
+     * <p>What is already held is marked as reached so it is not paid for again as it comes in; what
+     * counts for it is the lump here. A body holding every prerequisite as the objective arrives has
+     * anticipated it, and that is the thing worth paying for. One that cannot break the objective's
+     * blocks has been sent on a pursuit it cannot finish, and the charge lands on whatever move left it
+     * without the tool.
+     */
+    private double taken(StepContext context) {
+        forgetProgress();
+        startedAt = context.positionAfter();
+        Resource own = current.scores().orElse(null);
+        for (Map.Entry<Resource, Integer> need : needs.entrySet()) {
+            if (need.getKey() != own && context.after().count(need.getKey()) >= need.getValue()) {
+                readied.add(need.getKey());
+            }
+        }
+        bestProgress = progressOf(context);
+        Inventory inventory = context.player() == null ? null : context.player().getInventory();
+        if (inventory == null || !demanding()) {
+            // Nothing to have anticipated: a plain gather with nothing behind it is neither.
+            return 0.0;
+        }
+        if (prepared(context.after(), inventory)) {
+            log.info("Prepared for {}: everything it needs is in hand", current.name());
+            return PREPARED_BONUS;
+        }
+        Set<Tool> missing = toolsMissing(inventory);
+        if (!missing.isEmpty()) {
+            log.info("Unprepared for {}: no {} in the hotbar", current.name(), missing);
+            return -UNPREPARED_PENALTY;
+        }
+        return 0.0;
     }
 
     /**

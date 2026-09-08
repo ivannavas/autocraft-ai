@@ -62,14 +62,33 @@ public class MentorAgent extends AgentExecutor {
             If a previous lesson for this same block is quoted and it is still stuck, do not repeat it;
             teach a different way out.
 
+            A STALL is the other kind of trouble, and it is marked as such. The body is not pinned: it
+            walks, it swings, it looks busy, and the objective has got no nearer for the number of minutes
+            given. Read the "still short for it" line and the last moves first, because a stall is nearly
+            always one of these:
+              - it lacks the tool or the ingredient the objective needs (stone with no pickaxe, a pickaxe
+                with no planks). If the missing thing can be made from what it carries, teach the CRAFT
+                table to make it (a large positive value on that craft) and the GOAL table to MINE or
+                APPROACH what it is made of. If it cannot be made or found from here, the objective is
+                wrong: answer with "replan" and one sentence saying what it needs first.
+              - it is in the wrong kind of place and wanders instead of leaving: teach TRAVEL positive
+                and WANDER, WATCH and APPROACH negative in the state given.
+              - it keeps chasing something it cannot reach — an item in a tree, a mob across water:
+                teach that move negative and TRAVEL or MINE positive.
+              - the objective itself is unreachable from here for any other reason: "replan".
+            "replan" is a serious step — the strategist will be asked for a new objective with your
+            sentence in the question — so use it when the lessons alone would not fix it, and say
+            plainly what the player needs first.
+
             Answer with a JSON object ONLY, no text around it and no code fences:
             {"lessons": [{"action": "<GOAL MOVE>", "value": <number>}, ...],
              "passage": [{"action": "<PASSAGE MOVE>", "value": <number>}, ...],
              "craft": [{"action": "<CRAFT CHOICE>", "value": <number>}, ...],
+             "replan": "<empty, or one sentence in English saying why the objective should be given up>",
              "reason": "<one short sentence, in the player's language named in the situation>"}
-            Any list may be empty. Give a large positive value (about 8) to the one or two moves that
-            break the block, and a negative value (about -4) to the moves that are dead ends here. Only
-            name moves from the lists you were given. Keep it to a few lessons — the point is to tip the
-            policy, not to script it.
+            Any list may be empty, and "replan" is empty unless the objective is the problem. Give a large
+            positive value (about 8) to the one or two moves that break the block, and a negative value
+            (about -4) to the moves that are dead ends here. Only name moves from the lists you were
+            given. Keep it to a few lessons — the point is to tip the policy, not to script it.
             """;
 }

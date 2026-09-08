@@ -51,6 +51,8 @@ public class AutocraftAiClient implements ClientModInitializer {
         // announces the moment; OBS has been holding that minute in memory the whole time.
         Clips clips = new Clips(settings);
         brain.progression().onReached(clips::reached);
+        // And every death: the minute in which it went wrong, named after what the server said did it.
+        brain.onDeath(clips::died);
         // And the clips of a run go when its world does: /world/new deletes the saves, and a recording of
         // a world that no longer exists is only clutter in the panel.
         newWorld.onWiped(clips::clear);

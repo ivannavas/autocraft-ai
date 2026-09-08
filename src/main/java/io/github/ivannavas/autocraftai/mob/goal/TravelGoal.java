@@ -76,8 +76,10 @@ public final class TravelGoal implements MobGoal {
     private static final int FLOOR_SEARCH_UP = 3;
     private static final int FLOOR_SEARCH_DOWN = 4;
     private static final float SPEED = 1.0F;
+    /** A steer that turns less than this is the same line, and not worth restarting the ratchet for. */
+    private static final double STEER_TOLERANCE = Math.toRadians(5.0);
 
-    private final OptionalDouble told;
+    private OptionalDouble told;
 
     /**
      * The journey, which outlives a restart.
@@ -168,6 +170,47 @@ public final class TravelGoal implements MobGoal {
     @Override
     public void stop(MobBody body) {
         body.moveControl().stop();
+    }
+
+    /**
+     * Points a journey under way along a new line, without starting it over.
+     *
+     * <p>For a bearing that is a fact rather than a choice: the way to the forest the loaded map shows,
+     * or to the tree it shows. The brain works that out afresh every decision from wherever the body
+     * has got to, and a journey that kept the line it set off on would walk past the tree on the far
+     * side of the angle the first reading had in it — forty blocks off at the range the map is read
+     * at. The record along the bearing starts again from here, because progress along a line the body
+     * is no longer on says nothing; the stall clock does not, because turning is not getting anywhere.
+     *
+     * <p>A line the position table chose is never steered from here. Re-aiming a journey every decision
+     * is exactly what this goal was written to stop doing, and a table's opinion is not a fact.
+     *
+     * @param heading the new bearing, or empty to leave the journey alone
+     * @param from    where the body is now, which is where the new line starts
+     */
+    public void steer(OptionalDouble heading, Vec3 from) {
+        if (heading == null || heading.isEmpty()) {
+            return;
+        }
+        if (!underway) {
+            // Not set off yet: the line it will set off on is simply this one.
+            told = heading;
+            return;
+        }
+        double wanted = heading.getAsDouble();
+        double turn = Math.abs(Math.atan2(Math.sin(wanted - bearing), Math.cos(wanted - bearing)));
+        if (turn < STEER_TOLERANCE) {
+            return;
+        }
+        bearing = wanted;
+        origin = from;
+        furthest = 0.0;
+        // A new line gets a fresh chance to pay: what the old one had failed to gain says nothing about
+        // this one, and a count carried over would call the journey stalled before it had taken a step
+        // along it. A body genuinely pinned keeps the same line, and the count, decision after decision.
+        ticksSinceGain = 0;
+        // Aim again on the next tick rather than waiting out the timer on a line that is no longer it.
+        ticksSinceAim = REAIM_TICKS;
     }
 
     /**

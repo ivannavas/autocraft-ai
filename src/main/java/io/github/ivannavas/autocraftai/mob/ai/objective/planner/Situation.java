@@ -35,8 +35,24 @@ import net.minecraft.world.item.ItemStack;
  * not in a snapshot. Six goes at digging that all lost points, in a state that says there is a wall in
  * front, is a body at the bottom of a hole; no inventory count says that.
  *
+ * <h2>And the run's own record</h2>
+ * The second half is what the world does not show and the planner kept getting wrong without. How many
+ * times the body has died and what killed it last, because a death empties the bag and the planner was
+ * reading "obtained: nothing" after a death as a run that had never started. What the objective in hand
+ * is still short of — the planks a pickaxe needs, the pickaxe stone needs — because "get twelve
+ * cobblestone" with no pickaxe in the bag is an objective the body will swing its fists at for ten
+ * minutes, and the shortage was visible the whole time to anyone who looked. And how long it has been
+ * since the objective got any nearer, which is what tells a slow objective from a stuck one.
+ *
  * <p>{@link #language()} changes nothing about which objective is right, and is here because the sentence
  * the planner writes to explain itself is shown on a panel that speaks the player's language.
+ *
+ * @param deaths                  how many times the body has died in this world
+ * @param lastDeath               what the server said killed it last, or empty
+ * @param shortOf                 what the objective in hand needs and the bag lacks, in plain words
+ * @param minutesWithoutProgress  how long the objective in hand has got no nearer
+ * @param note                    a word from the mentor, when it gave up on the last objective and asked
+ *                                for this question to be put; empty otherwise
  */
 public record Situation(
         String biome,
@@ -54,7 +70,12 @@ public record Situation(
         List<String> achieved,
         String objective,
         List<String> decisions,
-        String language) {
+        String language,
+        int deaths,
+        String lastDeath,
+        List<String> shortOf,
+        int minutesWithoutProgress,
+        String note) {
 
     /** How far out a mob counts as being on top of us. */
     private static final double THREAT_RANGE = 16.0;
@@ -73,10 +94,14 @@ public record Situation(
         decisions = decisions == null ? List.of() : List.copyOf(decisions);
         objective = objective == null ? "" : objective;
         language = language == null || language.isBlank() ? DEFAULT_LANGUAGE : language;
+        lastDeath = lastDeath == null ? "" : lastDeath;
+        shortOf = shortOf == null ? List.of() : List.copyOf(shortOf);
+        note = note == null ? "" : note.strip();
     }
 
     /**
-     * Reads the world as it stands. Must be called on the client thread.
+     * Reads the world as it stands, with nothing yet said about the run's own record. Must be called on
+     * the client thread. See {@link #withRun} for the rest.
      *
      * @param objective the objective already in hand when this is a review, or empty when it is not
      */
@@ -103,7 +128,16 @@ public record Situation(
                 achieved,
                 objective,
                 DecisionLog.get().recent(),
-                Minecraft.getInstance().getLanguageManager().getSelected());
+                Minecraft.getInstance().getLanguageManager().getSelected(),
+                0, "", List.of(), 0, "");
+    }
+
+    /** The same moment, with the run's own record filled in. */
+    public Situation withRun(int deaths, String lastDeath, List<String> shortOf, int minutesWithoutProgress,
+                             String note) {
+        return new Situation(biome, dimension, night, lightLevel, health, maxHealth, food, maxFood, depth,
+                hostilesNearby, carrying, obtained, achieved, objective, decisions, language,
+                deaths, lastDeath, shortOf, minutesWithoutProgress, note);
     }
 
     private static int hostilesNear(LocalPlayer player) {
@@ -149,6 +183,10 @@ public record Situation(
      * and just after it is the same coarse situation — same biome, same bag near enough, between orders
      * both times — and served from memory the second question got the first question's answer back, an
      * objective already done and, once the body had wandered off, not doable again.
+     *
+     * <p>So are the deaths and the mentor's note. A death is a new situation whatever else looks the same,
+     * because the bag is gone; and a question the mentor asked to have put must not be answered from the
+     * memory of the objective it just gave up on.
      */
     public String signature() {
         return dimension + '|' + biome + '|' + (night ? "night" : "day")
@@ -156,7 +194,8 @@ public record Situation(
                 + '|' + (food < 10 ? "hungry" : "fed")
                 + '|' + (hostilesNearby > 0 ? "threat" : "safe")
                 + '|' + tierReached() + '|' + objective
-                + '|' + achieved.size() + ':' + (achieved.isEmpty() ? "-" : achieved.get(achieved.size() - 1));
+                + '|' + achieved.size() + ':' + (achieved.isEmpty() ? "-" : achieved.get(achieved.size() - 1))
+                + '|' + deaths + '|' + note;
     }
 
     /** How far up the chain the run has got, in a word — what the next objective hangs on. */
@@ -171,9 +210,10 @@ public record Situation(
 
     /** One line, for the overlay: enough to tell one call apart from the next. */
     public String summary() {
-        return String.format(Locale.ROOT, "%s, Y %d, %.0f/%.0f HP, %d/%d food%s",
+        return String.format(Locale.ROOT, "%s, Y %d, %.0f/%.0f HP, %d/%d food%s%s",
                 biome.replace("minecraft:", ""), depth, health, maxHealth, food, maxFood,
-                isReview() ? ", " + objective : "");
+                isReview() ? ", " + objective : "",
+                deaths > 0 ? ", " + deaths + " death" + (deaths == 1 ? "" : "s") : "");
     }
 
     /**
@@ -194,12 +234,26 @@ public record Situation(
         text.append("Obtained over the whole run: ").append(totals()).append('\n');
         text.append("Objectives already completed: ")
                 .append(achieved.isEmpty() ? "none" : String.join(", ", achieved)).append('\n');
+        if (deaths > 0) {
+            text.append("Deaths so far: ").append(deaths)
+                    .append(" (the whole bag is lost on death, and the total above restarts from what "
+                            + "is carried afterwards)");
+            if (!lastDeath.isEmpty()) {
+                text.append("; the last one: \"").append(lastDeath).append('"');
+            }
+            text.append('\n');
+        }
         text.append("Player's language: ").append(language).append('\n');
 
         if (isReview()) {
             text.append('\n');
             text.append("REVIEW. The player has been on this objective for a while without finishing it:\n");
             text.append("  ").append(objective).append('\n');
+            text.append(readiness());
+            if (minutesWithoutProgress > 0) {
+                text.append("No progress on it for ").append(minutesWithoutProgress).append(" minute")
+                        .append(minutesWithoutProgress == 1 ? "" : "s").append(".\n");
+            }
             text.append("Its last moves, oldest first:\n");
             if (decisions.isEmpty()) {
                 text.append("  (none recorded)\n");
@@ -208,9 +262,21 @@ public record Situation(
             }
             text.append("Decide whether to keep this objective or replace it.");
         } else {
+            if (!note.isEmpty()) {
+                text.append("\nThe coach gave up on the last objective and asked for a new one: \"")
+                        .append(note).append("\". Do not set the same one again.\n");
+            }
             text.append("\nThe player has no objective. Choose the next one.");
         }
         return text.toString();
+    }
+
+    /** What the objective in hand is still short of, as a line, or that it is short of nothing. */
+    public String readiness() {
+        if (shortOf.isEmpty()) {
+            return "Ready: it holds everything the objective needs but the objective's own item.\n";
+        }
+        return "Still short for it: " + String.join(", ", shortOf) + ".\n";
     }
 
     private String totals() {

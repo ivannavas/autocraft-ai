@@ -13,6 +13,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
@@ -62,17 +63,36 @@ public final class Perception {
     private static final int BLOCK_SCAN_VERTICAL = 4;
 
     public Sighting look(Minecraft client, LocalPlayer player, Optional<Predicate<BlockState>> wanted) {
+        return look(client, player, wanted, item -> true, item -> true);
+    }
+
+    /**
+     * @param worthFetching which drops are worth reporting at all, over and above being something the run
+     *                      has a name for. The brain uses it to hide a drop it has already given up on —
+     *                      one in a tree, or across a ravine — so the eyes move on to the next thing
+     *                      instead of reporting the same unreachable item for the rest of the objective.
+     * @param prized        which drops the plan is actually after — the objective's own item, anything on
+     *                      its list, food. Those outrank the block the plan wants; any other drop is
+     *                      reported only when no such block is in view. A stick that fell out of the
+     *                      canopy used to take the sighting off the log beside it, and the log went
+     *                      unchopped for as long as the stick lay there.
+     */
+    public Sighting look(Minecraft client, LocalPlayer player, Optional<Predicate<BlockState>> wanted,
+                         Predicate<ItemEntity> worthFetching, Predicate<ItemEntity> prized) {
         Sighting threat = nearestThreat(player);
         if (threat.isPresent()) {
             return threat;
         }
-        Sighting drop = nearestDrop(player);
-        if (drop.isPresent()) {
+        Sighting drop = nearestDrop(player, worthFetching);
+        if (drop.isPresent() && drop.entity() instanceof ItemEntity item && prized.test(item)) {
             return drop;
         }
         Sighting resource = nearestWantedBlock(player, wanted);
         if (resource.isPresent()) {
             return resource;
+        }
+        if (drop.isPresent()) {
+            return drop;
         }
         Sighting living = nearestVisibleLiving(player);
         if (living.isPresent()) {
@@ -90,11 +110,29 @@ public final class Perception {
                 .orElseGet(Sighting::nothing);
     }
 
-    private Sighting nearestDrop(LocalPlayer player) {
+    /**
+     * The nearest drop worth walking to.
+     *
+     * <p>Only things the run has a word for. Every leaf that breaks drops a sapling or a stick's worth
+     * of nothing, and a body that stopped chopping to walk over to each of them was the commonest way a
+     * tree took two minutes instead of twenty seconds: the drop outranks the next log in the order
+     * above, so every seed was an interruption. What the vocabulary does not name the run cannot use,
+     * and what it cannot use is not worth the walk.
+     */
+    private Sighting nearestDrop(LocalPlayer player, Predicate<ItemEntity> worthFetching) {
         return nearest(player, PICKUP_SCAN_RANGE,
-                candidate -> candidate instanceof ItemEntity item && !item.getItem().isEmpty())
+                candidate -> candidate instanceof ItemEntity item && !item.getItem().isEmpty()
+                        && Resource.of(item.getItem()).isPresent() && worthFetching.test(item))
                 .map(found -> Sighting.of(FocusKind.ITEM, found))
                 .orElseGet(Sighting::nothing);
+    }
+
+    /**
+     * Whether one of the wanted blocks is within the eyes' reach right now: the same scan the sighting
+     * is made from, asked as a yes or no. What a journey towards a tree the map showed is waiting for.
+     */
+    public boolean canSee(LocalPlayer player, Optional<Predicate<BlockState>> wanted) {
+        return nearestWantedBlock(player, wanted).isPresent();
     }
 
     private Sighting nearestVisibleLiving(LocalPlayer player) {
@@ -278,6 +316,17 @@ public final class Perception {
 
     /** How far under the surface a wanted block is looked for: a trunk under its canopy, an ore in a cliff. */
     private static final int SURFACE_DEPTH = 8;
+    /** How far out the surface is combed for a canopy, in blocks. Six chunks, which is always loaded. */
+    private static final int CANOPY_SCAN = 96;
+    /**
+     * How far apart the columns combed for a canopy are. A crown is five blocks across at its narrowest,
+     * so a grid this coarse cannot pass a tree without landing on its leaves.
+     */
+    private static final int CANOPY_STEP = 3;
+    /** How far to either side of a leaf-topped column the trunk can be: the radius of a crown. */
+    private static final int CROWN = 2;
+    /** How far under a crown's top a trunk is looked for. An oak is five or six logs under two of leaves. */
+    private static final int CROWN_DEPTH = 10;
 
     /**
      * The way to the nearest place in the loaded map where one of the wanted blocks stands at or just
@@ -286,12 +335,54 @@ public final class Perception {
      * <p>The kind of place is not enough. Plains have oaks, and a body on plains looking for oak is in
      * the right kind of place and may still be eighty blocks from the nearest tree, with eyes that reach
      * eight. It walked at random for eight minutes that way. The heightmap says where the surface is at
-     * every loaded column, and a few blocks under the surface is where a trunk is; sampling the columns
-     * along sixteen rays is a few hundred block reads, once a decision, and it turns a search into a walk.
+     * every loaded column, and a few blocks under the surface is where a trunk is.
+     *
+     * <h2>Trees are found by their leaves</h2>
+     * Sampling columns along sixteen rays was the first version, and it found almost nothing: a trunk is
+     * one column wide, and sixteen rays sample one column in a hundred out at any distance, so a tree
+     * had to be exactly on a ray to be seen at all. The body was told "nothing on the map" on a plain
+     * with a dozen oaks on it and went back to wandering. What is wide is the crown, and the heightmap
+     * shows where a crown is: a column whose topmost block is leaves has a tree under it. So the surface
+     * is combed on a grid no coarser than a crown, every leaf-topped column has the columns around it
+     * searched for the block the plan wants, and the nearest such block is what the body is pointed at
+     * — the block itself, so the bearing is exact and the walk ends at the tree rather than near it.
+     *
+     * <p>The rays are kept for what does not grow leaves — coal in a cliff face, an ore in a cutting —
+     * and are only consulted when no crown had the thing.
      */
     public static OptionalDouble bearingToBlock(LocalPlayer player, Predicate<BlockState> wanted) {
         Level level = player.level();
         Vec3 here = player.position();
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        BlockPos nearest = null;
+        double nearestDistance = Double.MAX_VALUE;
+        int originX = (int) Math.floor(here.x);
+        int originZ = (int) Math.floor(here.z);
+        for (int dx = -CANOPY_SCAN; dx <= CANOPY_SCAN; dx += CANOPY_STEP) {
+            for (int dz = -CANOPY_SCAN; dz <= CANOPY_SCAN; dz += CANOPY_STEP) {
+                int x = originX + dx;
+                int z = originZ + dz;
+                if (!level.hasChunk(x >> 4, z >> 4)) {
+                    continue;
+                }
+                int top = level.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z) - 1;
+                if (!level.getBlockState(cursor.set(x, top, z)).is(BlockTags.LEAVES)) {
+                    continue;
+                }
+                BlockPos trunk = underCrown(level, wanted, x, top, z, cursor);
+                if (trunk == null) {
+                    continue;
+                }
+                double distance = trunk.distToCenterSqr(here);
+                if (distance < nearestDistance) {
+                    nearestDistance = distance;
+                    nearest = trunk;
+                }
+            }
+        }
+        if (nearest != null) {
+            return OptionalDouble.of(bearingTo(here, nearest));
+        }
         for (int radius = TERRAIN_STEP / 2; radius <= TERRAIN_SCAN; radius += TERRAIN_STEP / 2) {
             for (int ray = 0; ray < TERRAIN_RAYS; ray++) {
                 double heading = ray * (2.0 * Math.PI / TERRAIN_RAYS);
@@ -302,13 +393,41 @@ public final class Perception {
                 }
                 int top = level.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z) - 1;
                 for (int y = top; y > top - SURFACE_DEPTH; y--) {
-                    if (wanted.test(level.getBlockState(new BlockPos(x, y, z)))) {
+                    if (wanted.test(level.getBlockState(cursor.set(x, y, z)))) {
                         return OptionalDouble.of(heading);
                     }
                 }
             }
         }
         return OptionalDouble.empty();
+    }
+
+    /**
+     * The wanted block nearest the middle of a crown whose top was found at ({@code x}, {@code top},
+     * {@code z}), searching the columns a crown's radius around it and down from its top, or null.
+     */
+    private static BlockPos underCrown(Level level, Predicate<BlockState> wanted, int x, int top, int z,
+                                       BlockPos.MutableBlockPos cursor) {
+        for (int dx = -CROWN; dx <= CROWN; dx++) {
+            for (int dz = -CROWN; dz <= CROWN; dz++) {
+                if (!level.hasChunk((x + dx) >> 4, (z + dz) >> 4)) {
+                    continue;
+                }
+                for (int y = top; y > top - CROWN_DEPTH; y--) {
+                    if (wanted.test(level.getBlockState(cursor.set(x + dx, y, z + dz)))) {
+                        return cursor.immutable();
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /** The yaw, in radians and in the game's convention, that points from here at a block. */
+    private static double bearingTo(Vec3 from, BlockPos to) {
+        double dx = to.getX() + 0.5 - from.x;
+        double dz = to.getZ() + 0.5 - from.z;
+        return Math.atan2(-dx, dz);
     }
 
     /**

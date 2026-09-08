@@ -55,6 +55,13 @@ public record Build(Structure structure, String reason) implements Phase {
         return standing(context.player()) >= structure.count();
     }
 
+    /** Blocks of it up, and failing that blocks of its material in the bag: both are nearer than none. */
+    @Override
+    public double progress(StepContext context) {
+        return standing(context.player())
+                + Math.min(structure.count(), context.after().count(structure.material())) / 100.0;
+    }
+
     /**
      * Paid for the material leaving the bag, which is the closest thing to "a block went down" that a
      * before-and-after pair of inventories can see.

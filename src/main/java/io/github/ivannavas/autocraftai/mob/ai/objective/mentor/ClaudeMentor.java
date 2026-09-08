@@ -137,7 +137,7 @@ public final class ClaudeMentor implements Mentor {
         }
         MentorAsk asked = ask.get();
         // A state taught recently, or taught twice, is left to the lessons already planted.
-        Taught before = taught.get(key(asked));
+        Taught before = taught.get(asked.key());
         if (before != null && (before.times() >= MAX_TIMES || now - before.at() < RETEACH_AFTER_MILLIS)) {
             asking.set(false);
             return;
@@ -149,9 +149,10 @@ public final class ClaudeMentor implements Mentor {
         perPursuit.merge(asked.pursuit(), 1, Integer::sum);
         lastAsked.set(now);
         String prompt = asked.describe() + (before == null ? ""
-                : "\nYou already taught this block once (" + before.summary()
-                        + ") and it is still stuck. Teach a different way out.");
-        PlannerLog.get().mentorAsked("unblock: " + asked.summary(), prompt);
+                : "\nYou already taught this once (" + before.summary()
+                        + ") and it is still " + (asked.stalled() ? "getting nowhere" : "stuck")
+                        + ". Teach a different way out" + (asked.stalled() ? ", or replan." : "."));
+        PlannerLog.get().mentorAsked((asked.stalled() ? "stall: " : "unblock: ") + asked.summary(), prompt);
         thread.execute(() -> {
             try {
                 teach(asked, prompt, before);
@@ -161,30 +162,30 @@ public final class ClaudeMentor implements Mentor {
         });
     }
 
-    private static String key(MentorAsk asked) {
-        return asked.pursuit() + '|' + asked.stuckState();
-    }
-
     private void teach(MentorAsk asked, String prompt, Taught before) {
         try {
             String reply = agent.execute(CONVERSATION, prompt).response();
-            Rescue rescue = new Rescue(asked.pursuit(), asked.stuckState(),
+            Rescue rescue = new Rescue(asked.reason(), asked.pursuit(), asked.stuckState(),
                     lessons(reply, "lessons", asked.actions()),
                     asked.terrain(), lessons(reply, "passage", asked.passageMoves()),
-                    asked.craftKey(), lessons(reply, "craft", asked.craftMoves()));
+                    asked.craftKey(), lessons(reply, "craft", asked.craftMoves()),
+                    // Only a stall may be given up on. A pinned body is a block, and a block is
+                    // answered with a way out, not with a different errand to be blocked on.
+                    asked.stalled() ? replanIn(reply) : "");
             if (rescue.isEmpty()) {
                 log.info("The mentor had nothing to add for {}: {}", asked.summary(), shorten(reply));
                 PlannerLog.get().mentorFailed("nothing taught", reply);
                 rest();
                 return;
             }
-            taught.put(key(asked), new Taught(System.currentTimeMillis(),
+            taught.put(asked.key(), new Taught(System.currentTimeMillis(),
                     before == null ? 1 : before.times() + 1, rescue.summary()));
             answer.set(rescue);
             log.info("Mentor taught {} for {}", rescue.summary(), asked.summary());
             // Kept in the same record the planner writes to, but tagged as the mentor's, so the overlay
             // shows the coaching in a panel of its own.
-            PlannerLog.get().mentorTaught("taught " + rescue.summary() + ": " + reasonIn(reply), reply);
+            PlannerLog.get().mentorTaught((rescue.asksToReplan() ? "gave up: " : "taught ")
+                    + rescue.summary() + ": " + reasonIn(reply), reply);
         } catch (RuntimeException e) {
             log.warn("Could not reach the mentor ({}); leaving the block to the policy", e.getMessage());
             PlannerLog.get().mentorFailed(shorten(e.getMessage()), null);
@@ -232,6 +233,22 @@ public final class ClaudeMentor implements Mentor {
 
     private String reasonIn(String reply) {
         return object(reply).map(node -> node.path("reason").asText("")).orElse("");
+    }
+
+    /**
+     * The mentor giving the objective up, as the sentence it gave, or empty when it did not.
+     *
+     * <p>A model asked for a string sometimes answers with {@code true}, and that is still the objective
+     * being given up; it is carried as a sentence the planner can read, so a bare yes becomes one.
+     */
+    private String replanIn(String reply) {
+        return object(reply).map(node -> node.path("replan")).map(node -> {
+            if (node.isBoolean()) {
+                return node.asBoolean() ? "the coach could not find a way to it from here" : "";
+            }
+            String said = node.asText("").strip();
+            return "false".equalsIgnoreCase(said) || "null".equalsIgnoreCase(said) ? "" : said;
+        }).orElse("");
     }
 
     private Optional<JsonNode> object(String reply) {
