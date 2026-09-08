@@ -144,13 +144,19 @@ public record Situation(
      * Deliberately lossy — the biome family, the time of day, the danger, and roughly what has been got —
      * because that is what actually changes the answer, and finer detail would only turn every step into a
      * cache miss.
+     *
+     * <p>What has been achieved is part of it, and has to be: "what next?" asked just before an objective
+     * and just after it is the same coarse situation — same biome, same bag near enough, between orders
+     * both times — and served from memory the second question got the first question's answer back, an
+     * objective already done and, once the body had wandered off, not doable again.
      */
     public String signature() {
         return dimension + '|' + biome + '|' + (night ? "night" : "day")
                 + '|' + (health < maxHealth / 2 ? "hurt" : "ok")
                 + '|' + (food < 10 ? "hungry" : "fed")
                 + '|' + (hostilesNearby > 0 ? "threat" : "safe")
-                + '|' + tierReached() + '|' + objective;
+                + '|' + tierReached() + '|' + objective
+                + '|' + achieved.size() + ':' + (achieved.isEmpty() ? "-" : achieved.get(achieved.size() - 1));
     }
 
     /** How far up the chain the run has got, in a word — what the next objective hangs on. */

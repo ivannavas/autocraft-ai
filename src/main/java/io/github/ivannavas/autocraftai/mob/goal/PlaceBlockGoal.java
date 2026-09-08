@@ -17,6 +17,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.BlockHitResult;
@@ -44,8 +45,8 @@ public final class PlaceBlockGoal implements MobGoal {
     private static final Set<MobControl> CONTROLS = EnumSet.of(MobControl.MOVE, MobControl.LOOK);
 
     private static final int GIVE_UP_TICKS = 100;
-    /** How far down to look for the block to build on when pillaring. */
-    private static final int SUPPORT_SEARCH = 3;
+    /** How many refused clicks at one spot before the spot is given up on. */
+    private static final int REFUSALS_ALLOWED = 3;
     /** Kept under the server's reach so a placement is never sent from too far to land. */
     private static final double REACH_MARGIN = 0.5;
     private static final float SPEED = 1.0F;
@@ -55,6 +56,7 @@ public final class PlaceBlockGoal implements MobGoal {
 
     private int ticksRunning;
     private boolean placed;
+    private int refusals;
     private final Advance advance = new Advance();
 
     /** Pillars under the body, which is what this goal did before it could be told anything else. */
@@ -111,6 +113,7 @@ public final class PlaceBlockGoal implements MobGoal {
     public void start(MobBody body) {
         ticksRunning = 0;
         placed = false;
+        refusals = 0;
         advance.reset();
     }
 
@@ -124,13 +127,13 @@ public final class PlaceBlockGoal implements MobGoal {
             advance.nothing();
             return;
         }
-        advance.walking(body);
         body.player().getInventory().setSelectedSlot(slot);
 
         if (pillaring(body)) {
             pillar(body);
             return;
         }
+        advance.walking(body);
         placeAt(body, target);
     }
 
@@ -139,20 +142,26 @@ public final class PlaceBlockGoal implements MobGoal {
         return target == null || target.equals(body.player().blockPosition());
     }
 
-    /** Jump, and while off the ground drop a block onto whatever was holding the body up. */
+    /**
+     * Jump, and once there is room drop a block onto whatever was holding the body up. The timing is
+     * {@link Pillar}'s; what is decided here is when to stop: a block down is the move done, nothing to
+     * build on is the move impossible, and a refusal is tried again a few times before it counts as that.
+     */
     private void pillar(MobBody body) {
-        // Standing still: the block has to go under the body, not wherever it drifted to.
-        body.moveControl().stop();
-        LocalPlayer player = body.player();
-        if (player.onGround()) {
-            body.jump();
-            return;
+        switch (Pillar.tick(body)) {
+            case PLACED -> {
+                advance.progress();
+                placed = true;
+            }
+            case NO_SUPPORT -> placed = true;
+            case REFUSED -> {
+                advance.nothing();
+                if (++refusals >= REFUSALS_ALLOWED) {
+                    placed = true;
+                }
+            }
+            case RISING -> advance.nothing();
         }
-        BlockPos support = supportBelow(body);
-        if (support == null) {
-            return;
-        }
-        click(body, support, Direction.UP, Vec3.atCenterOf(support).add(0.0, 0.5, 0.0));
     }
 
     /** Walk into reach, aim at the face of something solid next to the target, and right-click it. */
@@ -179,15 +188,30 @@ public final class PlaceBlockGoal implements MobGoal {
         click(body, against, face.getOpposite(), hit);
     }
 
+    /**
+     * One right-click, believed only if the game says it took: the client refuses a placement its own rules
+     * rule out — a space something occupies, a block that cannot go there — before anything is sent, and
+     * calling that placed used to end the move with nothing down. A refusal is tried again a few times,
+     * since the next tick may be the one that fits, and then the spot is given up on.
+     */
     private void click(MobBody body, BlockPos against, Direction face, Vec3 hit) {
-        gameMode().ifPresent(mode -> {
-            // Noted before the click, with what is in the hand now: after it the stack may be gone.
-            Placed.get().mark(against.relative(face), body.player().getMainHandItem());
-            mode.useItemOn(body.player(), InteractionHand.MAIN_HAND,
-                    new BlockHitResult(hit, face, against, false));
+        Optional<MultiPlayerGameMode> mode = gameMode();
+        if (mode.isEmpty()) {
+            placed = true;
+            return;
+        }
+        // Copied before the click: after it the stack may be gone, and the record wants to know what went.
+        ItemStack hand = body.player().getMainHandItem().copy();
+        InteractionResult result = mode.get().useItemOn(body.player(), InteractionHand.MAIN_HAND,
+                new BlockHitResult(hit, face, against, false));
+        if (result.consumesAction()) {
+            Placed.get().mark(against.relative(face), hand);
             body.player().swing(InteractionHand.MAIN_HAND);
-        });
-        placed = true;
+            advance.progress();
+            placed = true;
+        } else if (++refusals >= REFUSALS_ALLOWED) {
+            placed = true;
+        }
     }
 
     /**
@@ -214,18 +238,6 @@ public final class PlaceBlockGoal implements MobGoal {
     /** Whether a block could go here: air, or something a placed block pushes aside, like a snow layer. */
     private boolean open(MobBody body, BlockPos pos) {
         return body.level().isLoaded(pos) && body.level().getBlockState(pos).canBeReplaced();
-    }
-
-    /** The highest solid block under the body, which is the one a new block goes on top of. */
-    private BlockPos supportBelow(MobBody body) {
-        BlockPos feet = body.player().blockPosition();
-        for (int drop = 1; drop <= SUPPORT_SEARCH; drop++) {
-            BlockPos candidate = feet.below(drop);
-            if (solid(body, candidate)) {
-                return candidate;
-            }
-        }
-        return null;
     }
 
     private boolean withinReach(MobBody body, Vec3 hit) {

@@ -7,7 +7,6 @@ import java.util.Set;
 import io.github.ivannavas.autocraftai.mob.MobBody;
 import io.github.ivannavas.autocraftai.mob.MobControl;
 import io.github.ivannavas.autocraftai.mob.MobGoal;
-import io.github.ivannavas.autocraftai.mob.ai.Placed;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Reserve;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Tool;
 import net.minecraft.client.Minecraft;
@@ -19,7 +18,6 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -195,7 +193,11 @@ public final class ReachBandGoal implements MobGoal {
         return best;
     }
 
-    /** Stacks a block under the body: jump, and drop one into the space just left. */
+    /**
+     * Stacks a block under the body: jump, and drop one into the space just left, when there is room for
+     * it — see {@link Pillar}. The old version clicked on the first airborne tick, was refused, and by the
+     * time the feet were clear had stopped looking at the right block, so it never once got a block down.
+     */
     private void build(MobBody body) {
         int slot = hotbarSlotWithBlock(body.player(), reserve);
         if (slot < 0) {
@@ -204,26 +206,13 @@ public final class ReachBandGoal implements MobGoal {
             stranded = true;
             return;
         }
-        LocalPlayer player = body.player();
-        player.getInventory().setSelectedSlot(slot);
-        if (player.onGround()) {
-            body.jump();
-            return;
-        }
-        BlockPos support = player.blockPosition().below();
-        if (!solid(body, support)) {
-            return;
-        }
-        Vec3 top = Vec3.atCenterOf(support).add(0.0, 0.5, 0.0);
-        body.lookControl().lookAt(top);
-        gameMode().ifPresent(mode -> {
-            Placed.get().mark(support.above(), player.getMainHandItem());
-            mode.useItemOn(player, InteractionHand.MAIN_HAND,
-                    new BlockHitResult(top, Direction.UP, support, false));
-            player.swing(InteractionHand.MAIN_HAND);
+        body.player().getInventory().setSelectedSlot(slot);
+        switch (Pillar.tick(body)) {
             // A block under the feet is a block of height, which is the whole of what this goal is for.
-            advance.progress();
-        });
+            case PLACED -> advance.progress();
+            case NO_SUPPORT -> stranded = true;
+            default -> advance.nothing();
+        }
     }
 
     /** Breaks the block under the feet, with the same two refusals digging down has always had. */
