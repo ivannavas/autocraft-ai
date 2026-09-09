@@ -378,6 +378,16 @@ public final class QLearningBrain {
     private static final long EXPLORING_TURN_MILLIS = 30_000L;
     /** The body as it was when the passage table last chose, or null while nothing is in its way. */
     private Moment stuckSince;
+    /** When the passage layer first took the body this time, and from where, for its patience. */
+    private long passageHeldAt;
+    private Vec3 passageHeldFrom;
+    /** Until when the passage layer stands aside after running out of patience. */
+    private long passageCooldownUntil;
+    /** How long the layer may keep the body without making way before it stands aside. */
+    private static final long PASSAGE_PATIENCE_MILLIS = 20_000;
+    private static final long PASSAGE_COOLDOWN_MILLIS = 10_000;
+    /** How much way, in blocks the wanted direction, counts as making some. */
+    private static final double PASSAGE_WAY_MADE = 1.5;
     /** Which way it wanted, and where, when it last chose: what its progress is measured against. */
     private Obstruction.Wanted stuckWanting;
     private Vec3 stuckTarget;
@@ -1463,6 +1473,27 @@ public final class QLearningBrain {
         if (stuckSince != null) {
             passage.learn(key, passageReward(player), 1, legal);
         }
+        // A passage move running counts as stuck, so this layer feeds itself once it has the body: a
+        // move a second, forever, while the goal underneath never gets a tick. Twenty seconds without
+        // making way in the direction wanted is the end of its turn; it stands aside for a while and
+        // the goal has the body again.
+        long now = System.currentTimeMillis();
+        if (stuckSince == null) {
+            passageHeldAt = now;
+            passageHeldFrom = player.position();
+        } else if (now - passageHeldAt >= PASSAGE_PATIENCE_MILLIS) {
+            if (wayMade(passageHeldFrom, player.position(), here.wanted()) < PASSAGE_WAY_MADE) {
+                log.debug("Passage layer standing aside: {} s on {} and no way made",
+                        (now - passageHeldAt) / 1000, key);
+                passage.forget();
+                stuckSince = null;
+                removePassage();
+                passageCooldownUntil = now + PASSAGE_COOLDOWN_MILLIS;
+                return;
+            }
+            passageHeldAt = now;
+            passageHeldFrom = player.position();
+        }
         stuckSince = Moment.of(player);
         stuckWanting = here.wanted();
         stuckTarget = here.target();
@@ -1480,7 +1511,23 @@ public final class QLearningBrain {
      * pushing at something with somewhere to be. A body already being got through a wall by this layer
      * counts as stuck too, so the table keeps being asked — and keeps learning — until the way is open.
      */
+    /** Blocks made in the direction wanted since a position: up, down, or across the ground. */
+    private static double wayMade(Vec3 from, Vec3 to, Obstruction.Wanted wanted) {
+        if (from == null || wanted == null) {
+            return 0.0;
+        }
+        return switch (wanted) {
+            case UP -> to.y - from.y;
+            case DOWN -> from.y - to.y;
+            case FLAT, TOWARD -> Math.hypot(to.x - from.x, to.z - from.z);
+        };
+    }
+
     private Obstruction obstruction(LocalPlayer player) {
+        // Standing aside after running out of patience: see tendPassage.
+        if (System.currentTimeMillis() < passageCooldownUntil) {
+            return null;
+        }
         // A tactic that has the body keeps it, stalled or not: a tower being refused is not a wall in
         // the way, and a passage move that dug out the block the tower had just laid was the loop the
         // body sat in for a night.
@@ -1579,6 +1626,23 @@ public final class QLearningBrain {
             allowed[i] = options[i].isApplicable(here);
         }
         legalSkills(Skill.Layer.PASSAGE, allowed, player);
+        // A skill's own condition says nothing about which way the body wants to go; its steps do. A
+        // tower up to the sky, written for a body trapped underground, was legal under a tree with the
+        // stone the plan wanted fourteen blocks below.
+        List<Skill> skills = skillsOf(Skill.Layer.PASSAGE);
+        for (int i = 0; i < skills.size(); i++) {
+            int column = options.length + i;
+            if (column >= allowed.length || !allowed[column]) {
+                continue;
+            }
+            Skill skill = skills.get(i);
+            boolean wantsDown = here.wanted() == Obstruction.Wanted.DOWN;
+            boolean wantsUp = here.wanted() == Obstruction.Wanted.UP
+                    || here.wanted() == Obstruction.Wanted.TOWARD;
+            if ((wantsDown && skill.climbs()) || (wantsUp && skill.digs())) {
+                allowed[column] = false;
+            }
+        }
         return allowed;
     }
 
@@ -1759,7 +1823,10 @@ public final class QLearningBrain {
         // Getting back to the sky is only a way out when the sky is where the plan wants the body. With
         // iron at Y -10..50 and the surface at 64, a body stuck under a roof was offered DAYLIGHT every
         // second and climbed away from its own objective; the mentor taught against it every time.
-        if (here.surface() > progression.bounds().ceiling()) {
+        if (here.surface() > progression.bounds().ceiling()
+                || wanted(player, engine.body()) == Obstruction.Wanted.DOWN) {
+            // Nor when the plan wants the body lower than it is: under a canopy the cover reads as a
+            // roof, and a body meant to be digging for stone was breaking leaves and stacking dirt.
             allowed[Tactic.DAYLIGHT.ordinal()] = false;
         }
         if (here.light() == Surroundings.Light.NIGHT && !here.armed() && here.count() > 0) {

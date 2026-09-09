@@ -68,7 +68,10 @@ public enum Passage {
 
         @Override
         public boolean isApplicable(Obstruction here) {
-            return here.above() == Obstruction.Above.CEILING && here.ceilingBreakable();
+            // Not on the way down: a canopy over a body digging for cobblestone is not in its way, and
+            // the mentor's "break the ceiling" lessons for the way up had it punching leaves instead.
+            return here.above() == Obstruction.Above.CEILING && here.ceilingBreakable()
+                    && here.wanted() != Obstruction.Wanted.DOWN;
         }
     },
 
@@ -81,7 +84,8 @@ public enum Passage {
 
         @Override
         public boolean isApplicable(Obstruction here) {
-            return here.hasBlocks() && here.above() == Obstruction.Above.OPEN && here.canStack();
+            return here.hasBlocks() && here.above() == Obstruction.Above.OPEN && here.canStack()
+                    && here.wanted() != Obstruction.Wanted.DOWN;
         }
     },
 

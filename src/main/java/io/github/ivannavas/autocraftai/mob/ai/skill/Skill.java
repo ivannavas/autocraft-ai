@@ -298,6 +298,34 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
         return ticks;
     }
 
+    /**
+     * Whether the steps take the body up: a block put under its own feet, or the blocks straight over
+     * its head broken. Read off the steps rather than declared, so a writer cannot call a tower a
+     * descent; the passage layer keeps such a skill off the table when the body wants down.
+     */
+    public boolean climbs() {
+        for (Step step : steps) {
+            if (step.verb() == Verb.PLACE && "feet".equals(step.word())) {
+                return true;
+            }
+            if (step.verb() == Verb.BREAK && step.at() != null && step.at()[0] == 0 && step.at()[2] == 0
+                    && step.at()[1] >= 2) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether the steps take the body down: the block underfoot dug out. */
+    public boolean digs() {
+        for (Step step : steps) {
+            if (step.verb() == Verb.DIG) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** The skill as JSON, the shape it was written in, for the file and for the writer's memory. */
     public ObjectNode toJson() {
         ObjectNode node = JSON.createObjectNode();
