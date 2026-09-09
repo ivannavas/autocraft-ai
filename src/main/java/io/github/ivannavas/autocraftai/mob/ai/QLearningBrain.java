@@ -1539,6 +1539,20 @@ public final class QLearningBrain {
      * pushing at something with somewhere to be. A body already being got through a wall by this layer
      * counts as stuck too, so the table keeps being asked — and keeps learning — until the way is open.
      */
+    /**
+     * Whether the plan itself wants the body lower than it is: a named height below, or a band whose
+     * ceiling is below. The plan's word, not the self-rescue's, which alternates up and down when the
+     * body is pinned and had DAYLIGHT off the table every other decision in a hole with no sky.
+     */
+    private boolean plannedDown(LocalPlayer player) {
+        int y = player.getBlockY();
+        Optional<Phase> current = progression.current();
+        if (current.isPresent() && current.get().height().isPresent()) {
+            return current.get().height().getAsInt() < y - 1;
+        }
+        return progression.bounds().ceiling() < y - 1;
+    }
+
     /** Blocks made in the direction wanted since a position: up, down, or across the ground. */
     private static double wayMade(Vec3 from, Vec3 to, Obstruction.Wanted wanted) {
         if (from == null || wanted == null) {
@@ -1897,8 +1911,7 @@ public final class QLearningBrain {
         // Getting back to the sky is only a way out when the sky is where the plan wants the body. With
         // iron at Y -10..50 and the surface at 64, a body stuck under a roof was offered DAYLIGHT every
         // second and climbed away from its own objective; the mentor taught against it every time.
-        if (here.surface() > progression.bounds().ceiling()
-                || wanted(player, engine.body()) == Obstruction.Wanted.DOWN) {
+        if (here.surface() > progression.bounds().ceiling() || plannedDown(player)) {
             // Nor when the plan wants the body lower than it is: under a canopy the cover reads as a
             // roof, and a body meant to be digging for stone was breaking leaves and stacking dirt.
             allowed[Tactic.DAYLIGHT.ordinal()] = false;

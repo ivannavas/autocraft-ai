@@ -101,6 +101,14 @@ public final class ClaudeMentor implements Mentor {
     private final Map<String, Taught> taught = new ConcurrentHashMap<>();
     /** Questions put per pursuit, for the overall cap. */
     private final Map<String, Integer> perPursuit = new ConcurrentHashMap<>();
+    /** When each pursuit was last asked about, so a spent cap comes back after a while. */
+    private final Map<String, Long> perPursuitAt = new ConcurrentHashMap<>();
+    /**
+     * After this long without a question about a pursuit its count starts over. The cap was for a
+     * mentor asked four times in four minutes about one block; it also silenced it for the thirty-seven
+     * minutes a body then spent in a hole on the same pursuit, with nobody else to ask.
+     */
+    private static final long PURSUIT_WINDOW_MILLIS = 600_000L;
 
     private ClaudeMentor(MentorAgent agent) {
         this.agent = agent;
@@ -154,11 +162,15 @@ public final class ClaudeMentor implements Mentor {
             asking.set(false);
             return;
         }
+        if (now - perPursuitAt.getOrDefault(asked.pursuit(), 0L) > PURSUIT_WINDOW_MILLIS) {
+            perPursuit.remove(asked.pursuit());
+        }
         if (perPursuit.getOrDefault(asked.pursuit(), 0) >= MAX_PER_PURSUIT) {
             asking.set(false);
             return;
         }
         perPursuit.merge(asked.pursuit(), 1, Integer::sum);
+        perPursuitAt.put(asked.pursuit(), now);
         lastAsked.set(now);
         String prompt = asked.describe() + (before == null ? ""
                 : "\nYou already taught this once (" + before.summary()
@@ -348,6 +360,7 @@ public final class ClaudeMentor implements Mentor {
         // on tables that actually have the row.
         taught.clear();
         perPursuit.clear();
+        perPursuitAt.clear();
         answer.set(null);
         silentUntil.set(0L);
         lastAsked.set(0L);

@@ -837,21 +837,24 @@ public final class Progression {
         // brain, which owns the tables the mentor teaches. The planner is spared the call; all that
         // happens here is the local self-rescue, which is free and does not wait on the network: climb out
         // of a hole, and if that was not it, drop out of the tree next time.
-        if (context.pinned()) {
-            if (context.player() != null) {
-                int y = context.player().getBlockY();
-                // Up and down by turns, unless the objective itself is a height: a climb that is
-                // pinned is not helped by a rescue that wants it lower, and on the box that flip
-                // masked the one tactic getting it up and turned the passage layer against the climb.
-                OptionalInt named = current.height();
-                if (named.isPresent() && named.getAsInt() != y) {
-                    escapedUp = named.getAsInt() > y;
-                } else {
-                    escapedUp = !escapedUp;
-                }
-                escapeTo = escapedUp ? y + ESCAPE_RISE : y - ESCAPE_RISE;
+        boolean pinned = context.pinned();
+        if (pinned && context.player() != null) {
+            int y = context.player().getBlockY();
+            // Up and down by turns, unless the objective itself is a height, or the body is under a
+            // roof: a climb that is pinned is not helped by a rescue that wants it lower, and a body
+            // in a hole with no sky over it has exactly one way out. On the box the flip masked the
+            // one tactic getting it up and turned the passage layer against the climb every other
+            // decision.
+            OptionalInt named = current.height();
+            boolean noSky = !context.player().level().canSeeSky(context.player().blockPosition().above());
+            if (named.isPresent() && named.getAsInt() != y) {
+                escapedUp = named.getAsInt() > y;
+            } else if (noSky) {
+                escapedUp = true;
+            } else {
+                escapedUp = !escapedUp;
             }
-            return;
+            escapeTo = escapedUp ? y + ESCAPE_RISE : y - ESCAPE_RISE;
         }
 
         // Not stuck, just long: ask the planner whether the objective is still right. Rarely, and the
@@ -866,6 +869,13 @@ public final class Progression {
                 && context.player().getFoodData().getFoodLevel() <= Situation.STARVING_AT
                 && Resource.FOOD.countIn(context.player().getInventory()) == 0
                 && current.scores().orElse(null) != Resource.FOOD;
+        // Pinned used to end it here, leaving a pinned body to the mentor alone; with the mentor's
+        // questions for the pursuit spent, a body stuck in a hole went thirty-seven minutes without
+        // anyone being asked. The short-of review still waits for a free body; starving and the
+        // long review do not.
+        if (pinned && !starving && stepsOnCurrent < REVIEW_AFTER_STEPS) {
+            return;
+        }
         if (stepsOnCurrent < REVIEW_AFTER_STEPS && !shortEarly && !starving) {
             return;
         }
