@@ -85,8 +85,7 @@ public final class QTable {
     public double[] valuesFor(String state) {
         double[] row = values.computeIfAbsent(state, key -> new double[actionCount]);
         if (row.length < actionCount) {
-            // A row written before a column was added: padded with nothing known, like a new state's.
-            row = Arrays.copyOf(row, actionCount);
+            row = grown(row, actionCount);
             values.put(state, row);
         }
         return row;
@@ -104,7 +103,29 @@ public final class QTable {
             return;
         }
         actionCount = columns;
-        values.replaceAll((state, row) -> Arrays.copyOf(row, columns));
+        values.replaceAll((state, row) -> grown(row, columns));
+    }
+
+    /**
+     * A row with more columns, the new ones at the row's own mean rather than at zero.
+     *
+     * <p>Zero was an opinion in disguise. A lesson that marked every built-in move in a row as a dead
+     * end left a fresh skill column, at zero, the best thing in the row, and two skills the mentor
+     * wrote for the night — wall yourself in, break back out — were chosen by turns all afternoon
+     * in rows they were never written for. At the mean, a new column is tried where its writer seeded
+     * it and elsewhere only when exploration picks it, which is what "untried" should mean.
+     */
+    private static double[] grown(double[] row, int columns) {
+        double[] wider = Arrays.copyOf(row, columns);
+        if (row.length > 0) {
+            double mean = 0.0;
+            for (double value : row) {
+                mean += value;
+            }
+            mean /= row.length;
+            Arrays.fill(wider, row.length, columns, mean);
+        }
+        return wider;
     }
 
     /**

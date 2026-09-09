@@ -47,9 +47,30 @@ public record Ascend(int level, String reason) implements Phase {
         return "CLIMB_TO_" + level;
     }
 
+    /** How far under the named height counts as there, once the body is out under the sky on the ground. */
+    private static final int NEAR_ENOUGH = 10;
+
+    /**
+     * At the height, or out under the open sky on natural ground within a few blocks of it. The planner
+     * names a height to mean "get back up to the surface", and it guesses the surface: asked for 68
+     * where the savanna stood at 64, the body built a four-block tower in the open to satisfy the
+     * number, came down for the next objective, and built it again.
+     */
     @Override
     public boolean isComplete(StepContext context) {
-        return context.player() != null && context.player().getBlockY() >= level;
+        if (context.player() == null) {
+            return false;
+        }
+        int y = context.player().getBlockY();
+        if (y >= level) {
+            return true;
+        }
+        if (y < level - NEAR_ENOUGH || !context.player().onGround()) {
+            return false;
+        }
+        net.minecraft.core.BlockPos feet = context.player().blockPosition();
+        return context.player().level().canSeeSky(feet.above())
+                && !io.github.ivannavas.autocraftai.mob.ai.Placed.get().isOurs(context.player().level(), feet.below());
     }
 
     /** Height: the higher the body, the further along. */

@@ -839,8 +839,16 @@ public final class Progression {
         // of a hole, and if that was not it, drop out of the tree next time.
         if (context.pinned()) {
             if (context.player() != null) {
-                escapedUp = !escapedUp;
                 int y = context.player().getBlockY();
+                // Up and down by turns, unless the objective itself is a height: a climb that is
+                // pinned is not helped by a rescue that wants it lower, and on the box that flip
+                // masked the one tactic getting it up and turned the passage layer against the climb.
+                OptionalInt named = current.height();
+                if (named.isPresent() && named.getAsInt() != y) {
+                    escapedUp = named.getAsInt() > y;
+                } else {
+                    escapedUp = !escapedUp;
+                }
                 escapeTo = escapedUp ? y + ESCAPE_RISE : y - ESCAPE_RISE;
             }
             return;
