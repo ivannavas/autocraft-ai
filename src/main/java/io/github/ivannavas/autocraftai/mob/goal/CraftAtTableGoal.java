@@ -120,10 +120,20 @@ public final class CraftAtTableGoal implements CraftingGoal {
         return advance.stalledTicks();
     }
 
+    /** The item is in the bag; what is left is picking the table back up when it was the body's own. */
+    private boolean made;
+    private BlockPos reclaiming;
+    private int reclaimTicks;
+    /** The most ticks spent getting the table back: by hand a table takes about four seconds. */
+    private static final int RECLAIM_TICKS = 140;
+
     @Override
     public void start(MobBody body) {
         ticksRunning = 0;
         crafted = false;
+        made = false;
+        reclaiming = null;
+        reclaimTicks = 0;
         gaveUp = false;
         advance.reset();
     }
@@ -131,6 +141,10 @@ public final class CraftAtTableGoal implements CraftingGoal {
     @Override
     public void tick(MobBody body) {
         ticksRunning++;
+        if (made) {
+            reclaim(body);
+            return;
+        }
 
         // A three-by-three grid open means the table is already in use: get on with the recipe.
         AbstractCraftingMenu open = openTableMenu(body.player());
@@ -175,10 +189,40 @@ public final class CraftAtTableGoal implements CraftingGoal {
         // something with a higher claim took the legs — a swim, a wall — is not giving up, and calling
         // it that put the craft on a minute's backoff every time the body got its feet wet on the way
         // to the table: the stone pickaxe was "given up" twice inside four seconds, and never made.
-        gaveUp = !crafted && (ticksRunning >= GIVE_UP_TICKS
+        gaveUp = !crafted && !made && (ticksRunning >= GIVE_UP_TICKS
                 || advance.stalledTicks() >= STALLED_GIVE_UP_TICKS);
         body.moveControl().stop();
+        Digging.stopBreaking();
         closeTable(body.player());
+    }
+
+    /**
+     * Picks the table back up after using it. Left standing, the table dropped out of the bag the
+     * moment the body walked away, the plan asked for one again, and four planks went into another:
+     * seven table objectives in an hour on the box, each paid for in wood the pickaxe needed.
+     */
+    private void reclaim(MobBody body) {
+        if (reclaiming == null || body.level().getBlockState(reclaiming).isAir()
+                || ++reclaimTicks > RECLAIM_TICKS) {
+            crafted = true;
+            return;
+        }
+        Vec3 centre = Vec3.atCenterOf(reclaiming);
+        if (!withinReach(body, centre)) {
+            body.moveControl().moveTo(centre, SPEED);
+            advance.walking(body);
+            return;
+        }
+        body.moveControl().stop();
+        body.lookControl().lookAt(centre);
+        if (reclaimTicks == 1) {
+            Digging.equip(body, reclaiming);
+        }
+        if (Digging.strike(body, reclaiming)) {
+            advance.progress();
+        } else {
+            advance.nothing();
+        }
     }
 
     private void craft(MobBody body, AbstractCraftingMenu menu) {
@@ -187,8 +231,15 @@ public final class CraftAtTableGoal implements CraftingGoal {
             CraftLog.get().record(result.getItem().copy());
             gameMode().ifPresent(mode -> mode.handleContainerInput(
                     menu.containerId, result.index, 0, ContainerInput.QUICK_MOVE, body.player()));
-            crafted = true;
+            made = true;
             closeTable(body.player());
+            // The body's own table goes back in the bag; one found standing is left where it was.
+            BlockPos table = findTable(body);
+            if (table != null && Placed.get().isOurs(body.level(), table)) {
+                reclaiming = table.immutable();
+            } else {
+                crafted = true;
+            }
             return;
         }
         Recipes.find(body.player(), target).ifPresent(recipe -> gameMode().ifPresent(mode ->

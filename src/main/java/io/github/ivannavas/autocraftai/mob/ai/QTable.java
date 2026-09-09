@@ -171,6 +171,21 @@ public final class QTable {
      * because the value is written into the table like any other, keeps it. Ordinary updates adjust it
      * afterwards, so a lesson that turns out wrong is unlearned rather than frozen.
      */
+    /** The most a cell may be pushed to by credit arriving after the fact. */
+    private static final double MOST_NUDGED = 50.0;
+
+    /**
+     * Moves one cell by a delta: credit that arrives after the fact, like a death traced back to the
+     * choices of the minutes before it. Bounded, so a run of deaths cannot drive a cell out of reach of
+     * the ordinary learning that has to bring it back.
+     */
+    public void nudge(String state, int action, double delta) {
+        double[] stateValues = valuesFor(state);
+        if (action >= 0 && action < stateValues.length) {
+            stateValues[action] = Math.max(-MOST_NUDGED, Math.min(MOST_NUDGED, stateValues[action] + delta));
+        }
+    }
+
     public void seed(String state, int action, double value) {
         if (action >= 0 && action < actionCount) {
             valuesFor(state)[action] = value;

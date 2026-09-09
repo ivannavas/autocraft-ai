@@ -840,7 +840,7 @@
       "empty.tactics": "the surroundings have not called for anything yet",
       "threat.NONE": "nothing hostile", "threat.ZOMBIE": "zombie", "threat.SKELETON": "skeleton",
       "threat.CREEPER": "creeper", "threat.SPIDER": "spider", "threat.OTHER": "hostile",
-      "threat.MANY": "several kinds",
+      "threat.MANY": "several kinds", "threat.ANY": "something hostile", "health.OK": "health fine",
       "cover.SKY": "open sky", "cover.PIT": "in a pit", "cover.ROOF": "under a roof",
       "light.DAY": "day", "light.NIGHT": "night", "light.DARK": "dark",
       "qualifier.armed": "armed", "qualifier.unarmed": "unarmed",
@@ -927,6 +927,7 @@
       "skills.done": "Finished", "skills.failed": "Failed", "skills.makes": "Makes",
       "skills.when": "When", "skills.until": "Until", "skills.steps": "Steps", "skills.reason": "Reason",
       "skills.prior": "Prior", "skills.retired": "retired", "skills.live": "live",
+      "skills.problems": "Last failures",
       "empty.skills": "nobody has written a skill yet",
       "logs.level": "level", "logs.filter": "filter…", "logs.pause": "pause", "logs.resume": "resume",
       "logs.clear": "clear", "logs.follow": "follow the tail", "logs.mod": "mod only",
@@ -1599,7 +1600,7 @@
       `<th>${t("skills.uses")}</th><th>${t("skills.done")}</th><th>${t("skills.failed")}</th>` +
       `<th>${t("skills.makes")}</th><th>${t("skills.prior")}</th><th>${t("skills.when")}</th>` +
       `<th>${t("skills.until")}</th><th>${t("skills.steps")}</th><th>${t("skills.reason")}</th>` +
-      `</tr></thead><tbody>` +
+      `<th>${t("skills.problems")}</th></tr></thead><tbody>` +
       skills.map(skill => `<tr>` +
         `<td class="name">${escape(skill.name)}</td>` +
         `<td><span class="tag">${escape(String(skill.layer || "").toLowerCase())}</span></td>` +
@@ -1611,7 +1612,8 @@
         `<td><code>${escape(skill.when || "")}</code></td>` +
         `<td><code>${escape(skill.until && skill.until !== "true" ? skill.until : "—")}</code></td>` +
         `<td><code>${escape(stepWords(skill.steps))}${skill.repeat ? " ↻" : ""}</code></td>` +
-        `<td>${escape(skill.reason || "")}</td></tr>`).join("") +
+        `<td>${escape(skill.reason || "")}</td>` +
+        `<td>${(skill.problems || []).map(p => `<div>${escape(p)}</div>`).join("") || "—"}</td></tr>`).join("") +
       `</tbody></table>`;
     el("ov-skills").innerHTML = skills.map(skill =>
       `<div class="mini-row"><span class="txt"><b>${escape(skill.name)}</b> ` +

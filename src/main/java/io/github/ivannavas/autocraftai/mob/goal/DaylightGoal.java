@@ -136,13 +136,27 @@ public final class DaylightGoal implements MobGoal {
         return body.level().canSeeSky(body.player().blockPosition().above());
     }
 
-    /** The nearest solid block over the head within two, or null when the way up is open. */
+    /** How far up the column over the head is cleared before a block is stacked: what the arm reaches. */
+    private static final int CLEAR_UP = 5;
+
+    /**
+     * The lowest solid block over the head within the arm's reach, or null when the column is clear.
+     *
+     * <p>Looking only two blocks up made the climb a stutter: one block broken, one stacked, and the
+     * ceiling two blocks over the head again. Clearing the whole column the arm can reach first turns
+     * that into four broken and three stacked, which is what a player does. A block beyond the third
+     * that cannot be broken is not a reason to stall: the column is clear enough to stack under it.
+     */
     private static BlockPos ceilingOver(MobBody body, BlockPos feet) {
-        for (int up = 2; up <= 3; up++) {
+        for (int up = 2; up <= CLEAR_UP; up++) {
             BlockPos pos = feet.above(up);
-            if (Digging.solid(body, pos)) {
+            if (!Digging.solid(body, pos)) {
+                continue;
+            }
+            if (up <= 3 || Digging.breakable(body, pos)) {
                 return pos.immutable();
             }
+            return null;
         }
         return null;
     }

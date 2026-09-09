@@ -49,6 +49,10 @@ public final class Skills {
     public static final int MOST_LIVE = 6;
     /** Uses before a skill's record is judged at all. */
     private static final int JUDGED_AFTER = 20;
+    /** A skill that has never once finished is judged much sooner: every try is a minute of daylight. */
+    private static final int JUDGED_EARLY = 6;
+    /** How many of a skill's failure reasons are kept for its writer. */
+    private static final int PROBLEMS_KEPT = 3;
     /** Below this share of uses completed, a judged skill is retired. */
     private static final double KEEP_ABOVE = 0.15;
     private static final String FILE = "skills.json";
@@ -65,6 +69,8 @@ public final class Skills {
         private int failures;
         private boolean retired;
         private String rejection = "";
+        /** Why the last few runs failed, for the writer to read before writing the next one. */
+        private final java.util.ArrayDeque<String> problems = new java.util.ArrayDeque<>();
 
         public int uses() {
             return uses;
@@ -80,6 +86,10 @@ public final class Skills {
 
         public int failures() {
             return failures;
+        }
+
+        public List<String> problems() {
+            return List.copyOf(problems);
         }
     }
 
@@ -113,6 +123,9 @@ public final class Skills {
                     record.completions = entry.path("completions").asInt(0);
                     record.failures = entry.path("failures").asInt(0);
                     record.retired = entry.path("retired").asBoolean(false);
+                    for (JsonNode problem : entry.path("problems")) {
+                        record.problems.addLast(problem.asText(""));
+                    }
                     skills.put(skill.name(), skill);
                     records.put(skill.name(), record);
                 } catch (IllegalArgumentException e) {
@@ -139,6 +152,8 @@ public final class Skills {
                 node.put("completions", record.completions);
                 node.put("failures", record.failures);
                 node.put("retired", record.retired);
+                ArrayNode problems = node.putArray("problems");
+                record.problems.forEach(problems::add);
                 listed.add(node);
             }
             Files.createDirectories(file.getParent());
@@ -184,6 +199,7 @@ public final class Skills {
      * a writer's JSON is parsed against, on whichever thread the writer answers on.
      */
     public static Set<String> taken() {
+        // The built-in moves only. A skill's own name is not taken, it is revisable: see Skill#parse.
         Set<String> names = new HashSet<>();
         for (GoalAction move : GoalAction.values()) {
             names.add(move.name());
@@ -197,7 +213,6 @@ public final class Skills {
         for (CraftChoice move : CraftChoice.values()) {
             names.add(move.name());
         }
-        names.addAll(get().names());
         return names;
     }
 
@@ -225,8 +240,19 @@ public final class Skills {
      * @return empty when the skill was taken; the reason when it was not
      */
     public Optional<String> add(Skill skill) {
-        if (skills.containsKey(skill.name())) {
-            return Optional.of("there is already a skill called " + skill.name());
+        Skill before = skills.get(skill.name());
+        if (before != null) {
+            // A revision: the writer read why it kept failing and wrote it again. The column stays,
+            // the steps change, and the record starts over so the new version is judged on its own.
+            if (before.layer() != skill.layer()) {
+                return Optional.of("a skill keeps its layer when revised: " + skill.name() + " is "
+                        + before.layer().name().toLowerCase());
+            }
+            skills.put(skill.name(), skill);
+            records.put(skill.name(), new Record());
+            save();
+            log.info("Skill {} revised: {}", skill.name(), skill.describe());
+            return Optional.empty();
         }
         if (live(skill.layer()).size() >= MOST_LIVE) {
             return Optional.of("the " + skill.layer().name().toLowerCase() + " table already has "
@@ -259,13 +285,25 @@ public final class Skills {
 
     /** Counted when a skill's goal gave up, and what retires a skill that keeps giving up. */
     public void failed(String name) {
+        failed(name, "");
+    }
+
+    /** Counted when a skill's goal gave up, with the reason kept for its writer. */
+    public void failed(String name, String why) {
         Record record = records.get(name);
         if (record == null) {
             return;
         }
         record.failures++;
-        if (!record.retired && record.uses >= JUDGED_AFTER
-                && record.completions < record.uses * KEEP_ABOVE) {
+        if (why != null && !why.isBlank()) {
+            record.problems.addLast(why.strip());
+            while (record.problems.size() > PROBLEMS_KEPT) {
+                record.problems.pollFirst();
+            }
+        }
+        boolean neverOnce = record.uses >= JUDGED_EARLY && record.completions == 0;
+        boolean rarely = record.uses >= JUDGED_AFTER && record.completions < record.uses * KEEP_ABOVE;
+        if (!record.retired && (neverOnce || rarely)) {
             record.retired = true;
             log.info("Retiring skill {}: {} of {} uses finished", name, record.completions, record.uses);
         }
@@ -287,6 +325,8 @@ public final class Skills {
             node.put("failures", record.failures);
             node.put("retired", record.retired);
             node.put("summary", skill.describe());
+            ArrayNode problems = node.putArray("problems");
+            record.problems.forEach(problems::add);
             listed.add(node);
         }
         return listed.toString();
@@ -299,7 +339,11 @@ public final class Skills {
             Record record = records.get(skill.name());
             out.append(out.isEmpty() ? "" : "\n").append("  ").append(skill.describe())
                     .append(" [used ").append(record.uses).append(", finished ").append(record.completions)
-                    .append(record.retired ? ", RETIRED for not finishing]" : "]");
+                    .append(record.retired ? ", RETIRED for not finishing" : "");
+            if (!record.problems.isEmpty()) {
+                out.append("; last failures: ").append(String.join(" / ", record.problems));
+            }
+            out.append(']');
         }
         return out.toString();
     }

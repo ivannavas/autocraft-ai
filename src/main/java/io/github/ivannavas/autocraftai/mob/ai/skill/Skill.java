@@ -159,6 +159,9 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
             Each step has ten seconds (a wait or hold up to thirty) and the whole skill a minute; a step
             that does not finish fails the skill, and a skill that keeps failing is retired.
             prior: -6 to 6, the value it starts with in the row it was written for.
+            To fix a skill of yours that keeps failing — the list of skills says why the last runs failed —
+              write it again with the same name and "revise": true: its steps are replaced and its record
+              starts over. Prefer revising a failing skill to writing a similar new one.
             """;
 
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -197,6 +200,10 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
         String name = node.path("name").asText("").strip().toUpperCase(Locale.ROOT).replace(' ', '_');
         if (taken.contains(name)) {
             throw new IllegalArgumentException("the name " + name + " is already a move");
+        }
+        if (Skills.get().named(name).isPresent() && !node.path("revise").asBoolean(false)) {
+            throw new IllegalArgumentException("there is already a skill called " + name
+                    + "; to replace it, write it again with \"revise\": true");
         }
         Layer layer;
         try {

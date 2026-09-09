@@ -172,6 +172,29 @@ public final class QLearningBrain {
     private static final int SAVE_EVERY_DECISIONS = 100;
     private static final int REPORT_EVERY_DECISIONS = 300;
     private static final double DEATH_PENALTY = -20.0;
+
+    /**
+     * A choice made lately, for tracing a death back to what led to it.
+     *
+     * <p>The terminal penalty lands on the one claim open when the body died, and a night that kills
+     * spread its decisions over two hundred rows: the one that took the hit was rarely the one that
+     * walked out under the sky at dusk. So every choice of the last two minutes is kept, and a death
+     * takes value off each of them, less the older it is — half as much every thirty seconds.
+     */
+    private record Trace(Table table, String state, int column, long at) {
+    }
+
+    private static final java.util.Deque<Trace> TRACES = new java.util.ArrayDeque<>();
+    private static final long TRACE_KEEP_MILLIS = 120_000;
+    private static final double DEATH_TRACE = 8.0;
+    private static final double DEATH_TRACE_HALF_LIFE_MILLIS = 30_000;
+
+    /**
+     * A cost per second of standing under the open sky at night with no shelter running. Not a rule:
+     * a signal, the same shape as the readiness cost, so the tables can learn that dusk in the open is
+     * where the deaths come from before a death has to teach it.
+     */
+    private static final double EXPOSED_COST = 0.15;
     /**
      * How far past its commitment a goal that refuses interruption may run before it is cut short anyway.
      *
@@ -378,6 +401,8 @@ public final class QLearningBrain {
     private static final long EXPLORING_TURN_MILLIS = 30_000L;
     /** The body as it was when the passage table last chose, or null while nothing is in its way. */
     private Moment stuckSince;
+    /** The surroundings as last read by the tactics layer, for the exposure cost. */
+    private Surroundings lastSurroundings;
     /** When the passage layer first took the body this time, and from where, for its patience. */
     private long passageHeldAt;
     private Vec3 passageHeldFrom;
@@ -425,6 +450,9 @@ public final class QLearningBrain {
         this.progression = Progression.planned(directory);
         this.mentor = ClaudeMentor.create(directory);
         this.directory = directory;
+        synchronized (TRACES) {
+            TRACES.clear();
+        }
         // The skills first: they are columns, and the tables have to open with them.
         Skills.get().load(directory);
         this.crafting = new Table(columnsFor(Skill.Layer.CRAFT), directory.resolve("crafting.txt"));
@@ -501,7 +529,7 @@ public final class QLearningBrain {
                 Skills.get().completed(run.skill().name());
             } else if (run.failed()) {
                 log.info("Skill {} failed: {}", run.skill().name(), run.failure());
-                Skills.get().failed(run.skill().name());
+                Skills.get().failed(run.skill().name(), run.failure());
             }
         }
     }
@@ -978,7 +1006,7 @@ public final class QLearningBrain {
         // Score before looking: reaching a rung changes what the body is after, and the sighting that
         // follows should already be taken with the new rung's eyes.
         double climbed = progression.advanceIfComplete(step);
-        double reward = score(step) + climbed;
+        double reward = score(step) + climbed + exposure(step.steps());
 
         // What the move that just ended did, before anything replaces it. The planner reads these when an
         // objective drags on: a run of them is what a rut looks like from outside.
@@ -1706,6 +1734,7 @@ public final class QLearningBrain {
         boolean stuck = progression.current().isPresent()
                 && progression.stepsWithoutProgress() >= STUCK_UNDER_COVER_STEPS;
         Surroundings here = Surroundings.around(player, progression.reserved(), stuck);
+        lastSurroundings = here;
         // A shelter is not undone by working: the second the cap goes on, the surroundings read as a
         // roof with nothing hostile in range and stopped calling for anything — and the hole-up was
         // dropped, the goal underneath broke back out, and the night was spent digging the same hole.
@@ -1773,9 +1802,54 @@ public final class QLearningBrain {
      * second, plus a lump per hostile that is no longer alive, plus something per block of height a
      * trapped body gained, plus a lump for getting the sky back.
      */
+    /** The exposure cost over some seconds: night, open sky, and nothing sheltering the body. */
+    private double exposure(int steps) {
+        Surroundings here = lastSurroundings;
+        if (here == null || here.light() != Surroundings.Light.NIGHT
+                || here.cover() != Surroundings.Cover.SKY || sheltering()) {
+            return 0.0;
+        }
+        return -EXPOSED_COST * Math.max(1, steps);
+    }
+
+    /** Keeps a choice for tracing a death back. Called by every table as it chooses. */
+    private static void remember(Table table, String state, int column) {
+        if (column < 0) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        synchronized (TRACES) {
+            TRACES.addLast(new Trace(table, state, column, now));
+            while (!TRACES.isEmpty() && now - TRACES.peekFirst().at() > TRACE_KEEP_MILLIS) {
+                TRACES.pollFirst();
+            }
+        }
+    }
+
+    /** The death, traced back: each distinct choice of the last two minutes loses value by its age. */
+    private void traceDeath() {
+        long now = System.currentTimeMillis();
+        Map<String, Trace> latest = new LinkedHashMap<>();
+        synchronized (TRACES) {
+            for (Trace trace : TRACES) {
+                latest.put(System.identityHashCode(trace.table()) + "|" + trace.state() + "|" + trace.column(),
+                        trace);
+            }
+            TRACES.clear();
+        }
+        for (Trace trace : latest.values()) {
+            double age = now - trace.at();
+            double delta = -DEATH_TRACE * Math.pow(0.5, age / DEATH_TRACE_HALF_LIFE_MILLIS);
+            trace.table().table.nudge(trace.state(), trace.column(), delta);
+        }
+        if (!latest.isEmpty()) {
+            log.info("Death traced back to {} choices of the last two minutes", latest.size());
+        }
+    }
+
     private double tacticReward(LocalPlayer player, Surroundings now) {
         double reward = score(stepSince(tacticSince, player, 1, 0, 0, List.of(), placedThisStep,
-                reclaimedThisStep));
+                reclaimedThisStep)) + exposure(1);
         if (tacticSeen == null) {
             return reward;
         }
@@ -2663,6 +2737,7 @@ public final class QLearningBrain {
     private void endEpisode(Minecraft client, LocalPlayer player) {
         if (lastObservation != null) {
             tables().forEach(table -> table.learnTerminal(DEATH_PENALTY));
+            traceDeath();
             forget();
         }
         if (ticksDead == 0) {
@@ -2880,6 +2955,7 @@ public final class QLearningBrain {
             int column = table.choose(state, legal);
             pendingState = state;
             pendingColumn = column;
+            remember(this, state, column);
             return column;
         }
 

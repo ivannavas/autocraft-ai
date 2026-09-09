@@ -185,7 +185,17 @@ public record Surroundings(List<LivingEntity> hostiles, String threat, int count
 
     /** The state key, in a fixed order so a table written today still reads tomorrow. */
     public String key() {
-        return threat + count + '|' + nearest.name() + '|' + (armed ? "A" : "-") + '|' + health.name()
+        // Coarser at night. The question then is shelter, and a lesson learned against a zombie at
+        // mid range with half health has to serve against a skeleton close by at full: with every
+        // distinction kept, each night was two hundred decisions spread over rows the last night
+        // never visited, and the deaths taught nothing that carried over.
+        boolean night = light == Light.NIGHT;
+        String kinds = night ? (count == 0 ? "NONE" : "ANY") : threat;
+        int howMany = night ? Math.min(2, count) : count;
+        String near = night && (nearest == Perception.Distance.CLOSE || nearest == Perception.Distance.NEAR)
+                ? "NEAR" : nearest.name();
+        String hurt = night && health != Perception.Health.LOW ? "OK" : health.name();
+        return kinds + howMany + '|' + near + '|' + (armed ? "A" : "-") + '|' + hurt
                 + '|' + cover.name() + '|' + light.name() + '|' + stock();
     }
 
