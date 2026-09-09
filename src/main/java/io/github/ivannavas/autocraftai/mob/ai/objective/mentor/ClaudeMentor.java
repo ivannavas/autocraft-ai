@@ -47,7 +47,13 @@ public final class ClaudeMentor implements Mentor {
 
     private static final String MODEL = "claude-opus-5";
     private static final String API_URL = "https://api.anthropic.com/v1/messages";
-    private static final int MAX_TOKENS = 700;
+    /**
+     * Room for the answer and for the thinking before it. The model thinks by default, and the thinking
+     * is paid for out of the same budget as the text: at 700 the run got answers with no text block at
+     * all — the whole budget gone on thinking — which came through as an empty reply, logged as "nothing
+     * to add". A lesson with a skill in it is under 600 tokens of text; the rest is headroom.
+     */
+    private static final int MAX_TOKENS = 2000;
     private static final int TIMEOUT_SECONDS = 30;
     private static final String CONVERSATION = "unblock";
     private static final long RETRY_AFTER_MILLIS = 60_000L;
@@ -176,6 +182,15 @@ public final class ClaudeMentor implements Mentor {
     private void teach(MentorAsk asked, String prompt, Taught before) {
         try {
             String reply = agent.execute(CONVERSATION, prompt).response();
+            if (reply == null || reply.isBlank()) {
+                // No text block at all: the model spent its budget before writing, or refused. Told
+                // apart from a reply with nothing in it, because the fix is different.
+                log.warn("The mentor answered nothing for {} (out of tokens before the text?)",
+                        asked.summary());
+                PlannerLog.get().mentorFailed("empty answer", null);
+                rest();
+                return;
+            }
             // A skill the mentor wrote, checked before anything is done with it. Its name is a move
             // from now on, so lessons in the same reply may name it.
             Skill skill = null;

@@ -91,7 +91,10 @@ public final class ReachBandGoal implements MobGoal {
 
     @Override
     public boolean canUse(MobBody body) {
-        return !arrived(body.player());
+        // Stranded bars the start as well as the continuation, as it does in TravelGoal: the engine offers
+        // a stopped goal the body again on the very next tick, and without this a climb with no way up
+        // started and stopped forty times a second while the body stood still and starved.
+        return !stranded && !arrived(body.player());
     }
 
     @Override
@@ -116,7 +119,6 @@ public final class ReachBandGoal implements MobGoal {
     public void start(MobBody body) {
         ticksRunning = 0;
         ticksSinceScan = RESCAN_TICKS;
-        stranded = false;
         heading = null;
         advance.reset();
     }

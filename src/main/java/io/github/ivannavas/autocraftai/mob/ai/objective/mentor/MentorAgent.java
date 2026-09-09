@@ -87,6 +87,11 @@ public class MentorAgent extends AgentExecutor {
             If a previous lesson for this same block is quoted and it is still stuck, do not repeat it;
             teach a different way out.
 
+            A situation marked STARVING is the emergency: whatever you teach has to get the body to food
+            fast. Underground that is the way up — DAYLIGHT, REACH_BAND, BREAK_ABOVE, PILLAR with blocks —
+            and on the surface it is APPROACH and ATTACK on animals; teach against anything that keeps it
+            where it is, and if the objective itself is not the way to food, say "replan".
+
             A STALL is the other kind of trouble, and it is marked as such. The body is not pinned: it
             walks, it swings, it looks busy, and the objective has got no nearer for the number of minutes
             given. Read the "still short for it" line and the last moves first, because a stall is nearly

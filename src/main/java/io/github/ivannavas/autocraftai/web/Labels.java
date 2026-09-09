@@ -98,7 +98,26 @@ final class Labels {
             "qualifier.wall", "qualifier.blocks", "qualifier.hungry",
             "bag.empty", "bag.holding", "needs.nothing", "needs.short",
             "shape.gather", "shape.travel", "shape.descend", "shape.ascend", "shape.build",
-            "tip.cpu", "tip.cpu.machine", "tip.memory", "tip.memory.machine");
+            "tip.cpu", "tip.cpu.machine", "tip.memory", "tip.memory.machine",
+            "driving",
+            "tab.overview", "tab.learning", "tab.talk", "tab.skills", "tab.logs", "tab.clips", "tab.control",
+            "vitals.health", "vitals.food", "vitals.position", "vitals.biome", "vitals.time", "vitals.fps",
+            "vitals.world", "vitals.clips", "time.day", "time.night", "time.dusk", "time.dawn",
+            "now.situation", "now.folder", "now.decisions",
+            "overview.plan", "overview.now", "overview.talk", "overview.skills", "overview.alerts",
+            "overview.machine", "overview.more",
+            "learning.search", "learning.opinion", "learning.rows",
+            "talk.filter", "talk.all", "talk.answered", "talk.failed",
+            "skills.name", "skills.layer", "skills.state", "skills.uses", "skills.done", "skills.failed",
+            "skills.makes", "skills.when", "skills.until", "skills.steps", "skills.reason", "skills.prior",
+            "skills.retired", "skills.live", "empty.skills",
+            "logs.level", "logs.filter", "logs.pause", "logs.resume", "logs.clear", "logs.follow",
+            "logs.mod", "logs.all", "logs.count", "empty.logs",
+            "clips.name", "clips.size", "clips.age", "clips.download", "clips.refresh", "empty.clips",
+            "control.world", "control.name", "control.newworld", "control.newworld.confirm",
+            "control.resume", "control.reset", "control.reset.confirm", "control.stop",
+            "control.stop.confirm", "control.done", "control.failed", "control.busy", "control.hint",
+            "status.inworld", "status.noworld");
 
     private Labels() {
     }

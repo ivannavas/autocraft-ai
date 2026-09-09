@@ -77,6 +77,10 @@ public final class Skills {
         public boolean retired() {
             return retired;
         }
+
+        public int failures() {
+            return failures;
+        }
     }
 
     private final Map<String, Skill> skills = new LinkedHashMap<>();
@@ -270,6 +274,22 @@ public final class Skills {
 
     public Record record(String name) {
         return records.getOrDefault(name, new Record());
+    }
+
+    /** Every skill with its record, as a JSON list for the overlay. */
+    public String json() {
+        ArrayNode listed = JSON.createArrayNode();
+        for (Skill skill : skills.values()) {
+            Record record = records.getOrDefault(skill.name(), new Record());
+            ObjectNode node = skill.toJson();
+            node.put("uses", record.uses);
+            node.put("completions", record.completions);
+            node.put("failures", record.failures);
+            node.put("retired", record.retired);
+            node.put("summary", skill.describe());
+            listed.add(node);
+        }
+        return listed.toString();
     }
 
     /** Everything the mentor needs to know about what already exists, as lines. Empty when nothing does. */

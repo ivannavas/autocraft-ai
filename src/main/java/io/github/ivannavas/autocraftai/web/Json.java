@@ -47,6 +47,7 @@ final class Json {
         out.append("\"currentAction\":").append(string(snapshot.currentAction())).append(',');
         out.append("\"currentTiming\":").append(string(snapshot.currentTiming())).append(',');
         out.append("\"currentCraft\":").append(string(snapshot.currentCraft())).append(',');
+        out.append("\"driver\":").append(string(snapshot.driver())).append(',');
         out.append("\"epsilon\":").append(number(snapshot.epsilon())).append(',');
         out.append("\"decisions\":").append(snapshot.decisions()).append(',');
         out.append("\"stalls\":").append(snapshot.stalls()).append(',');
@@ -126,6 +127,27 @@ final class Json {
      * megabytes an hour to say nothing new. The snapshot carries a revision instead, and the page comes
      * back for this when that number moves.
      */
+    /** Log lines as the page reads them: sequence, time, level, logger, thread, message. */
+    static String logs(List<LogBuffer.Entry> entries) {
+        StringBuilder out = new StringBuilder("[");
+        boolean first = true;
+        for (LogBuffer.Entry entry : entries) {
+            if (!first) {
+                out.append(',');
+            }
+            first = false;
+            out.append("{\"seq\":").append(entry.seq())
+                    .append(",\"t\":").append(entry.millis())
+                    .append(",\"level\":").append(string(entry.level()))
+                    .append(",\"logger\":").append(string(entry.logger()))
+                    .append(",\"thread\":").append(string(entry.thread()))
+                    .append(",\"msg\":").append(string(entry.message()))
+                    .append(",\"own\":").append(entry.own())
+                    .append('}');
+        }
+        return out.append(']').toString();
+    }
+
     static String planner(List<PlannerLog.Entry> entries) {
         long now = System.currentTimeMillis();
         StringJoiner joiner = new StringJoiner(",", "[", "]");

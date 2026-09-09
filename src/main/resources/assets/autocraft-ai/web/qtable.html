@@ -2,17 +2,24 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Autocraft AI — tabla Q</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Autocraft AI</title>
 <style>
   /*
-   * Built as an OBS browser source. The page plane is fully transparent so the capture composites over
-   * whatever is behind it; the panel carries its own translucent surface, which is what makes the colour
-   * work below valid — the palette is validated against #1a1a19, and at this alpha that is what the marks
-   * effectively sit on. Drop --panel-alpha to 0 for a bare floating overlay; legibility is then on you.
+   * Two views of one page.
+   *
+   * The compact view (?view=compact) is the strip that goes on the stream as an OBS browser source: a
+   * transparent plane with one translucent band across it saying what the run is doing. The full view
+   * is the control panel: a dark dashboard with the same strip as its header and everything else in
+   * tabs below it. One document, one event stream, one set of words to translate; the view only
+   * decides what is drawn. The palette is validated against #1a1a19, which is what both views sit on.
    */
   :root {
     --panel-alpha: 0.86;
     --surface: 26, 26, 25;
+    --bg: #141413;
+    --card: rgba(255, 255, 255, 0.035);
+    --card-solid: #1c1c1b;
 
     --text-primary: #ffffff;
     --text-secondary: #c3c2b7;
@@ -25,15 +32,10 @@
        polarity survives colourblindness and a monochrome stream alike. */
     --positive: #3987e5;
     --negative: #e66767;
-
-    /* The machine's own load is a quantity, not an opinion, so it is painted in a warm neutral kept
-       deliberately outside the diverging pair: a busy CPU is neither good news nor bad. The negative is
-       borrowed for exactly one case that genuinely is bad, and the figures beside the bar say so too. */
+    --warning: #e8b04a;
     --load: #a8a69c;
 
     --row-height: 26px;
-    /* Wider than it was: every key now carries its source, and the verdict on the end of the label is
-       the one part that must not be the part that gets cut. */
     --state-column: 360px;
     --bar-track: 76px;
   }
@@ -49,31 +51,29 @@
     font-size: 12px;
     line-height: 1.35;
     color: var(--text-primary);
-    padding: 12px;
   }
 
+  body:not(.compact) {
+    background: var(--bg);
+    min-height: 100vh;
+  }
+
+  a { color: var(--positive); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* --- the strip: what is happening right now ------------------------------------------------- */
+
   .panel {
-    display: inline-block;
-    max-width: 100%;
     background: rgba(var(--surface), var(--panel-alpha));
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 18px 20px 14px;
     box-shadow: 0 2px 18px rgba(0, 0, 0, 0.45);
   }
 
-  /* --- what is happening right now ------------------------------------------------------------ */
-
-  /* One line, deliberately. The two or three things worth glancing at fit on a single row; the reason
-     gets a row of its own because it is a sentence, not a field. */
   .now {
     display: flex;
     align-items: baseline;
     flex-wrap: wrap;
     gap: 4px 18px;
-    margin-bottom: 16px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid var(--gridline);
     font-size: 12px;
   }
 
@@ -83,7 +83,7 @@
     gap: 6px;
   }
 
-  .now-label {
+  .now-label, .k, .section-label, .sub-label, .card-title {
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -102,148 +102,256 @@
     line-height: 1.4;
   }
 
-  /* No objective and none coming: the one state the page raises its voice about, in both views. */
-  .now-value.warn,
-  .empty-line.warn {
-    color: var(--negative);
-  }
+  .now-value.warn, .empty-line.warn { color: var(--negative); }
 
-  /* --- the compact view --------------------------------------------------------------------------
-   *
-   * What goes out on the stream: the objective and the move being made, and nothing else. The tables
-   * are the interesting part to whoever is running this, and unreadable clutter to whoever is
-   * watching a video of a game — a viewer wants to know what it is trying to do, not to audit it.
-   *
-   * The same page in both places on purpose. One document, one event stream, one set of words to
-   * translate; the view only decides what is drawn.
-   */
-  body.compact {
-    padding: 0;
-  }
+  /* --- the compact view: only the strip, nearly opaque, over the game's HUD -------------------- */
 
-  body.compact .block,
-  body.compact .load,
-  body.compact .foot {
-    display: none;
-  }
-
-  body.compact .panel {
+  body.compact { padding: 0; }
+  body.compact .brand, body.compact .vitals, body.compact nav.views, body.compact main,
+  body.compact .foot { display: none; }
+  body.compact .top { position: static; background: transparent; border: 0; backdrop-filter: none; }
+  body.compact .top-inner { max-width: none; padding: 0; }
+  body.compact .panel.strip {
     display: block;
     border-radius: 0;
     border-left: 0;
     border-right: 0;
     border-bottom: 0;
     padding: 14px 22px;
-    /* Nearly opaque, unlike the panel view. This band sits over the game's own health and hotbar, and
-       at the alpha that reads well behind a table the two show through each other and neither is
-       legible. Covering them costs nothing: the strip says what the run is doing, which is the same
-       question the HUD answers less clearly. */
     background: rgba(var(--surface), 0.94);
   }
+  body.compact .now { font-size: 20px; gap: 6px 34px; }
+  body.compact .now-label { font-size: 12px; }
+  body.compact .now-reason { font-size: 14px; }
 
-  body.compact .now {
-    margin-bottom: 0;
-    padding-bottom: 0;
-    border-bottom: 0;
-    /* Bigger than the panel's: this is read at a glance, at video bitrates, on a phone. */
-    font-size: 20px;
-    gap: 6px 34px;
+  /* --- the full view: header ------------------------------------------------------------------- */
+
+  .top {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: rgba(20, 20, 19, 0.96);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--gridline);
   }
 
-  body.compact .now-label {
-    font-size: 12px;
-  }
+  .top-inner { max-width: 1680px; margin: 0 auto; padding: 0 18px; }
 
-  body.compact .now-reason {
-    font-size: 14px;
-  }
-
-  /* --- sections ------------------------------------------------------------------------------ */
-
-  /* The generous gap is the whole point of this layout: tables stacked tight read as one confusing
-     table with odd rows in the middle of it. */
-  .block + .block {
-    margin-top: 26px;
-    padding-top: 18px;
-    border-top: 1px solid var(--gridline);
-  }
-
-  .section-label {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-muted);
-    margin: 0 0 10px;
-  }
-
-  .section-label b {
-    color: var(--text-secondary);
-    font-weight: 600;
-  }
-
-  /* A smaller heading inside a section, for the four tables of one folder and the two shared ones. */
-  .sub-label {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-muted);
-    margin: 0 0 8px;
-  }
-
-  .empty-line {
-    color: var(--text-muted);
-    padding: 4px 0 2px;
-  }
-
-  /* --- the plan ------------------------------------------------------------------------------- */
-
-  .plan {
+  .brand {
     display: flex;
-    flex-direction: column;
-    gap: 8px;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 0 4px;
   }
 
-  .plan-head {
-    font-size: 13px;
+  .brand h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: 0.01em; }
+
+  .live {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
   }
 
-  .plan-head b {
-    font-weight: 600;
+  .live .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--positive); }
+  .live.offline .dot { background: var(--negative); }
+  .live.offline { color: var(--negative); }
+
+  .brand .tally { margin-left: auto; font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+  body:not(.compact) .panel.strip {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    padding: 6px 0 8px;
   }
 
-  .plan-band {
+  .vitals {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 20px;
+    padding: 4px 0 8px;
+    border-top: 1px solid var(--gridline);
+    font-size: 11px;
+  }
+
+  .vital { display: flex; align-items: baseline; gap: 6px; }
+  .vital .v { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .vital .v.low { color: var(--negative); }
+  .vital .v.dim { color: var(--text-muted); font-weight: 400; }
+
+  nav.views {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 6px 0 8px;
+  }
+
+  nav.views button {
+    background: transparent;
+    border: 1px solid transparent;
     color: var(--text-secondary);
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font: inherit;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  nav.views button:hover { color: var(--text-primary); }
+  nav.views button.on {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(255, 255, 255, 0.18);
+    color: var(--text-primary);
+  }
+
+  nav.views .n {
+    font-size: 10px;
+    padding: 0 6px;
+    border-radius: 8px;
+    background: rgba(230, 103, 103, 0.25);
+    color: var(--text-primary);
     font-variant-numeric: tabular-nums;
   }
 
-  .plan-reason {
-    color: var(--text-muted);
-    font-style: italic;
-    line-height: 1.4;
+  /* --- the full view: body --------------------------------------------------------------------- */
+
+  main { max-width: 1680px; margin: 0 auto; padding: 16px 18px 28px; }
+
+  .view { display: none; }
+  .view.on { display: block; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+    gap: 16px;
+    align-items: start;
   }
 
-  /* The shopping list and the reserve, side by side while they fit and one under the other when not. */
-  .plan-lists {
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    min-width: 0;
+  }
+
+  .card.wide { grid-column: 1 / -1; }
+
+  /* The overview: three stacks of cards, so a short card never leaves a hole beside a tall one. */
+  .stacks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; }
+  .stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .stacks + .grid { margin-top: 16px; }
+  @media (max-width: 1280px) { .stacks { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 820px) { .stacks { grid-template-columns: minmax(0, 1fr); } }
+
+  .card-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+
+  .card-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 11px; color: var(--text-muted); }
+
+  .kv {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 5px 14px;
+    font-size: 12px;
+    align-items: baseline;
+  }
+
+  .kv .k { padding-top: 2px; }
+  .kv .v { color: var(--text-primary); min-width: 0; overflow-wrap: anywhere; }
+  .kv .v.muted { color: var(--text-muted); }
+
+  .scroll { max-height: 520px; overflow: auto; }
+
+  .empty-line { color: var(--text-muted); padding: 4px 0 2px; }
+
+  .toolbar {
     display: flex;
     flex-wrap: wrap;
+    gap: 8px;
     align-items: center;
-    gap: 6px 22px;
-  }
-
-  .plan-list {
-    display: inline-flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .plan-term {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    margin-bottom: 10px;
+    font-size: 11px;
     color: var(--text-muted);
-    margin-right: 4px;
   }
+
+  input[type=text], input[type=search], select {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font: inherit;
+  }
+
+  input[type=search] { min-width: 200px; }
+
+  .btn {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .btn:hover { background: rgba(255, 255, 255, 0.12); }
+  .btn.danger { border-color: rgba(230, 103, 103, 0.5); color: #f0a0a0; }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+
+  .toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+
+  .toggle.on { background: rgba(57, 135, 229, 0.22); box-shadow: inset 0 0 0 1px var(--positive); color: var(--text-primary); }
+  .toggle.on.warnish { background: rgba(232, 176, 74, 0.2); box-shadow: inset 0 0 0 1px var(--warning); }
+  .toggle.on.badish { background: rgba(230, 103, 103, 0.2); box-shadow: inset 0 0 0 1px var(--negative); }
+
+  .tag {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  .tag.live { background: rgba(57, 135, 229, 0.2); box-shadow: inset 0 0 0 1px var(--positive); color: var(--text-primary); }
+  .tag.retired { background: rgba(230, 103, 103, 0.15); box-shadow: inset 0 0 0 1px var(--negative); }
+
+  code, .mono { font: 11px/1.45 ui-monospace, Consolas, "Cascadia Mono", monospace; color: var(--text-secondary); }
+
+  /* --- the plan ------------------------------------------------------------------------------- */
+
+  .plan { display: flex; flex-direction: column; gap: 8px; }
+  .plan-head { font-size: 14px; }
+  .plan-head b { font-weight: 600; }
+  .plan-reason { color: var(--text-muted); font-style: italic; line-height: 1.4; }
+  .plan-lists { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 22px; }
+  .plan-list { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .plan-term { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-right: 4px; }
 
   .chip {
     display: inline-block;
@@ -254,46 +362,14 @@
     white-space: nowrap;
   }
 
-  .chip b {
-    color: var(--text-primary);
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-  }
+  .chip b { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
 
-  /* The sources: one row per block the planner named, with where it said the block lives. Sized to its
-     words rather than to the bar tracks, unlike every learned table. */
-  table.sources {
-    width: auto;
-    table-layout: auto;
-    margin-top: 2px;
-  }
-
-  table.sources th {
-    text-align: left;
-    padding: 0 18px 6px 0;
-  }
-
-  table.sources td {
-    height: auto;
-    padding: 3px 18px 3px 0;
-    color: var(--text-secondary);
-    white-space: nowrap;
-  }
-
-  table.sources td.block {
-    color: var(--text-primary);
-    font-weight: 600;
-  }
-
-  table.sources tr.sought td {
-    color: var(--text-primary);
-  }
-
-  /* The source being looked for right now. The same ring the live row of a table wears. */
-  table.sources tr.sought td:first-child {
-    box-shadow: inset 2px 0 0 var(--text-secondary);
-    padding-left: 8px;
-  }
+  table.sources { width: auto; table-layout: auto; margin-top: 2px; }
+  table.sources th { text-align: left; padding: 0 18px 6px 0; }
+  table.sources td { height: auto; padding: 3px 18px 3px 0; color: var(--text-secondary); white-space: nowrap; }
+  table.sources td.block { color: var(--text-primary); font-weight: 600; }
+  table.sources tr.sought td { color: var(--text-primary); }
+  table.sources tr.sought td:first-child { box-shadow: inset 2px 0 0 var(--text-secondary); padding-left: 8px; }
 
   .badge {
     display: inline-block;
@@ -309,12 +385,7 @@
 
   /* --- the folders ---------------------------------------------------------------------------- */
 
-  .tabs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 12px;
-  }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 
   .tab {
     display: inline-flex;
@@ -329,66 +400,24 @@
     user-select: none;
   }
 
-  .tab:hover {
-    color: var(--text-primary);
-  }
+  .tab:hover { color: var(--text-primary); }
+  .tab.shown { border-color: rgba(255, 255, 255, 0.28); color: var(--text-primary); }
+  .tab .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--positive); }
+  .tab .n { color: var(--text-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 
-  /* The folder on screen. A ring, like the preferred move: identity, not a value. */
-  .tab.shown {
-    border-color: rgba(255, 255, 255, 0.28);
-    color: var(--text-primary);
-  }
+  .folder-meta { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 14px; font-size: 11px; color: var(--text-muted); }
+  .folder-meta b { color: var(--text-secondary); font-weight: 600; }
 
-  /* The folder in play. A dot in the positive, since "this is where the learning is landing now" is the
-     one piece of good news a tab can carry. */
-  .tab .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--positive);
-  }
-
-  .tab .n {
-    color: var(--text-muted);
-    font-size: 10px;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .folder-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 16px;
-    margin-bottom: 14px;
-    font-size: 11px;
-    color: var(--text-muted);
-  }
-
-  .folder-meta b {
-    color: var(--text-secondary);
-    font-weight: 600;
-  }
-
-  /* The tables of one folder, side by side while the panel is wide enough and stacked when it is not.
-     The goal table is the widest thing on the page and takes a row to itself; the three narrower ones
-     share the rows below. */
-  .tables {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    gap: 22px 44px;
-  }
+  .tables { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 22px 44px; }
+  .table-block { max-width: 100%; }
+  .table-block .scroll { max-height: 440px; }
+  .sub-label { margin: 0 0 8px; }
+  .sub-label .n { margin-left: 8px; text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums; }
 
   /* --- learned tables ------------------------------------------------------------------------- */
 
-  table {
-    border-collapse: collapse;
-    /* Fixed, so a long state name can never push the columns around and the bars stay comparable
-       across rows. Every column is exactly one track wide. */
-    table-layout: fixed;
-    /* Column count comes from the data, not a literal: the action set grows as the run learns to do more,
-       and a hardcoded width would quietly squeeze every track the day a sixth one lands. */
-    width: calc(var(--state-column) + var(--action-count, 5) * var(--bar-track));
-  }
+  table { border-collapse: collapse; table-layout: fixed;
+          width: calc(var(--state-column) + var(--action-count, 5) * var(--bar-track)); }
 
   th {
     font-size: 10px;
@@ -401,25 +430,11 @@
     white-space: nowrap;
   }
 
-  th.state-head {
-    text-align: left;
-    padding-left: 0;
-    width: var(--state-column);
-  }
+  .table-block thead th { position: sticky; top: 0; background: var(--card-solid); z-index: 1; }
+  th.state-head { text-align: left; padding-left: 0; width: var(--state-column); }
+  th.action-head { width: var(--bar-track); text-transform: none; letter-spacing: 0.02em; }
 
-  /* Action names are words, not column titles: lower case reads the same and fits a narrower track, which
-     matters because the panel grows by one track for every action the brain learns to take. */
-  th.action-head {
-    width: var(--bar-track);
-    text-transform: none;
-    letter-spacing: 0.02em;
-  }
-
-  td {
-    padding: 2px 8px;
-    height: var(--row-height);
-    vertical-align: middle;
-  }
+  td { padding: 2px 8px; height: var(--row-height); vertical-align: middle; }
 
   td.state {
     padding-left: 0;
@@ -430,173 +445,49 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .state .focus {
-    color: var(--text-primary);
-    font-weight: 600;
-  }
+  .state .focus { color: var(--text-primary); font-weight: 600; }
+  .state .qualifier { color: var(--text-muted); }
+  .state .verdict { color: var(--text-secondary); }
+  .state .verdict b { color: var(--text-primary); font-weight: 600; }
 
-  .state .qualifier {
-    color: var(--text-muted);
-  }
+  tr.current td { background: rgba(255, 255, 255, 0.055); }
+  tr.current td:first-child { border-radius: 4px 0 0 4px; box-shadow: inset 2px 0 0 var(--text-secondary); }
+  tr.current td:last-child { border-radius: 0 4px 4px 0; }
 
-  /* The winning action, said in words. A direct label beside the row beats a number in every cell: it
-     reads at a glance on a stream, and it cannot collide with a bar. */
-  .state .verdict {
-    color: var(--text-secondary);
-  }
+  .track { position: relative; height: 14px; border-radius: 4px; }
+  .track::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--baseline); }
+  .bar { position: absolute; top: 3px; height: 8px; min-width: 2px; }
+  .bar.pos { left: 50%; background: var(--positive); border-radius: 0 4px 4px 0; }
+  .bar.neg { right: 50%; background: var(--negative); border-radius: 4px 0 0 4px; }
+  .best .track { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24); }
+  .empty { color: var(--text-muted); text-align: center; padding: 18px 0 14px; }
 
-  .state .verdict b {
-    color: var(--text-primary);
-    font-weight: 600;
-  }
+  /* --- plain lists (skills, clips) ------------------------------------------------------------- */
 
-  /* The live row gets a ring rather than a fill: it must not read as another value. */
-  tr.current td {
-    background: rgba(255, 255, 255, 0.055);
-  }
+  table.list { width: 100%; table-layout: auto; }
+  table.list th { text-align: left; padding: 0 12px 6px 0; }
+  table.list td { padding: 6px 12px 6px 0; height: auto; vertical-align: top; color: var(--text-secondary); }
+  table.list td.name { color: var(--text-primary); font-weight: 600; white-space: nowrap; }
+  table.list td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.list tr + tr td { border-top: 1px solid var(--gridline); }
 
-  tr.current td:first-child {
-    border-radius: 4px 0 0 4px;
-    box-shadow: inset 2px 0 0 var(--text-secondary);
-  }
+  /* --- the conversations ---------------------------------------------------------------------- */
 
-  tr.current td:last-child {
-    border-radius: 0 4px 4px 0;
-  }
-
-  /* --- diverging cell bar ------------------------------------------------------------------- */
-
-  /* The bar lives in a track of its own rather than filling the cell, so the emphasis ring hugs the
-     mark instead of ballooning to whatever width the table happened to give the column. */
-  .track {
-    position: relative;
-    height: 14px;
-    border-radius: 4px;
-  }
-
-  /* One hairline down the middle of every track: the zero every bar is measured from. */
-  .track::before {
-    content: "";
-    position: absolute;
-    left: 50%;
-    top: 0;
-    bottom: 0;
-    width: 1px;
-    background: var(--baseline);
-  }
-
-  .bar {
-    position: absolute;
-    top: 3px;
-    height: 8px;
-    min-width: 2px;
-  }
-
-  .bar.pos {
-    left: 50%;
-    background: var(--positive);
-    border-radius: 0 4px 4px 0;
-  }
-
-  .bar.neg {
-    right: 50%;
-    background: var(--negative);
-    border-radius: 4px 0 0 4px;
-  }
-
-  /* The action the body would take from this state. A ring, not a colour: identity is already carried
-     by the column, and repainting the bar would spend the polarity channel on something else. */
-  .best .track {
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
-  }
-
-  .empty {
-    color: var(--text-muted);
-    text-align: center;
-    padding: 18px 0 14px;
-  }
-
-  /* --- the planner's decisions ------------------------------------------------------------------ */
-
-  /* One card per line of the conversation, newest first. The verb down the left, the plan in the
-     middle, the age on the right, and the whole prompt or reply folded under it for whoever wants to
-     check the run's reading against the model's words. */
-  .entry {
-    padding: 10px 0;
-    border-top: 1px solid var(--gridline);
-  }
-
-  .entry:first-child {
-    border-top: 0;
-    padding-top: 0;
-  }
-
-  .entry-head {
-    display: flex;
-    align-items: baseline;
-    gap: 12px;
-  }
-
-  .talk-kind {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-muted);
-    white-space: nowrap;
-    min-width: 96px;
-  }
-
+  .entry { padding: 10px 0; border-top: 1px solid var(--gridline); }
+  .entry:first-child { border-top: 0; padding-top: 0; }
+  .entry-head { display: flex; align-items: baseline; gap: 12px; }
+  .talk-kind { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); white-space: nowrap; min-width: 96px; }
   .talk-kind.answered { color: var(--positive); }
   .talk-kind.failed { color: var(--negative); }
-
-  .entry-title {
-    flex: 1;
-    color: var(--text-primary);
-    overflow-wrap: anywhere;
-  }
-
-  .entry-title b {
-    font-weight: 600;
-  }
-
-  .entry-title .reason {
-    color: var(--text-secondary);
-    font-style: italic;
-  }
-
-  .talk-ago {
-    color: var(--text-muted);
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-  }
-
-  /* The plan under an answer, indented to the width of the verb so it hangs under the title. */
-  .entry .plan {
-    margin: 8px 0 0 108px;
-    gap: 6px;
-  }
-
-  details.raw {
-    margin: 6px 0 0 108px;
-  }
-
-  details.raw summary {
-    cursor: pointer;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-muted);
-    list-style: none;
-  }
-
-  details.raw summary::before {
-    content: "▸ ";
-  }
-
-  details[open].raw summary::before {
-    content: "▾ ";
-  }
-
+  .entry-title { flex: 1; color: var(--text-primary); overflow-wrap: anywhere; }
+  .entry-title b { font-weight: 600; }
+  .entry-title .reason { color: var(--text-secondary); font-style: italic; }
+  .talk-ago { color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .entry .plan { margin: 8px 0 0 108px; gap: 6px; }
+  details.raw { margin: 6px 0 0 108px; }
+  details.raw summary { cursor: pointer; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); list-style: none; }
+  details.raw summary::before { content: "▸ "; }
+  details[open].raw summary::before { content: "▾ "; }
   details.raw pre {
     margin: 6px 0 0;
     padding: 8px 10px;
@@ -610,193 +501,312 @@
     overflow: auto;
   }
 
+  /* The overview's short form of the same: one line each. */
+  .mini { display: flex; flex-direction: column; gap: 6px; }
+  .mini-row { display: flex; align-items: baseline; gap: 10px; font-size: 11px; }
+  .mini-row .talk-kind { min-width: 72px; }
+  .mini-row .txt { flex: 1; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mini-row .txt b { color: var(--text-primary); }
+
+  /* --- logs ----------------------------------------------------------------------------------- */
+
+  .log {
+    font: 11px/1.45 ui-monospace, Consolas, "Cascadia Mono", monospace;
+    max-height: calc(100vh - 300px);
+    min-height: 240px;
+    overflow: auto;
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: 8px;
+    padding: 6px 10px;
+  }
+
+  .log.short { max-height: 300px; min-height: 0; }
+
+  .log-line {
+    display: grid;
+    grid-template-columns: 66px 48px 150px minmax(0, 1fr);
+    gap: 10px;
+    padding: 1px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.03);
+  }
+
+  .log-line .lt { color: var(--text-muted); white-space: nowrap; }
+  .log-line .ll { font-weight: 600; }
+  .log-line .lg { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .log-line .lm { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-secondary); }
+  .log-line.own .lm { color: var(--text-primary); }
+  .lvl-DEBUG .ll { color: var(--text-muted); }
+  .lvl-INFO .ll { color: var(--positive); }
+  .lvl-WARN .ll { color: var(--warning); }
+  .lvl-ERROR .ll, .lvl-FATAL .ll { color: var(--negative); }
+  .lvl-ERROR .lm, .lvl-FATAL .lm { color: #f0a0a0; }
+
   /* --- machine load -------------------------------------------------------------------------- */
 
-  .load {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px 14px;
-    margin-top: 24px;
-    padding-top: 14px;
-    border-top: 1px solid var(--gridline);
-    font-size: 10px;
-    color: var(--text-muted);
-  }
+  .load { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; font-size: 10px; color: var(--text-muted); }
+  .gauge { display: inline-flex; align-items: center; gap: 6px; }
+  .meter { width: 90px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+  .meter-fill { display: block; width: 0; height: 100%; border-radius: 3px; background: var(--load); transition: width 0.3s ease-out; }
+  .meter-fill.hot { background: var(--negative); }
+  .gauge-value { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 
-  .load-label {
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
+  /* --- control --------------------------------------------------------------------------------- */
 
-  .gauge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  /* The whole track is the capacity, so the empty part carries the "out of what" that a bare percentage
-     on a stream has to be taken on trust. */
-  .meter {
-    width: 64px;
-    height: 6px;
-    border-radius: 3px;
-    background: rgba(255, 255, 255, 0.08);
-    overflow: hidden;
-  }
-
-  .meter-fill {
-    display: block;
-    width: 0;
-    height: 100%;
-    border-radius: 3px;
-    background: var(--load);
-    /* These numbers land on their own second-long beat, and a bar that teleports reads as a spike that
-       did not happen. Well under the beat, so it is always settled before the next one arrives. */
-    transition: width 0.3s ease-out;
-  }
-
-  /* A heap with nothing left is the one machine number that is genuinely bad news — that is the stutter —
-     so it earns the panel's negative. Never colour alone: the figures beside it are saying the same. */
-  .meter-fill.hot {
-    background: var(--negative);
-  }
-
-  .gauge-value {
-    color: var(--text-secondary);
-    font-variant-numeric: tabular-nums;
-  }
+  .control-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .control-note { color: var(--text-muted); font-size: 11px; margin-bottom: 12px; }
+  .control-result { font-size: 11px; color: var(--text-secondary); min-height: 1.4em; }
+  .control-result.bad { color: var(--negative); }
 
   /* --- footer ------------------------------------------------------------------------------- */
 
   .foot {
+    max-width: 1680px;
+    margin: 0 auto;
+    padding: 10px 18px 20px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 4px 16px;
-    margin-top: 10px;
-    padding-top: 9px;
-    border-top: 1px solid var(--gridline);
     font-size: 10px;
     color: var(--text-muted);
   }
 
-  .key {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 4px 6px;
-  }
-
-  /* Same ring the preferred action wears, shrunk to sit in a sentence. */
-  .key .ring {
-    display: inline-block;
-    width: 14px;
-    height: 8px;
-    border-radius: 3px;
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
-  }
-
-  .key .sep {
-    color: var(--baseline);
-  }
-
-  .swatch {
-    width: 18px;
-    height: 6px;
-    border-radius: 3px;
-  }
-
+  .key { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; }
+  .key .ring { display: inline-block; width: 14px; height: 8px; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24); }
+  .key .sep { color: var(--baseline); }
+  .swatch { width: 18px; height: 6px; border-radius: 3px; }
   .swatch.neg { background: var(--negative); }
   .swatch.pos { background: var(--positive); }
-
-  .tally {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    white-space: nowrap;
-  }
-
   .offline { color: var(--negative); }
 </style>
 </head>
 <body>
-<div class="panel">
-  <div class="now">
-    <span class="now-item"><span class="now-label" id="t-objective">Objective</span><span class="now-value" id="phase">—</span></span>
-    <span class="now-item"><span class="now-label" id="t-pursuit">Working on</span><span class="now-value" id="working">—</span></span>
-    <span class="now-item"><span class="now-label" id="t-doing">Now</span><span class="now-value" id="doing">—</span></span>
-    <span class="now-item"><span class="now-label" id="t-making">Crafting</span><span class="now-value" id="making">—</span></span>
-    <span class="now-reason" id="phase-reason" hidden></span>
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">
+      <h1>Autocraft AI</h1>
+      <span class="live" id="live"><span class="dot"></span><span id="status">connecting…</span></span>
+      <span class="tally" id="tally">—</span>
+    </div>
+
+    <div class="panel strip" id="strip">
+      <div class="now">
+        <span class="now-item"><span class="now-label" id="t-objective">Objective</span><span class="now-value" id="phase">—</span></span>
+        <span class="now-item"><span class="now-label" id="t-pursuit">Working on</span><span class="now-value" id="working">—</span></span>
+        <span class="now-item"><span class="now-label" id="t-doing">Now</span><span class="now-value" id="doing">—</span></span>
+        <span class="now-item"><span class="now-label" id="t-making">Crafting</span><span class="now-value" id="making">—</span></span>
+        <span class="now-item"><span class="now-label" id="t-driving">Moving it</span><span class="now-value" id="driving">—</span></span>
+        <span class="now-reason" id="phase-reason" hidden></span>
+      </div>
+    </div>
+
+    <div class="vitals" id="vitals">
+      <span class="vital"><span class="k" id="t-vitals-health">Health</span><span class="v" id="v-health">—</span></span>
+      <span class="vital"><span class="k" id="t-vitals-food">Food</span><span class="v" id="v-food">—</span></span>
+      <span class="vital"><span class="k" id="t-vitals-position">Position</span><span class="v" id="v-position">—</span></span>
+      <span class="vital"><span class="k" id="t-vitals-biome">Biome</span><span class="v" id="v-biome">—</span></span>
+      <span class="vital"><span class="k" id="t-vitals-time">Time</span><span class="v" id="v-time">—</span></span>
+      <span class="vital"><span class="k" id="t-vitals-fps">FPS</span><span class="v" id="v-fps">—</span></span>
+      <span class="vital"><span class="k" id="t-vitals-world">World</span><span class="v" id="v-world">—</span></span>
+      <span class="vital"><span class="k" id="t-vitals-clips">Clips</span><span class="v" id="v-clips">—</span></span>
+    </div>
+
+    <nav class="views" id="views">
+      <button data-view="overview" id="t-tab-overview">Overview</button>
+      <button data-view="learning" id="t-tab-learning">Learning</button>
+      <button data-view="talk" id="t-tab-talk">Planner &amp; mentor</button>
+      <button data-view="skills" id="t-tab-skills">Skills</button>
+      <button data-view="logs"><span id="t-tab-logs">Logs</span><span class="n" id="logs-badge" hidden>0</span></button>
+      <button data-view="clips" id="t-tab-clips">Clips</button>
+      <button data-view="control" id="t-tab-control">Control</button>
+    </nav>
   </div>
+</header>
 
-  <section class="block">
-    <div class="section-label" id="t-plan">The plan</div>
-    <div class="plan" id="plan"></div>
+<main>
+  <!-- Overview -->
+  <section class="view" id="view-overview">
+    <div class="stacks">
+      <div class="stack">
+        <div class="card">
+          <div class="card-head"><span class="card-title" id="t-overview-plan">Objective and plan</span></div>
+          <div class="plan" id="plan"></div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title" id="t-overview-skills">Skills</span>
+            <span class="card-tools"><a href="#skills" data-goto="skills" id="t-more-skills">see all</a></span>
+          </div>
+          <div class="mini" id="ov-skills"></div>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="card">
+          <div class="card-head"><span class="card-title" id="t-overview-now">What is happening</span></div>
+          <div class="kv" id="ov-now"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><span class="card-title" id="t-overview-machine">Machine</span></div>
+          <div class="load">
+            <span class="gauge" id="gauge-cpu">
+              <span id="t-cpu">CPU</span>
+              <span class="meter"><span class="meter-fill" id="cpu-bar"></span></span>
+              <span class="gauge-value" id="cpu">—</span>
+            </span>
+            <span class="gauge" id="gauge-memory">
+              <span id="t-memory">Memory</span>
+              <span class="meter"><span class="meter-fill" id="memory-bar"></span></span>
+              <span class="gauge-value" id="memory">—</span>
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title" id="t-overview-talk">Latest conversations</span>
+            <span class="card-tools"><a href="#talk" data-goto="talk" id="t-more-talk">see all</a></span>
+          </div>
+          <div class="mini" id="ov-talk"></div>
+        </div>
+      </div>
+    </div>
+    <div class="grid">
+      <div class="card wide">
+        <div class="card-head">
+          <span class="card-title" id="t-overview-alerts">Latest notices</span>
+          <span class="card-tools"><a href="#logs" data-goto="logs" id="t-more-logs">see all</a></span>
+        </div>
+        <div class="log short" id="ov-alerts"></div>
+      </div>
+    </div>
   </section>
 
-  <section class="block">
-    <div class="section-label" id="t-pursuits">What it has learned, pursuit by pursuit</div>
-    <div class="tabs" id="tabs"></div>
-    <div class="folder-meta" id="folder-meta"></div>
-    <div class="tables" id="folder"></div>
+  <!-- Learning -->
+  <section class="view" id="view-learning">
+    <div class="toolbar">
+      <input type="search" id="learn-search" placeholder="search situation…">
+      <span class="toggle" id="learn-opinion">only rows with an opinion</span>
+    </div>
+    <div class="grid">
+      <div class="card wide">
+        <div class="card-head"><span class="card-title" id="t-pursuits">What it has learned, pursuit by pursuit</span></div>
+        <div class="tabs" id="tabs"></div>
+        <div class="folder-meta" id="folder-meta"></div>
+        <div class="tables" id="folder"></div>
+      </div>
+      <div class="card wide">
+        <div class="card-head"><span class="card-title" id="t-shared">Learned once, for every pursuit</span></div>
+        <div class="tables" id="shared"></div>
+      </div>
+    </div>
   </section>
 
-  <section class="block">
-    <div class="section-label" id="t-shared">Learned once, for every pursuit</div>
-    <div class="tables" id="shared"></div>
+  <!-- Planner and mentor -->
+  <section class="view" id="view-talk">
+    <div class="grid">
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title" id="t-planner">The planner</span>
+          <span class="card-tools"><span id="t-talk-filter-1">show</span>
+            <select id="planner-filter"><option value="all">everything</option><option value="answered">answers only</option><option value="failed">failures only</option></select></span>
+        </div>
+        <div class="scroll" id="planner"></div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title" id="t-mentor">The mentor</span>
+          <span class="card-tools"><span id="t-talk-filter-2">show</span>
+            <select id="mentor-filter"><option value="all">everything</option><option value="answered">answers only</option><option value="failed">failures only</option></select></span>
+        </div>
+        <div class="scroll" id="mentor"></div>
+      </div>
+    </div>
   </section>
 
-  <section class="block">
-    <div class="section-label" id="t-planner">The planner</div>
-    <div id="planner"></div>
+  <!-- Skills -->
+  <section class="view" id="view-skills">
+    <div class="card">
+      <div class="card-head"><span class="card-title" id="t-skills">Skills</span></div>
+      <div class="scroll" id="skills"></div>
+    </div>
   </section>
 
-  <section class="block">
-    <div class="section-label" id="t-mentor">The mentor</div>
-    <div id="mentor"></div>
+  <!-- Logs -->
+  <section class="view" id="view-logs">
+    <div class="card">
+      <div class="toolbar">
+        <span id="t-logs-level">level</span>
+        <span class="toggle" data-level="DEBUG">DEBUG</span>
+        <span class="toggle on" data-level="INFO">INFO</span>
+        <span class="toggle on warnish" data-level="WARN">WARN</span>
+        <span class="toggle on badish" data-level="ERROR">ERROR</span>
+        <span class="toggle on" id="logs-own">mod only</span>
+        <input type="search" id="logs-filter" placeholder="filter…">
+        <button class="btn" id="logs-pause">pause</button>
+        <button class="btn" id="logs-clear">clear</button>
+        <span class="toggle on" id="logs-follow">follow the tail</span>
+        <span id="logs-count">—</span>
+      </div>
+      <div class="log" id="log"></div>
+    </div>
   </section>
 
-  <div class="load">
-    <span class="load-label" id="t-machine">Machine</span>
-    <span class="gauge" id="gauge-cpu">
-      <span id="t-cpu">CPU</span>
-      <span class="meter"><span class="meter-fill" id="cpu-bar"></span></span>
-      <span class="gauge-value" id="cpu">—</span>
-    </span>
-    <span class="gauge" id="gauge-memory">
-      <span id="t-memory">Memory</span>
-      <span class="meter"><span class="meter-fill" id="memory-bar"></span></span>
-      <span class="gauge-value" id="memory">—</span>
-    </span>
-  </div>
+  <!-- Clips -->
+  <section class="view" id="view-clips">
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title" id="t-clips">Clips</span>
+        <span class="card-tools"><button class="btn" id="clips-refresh">refresh</button></span>
+      </div>
+      <div id="clips"></div>
+    </div>
+  </section>
 
-  <div class="foot">
-    <span class="key">
-      <span class="swatch neg"></span>
-      <span id="t-key-worse">worse</span>
-      <span class="sep">|</span>
-      <span id="t-key-better">better</span>
-      <span class="swatch pos"></span>
-      <span class="sep">·</span>
-      <span id="t-key-bar">the bar is how much</span>
-      <span class="sep">·</span>
-      <span class="ring"></span>
-      <span id="t-key-best">preferred move</span>
-      <span class="sep">·</span>
-      <span id="t-key-distance">distance: close / mid / far</span>
-      <span class="sep">·</span>
-      <span id="t-key-tables">each pursuit has a folder of tables of its own</span>
-    </span>
-    <span class="tally"><span id="tally">—</span> <span class="sep">·</span> <span id="status">connecting…</span></span>
-  </div>
+  <!-- Control -->
+  <section class="view" id="view-control">
+    <div class="grid">
+      <div class="card">
+        <div class="card-head"><span class="card-title" id="t-control-world">World</span></div>
+        <div class="control-note" id="t-control-hint">These act on the live game.</div>
+        <div class="control-row">
+          <input type="text" id="world-name" placeholder="world name">
+          <button class="btn" id="world-resume">Resume</button>
+          <button class="btn danger" id="world-new">New world</button>
+        </div>
+        <div class="control-row">
+          <button class="btn danger" id="learning-reset">Clear learning</button>
+          <button class="btn danger" id="stop-all">Stop everything</button>
+        </div>
+        <div class="control-result" id="control-result"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="foot">
+  <span class="key">
+    <span class="swatch neg"></span>
+    <span id="t-key-worse">worse</span>
+    <span class="sep">|</span>
+    <span id="t-key-better">better</span>
+    <span class="swatch pos"></span>
+    <span class="sep">·</span>
+    <span id="t-key-bar">the bar is how much</span>
+    <span class="sep">·</span>
+    <span class="ring"></span>
+    <span id="t-key-best">preferred move</span>
+    <span class="sep">·</span>
+    <span id="t-key-distance">distance: close / mid / far</span>
+    <span class="sep">·</span>
+    <span id="t-key-tables">each pursuit has a folder of tables of its own</span>
+  </span>
 </div>
 
 <script>
   /**
-   * Which of the two views this page is: the strip that goes on the stream, or the whole thing.
-   *
+   * Which of the two views this page is: the strip that goes on the stream, or the whole panel.
    * Read from the query string rather than negotiated, so the OBS browser source and the control
    * panel are simply two different URLs onto the same page.
    */
@@ -804,25 +814,21 @@
   document.body.classList.toggle("compact", COMPACT);
 
   const GIGABYTE = 1024 ** 3;
-  // Where a heap stops being roomy and starts being the reason the game stutters.
   const HEAP_HOT = 0.9;
+  /** The most log lines kept on the page. */
+  const LOG_KEEP = 3000;
 
   /**
-   * English, and the panel's floor.
-   *
-   * The game sends its own words the moment a page connects — the same lang/*.json files the rest of the
-   * mod uses — so the overlay speaks whatever language Minecraft is set to. These are what it says until
-   * then, and what it keeps saying for any key that language has no translation for. A panel in the wrong
-   * language is a nuisance; a panel of blanks is useless.
-   *
-   * The wire format stays in the enum names the q-tables are keyed by: those are what is written to disk,
-   * and translating them at the source would orphan every saved table. Every lookup falls back to the raw
-   * name, so a constant added tomorrow shows up readable rather than blank.
+   * English, and the panel's floor. The game sends its own words the moment a page connects — the same
+   * lang/*.json files the rest of the mod uses — so the overlay speaks whatever language Minecraft is
+   * set to. The wire format stays in the enum names the q-tables are keyed by; every lookup falls back
+   * to the raw name, so a constant added tomorrow shows up readable rather than blank.
    */
   const DEFAULTS = {
     locale: "en-US",
     text: {
       "objective": "Objective", "pursuit": "Working on", "doing": "Now", "making": "Crafting",
+      "driving": "Moving it",
       "goals": "What to do", "crafts": "What to make meanwhile",
       "timing": "How long to hold it", "planner": "The planner", "mentor": "The mentor",
       "placement": "Where to dig and build", "position": "Which way to go",
@@ -888,6 +894,7 @@
       "key.tables": "each pursuit has a folder of tables of its own",
       "status.connecting": "connecting…", "status.live": "live",
       "status.offline": "Minecraft is not open",
+      "status.inworld": "in the world", "status.noworld": "out of the world",
       "tally.decisions": "%s decisions", "tally.random": "%s %% at random",
       "tally.stalls": "%s times cut short",
       "verdict.avoid": "avoids", "verdict.none": "no opinion yet",
@@ -902,6 +909,37 @@
       "tip.cpu.machine": "the whole machine, %s %%",
       "tip.memory": "The game has %1$s GB of memory and is using %2$s GB",
       "tip.memory.machine": "the machine, %1$s of %2$s GB",
+      "tab.overview": "Overview", "tab.learning": "Learning", "tab.talk": "Planner & mentor",
+      "tab.skills": "Skills", "tab.logs": "Logs", "tab.clips": "Clips", "tab.control": "Control",
+      "vitals.health": "Health", "vitals.food": "Food", "vitals.position": "Position",
+      "vitals.biome": "Biome", "vitals.time": "Time", "vitals.fps": "FPS", "vitals.world": "World",
+      "vitals.clips": "Clips",
+      "time.day": "day", "time.night": "night", "time.dusk": "dusk", "time.dawn": "dawn",
+      "now.situation": "Situation", "now.folder": "Folder", "now.decisions": "Decisions",
+      "overview.plan": "Objective and plan", "overview.now": "What is happening",
+      "overview.talk": "Latest conversations", "overview.skills": "Skills",
+      "overview.alerts": "Latest notices", "overview.machine": "Machine", "overview.more": "see all",
+      "learning.search": "search situation…", "learning.opinion": "only rows with an opinion",
+      "learning.rows": "%s rows",
+      "talk.filter": "show", "talk.all": "everything", "talk.answered": "answers only",
+      "talk.failed": "failures only",
+      "skills.name": "Skill", "skills.layer": "Layer", "skills.state": "State", "skills.uses": "Uses",
+      "skills.done": "Finished", "skills.failed": "Failed", "skills.makes": "Makes",
+      "skills.when": "When", "skills.until": "Until", "skills.steps": "Steps", "skills.reason": "Reason",
+      "skills.prior": "Prior", "skills.retired": "retired", "skills.live": "live",
+      "empty.skills": "nobody has written a skill yet",
+      "logs.level": "level", "logs.filter": "filter…", "logs.pause": "pause", "logs.resume": "resume",
+      "logs.clear": "clear", "logs.follow": "follow the tail", "logs.mod": "mod only",
+      "logs.all": "whole game", "logs.count": "%s lines", "empty.logs": "nothing in the log yet",
+      "clips.name": "Clip", "clips.size": "Size", "clips.age": "Age", "clips.download": "download",
+      "clips.refresh": "refresh", "empty.clips": "no clips recorded",
+      "control.world": "World", "control.name": "world name", "control.newworld": "New world",
+      "control.newworld.confirm": "Deletes every saved world and makes a new one. Sure?",
+      "control.resume": "Resume", "control.reset": "Clear learning",
+      "control.reset.confirm": "Deletes every learned table. Sure?", "control.stop": "Stop everything",
+      "control.stop.confirm": "Stops the run and the stream. Sure?", "control.done": "done",
+      "control.failed": "failed", "control.busy": "working…",
+      "control.hint": "These act on the live game.",
     },
     action: {
       WANDER: "wander", APPROACH: "approach", FLEE: "flee", WATCH: "watch", MINE: "mine",
@@ -914,7 +952,6 @@
     },
     distance: { NONE: "", CLOSE: "close", NEAR: "mid", FAR: "far" },
     health: { LOW: "low health", MID: "half health", HIGH: "full health" },
-    // Durations are a number and a unit; there is nothing in them to translate.
     timing: { SHORT: "1 s", MEDIUM: "4 s", LONG: "10 s" },
     craft: {
       NOTHING: "nothing", PLANKS: "planks", STICK: "sticks",
@@ -972,10 +1009,6 @@
   /** The words in use. Replaced once, when the game says which language it is in. */
   let L = DEFAULTS;
 
-  /**
-   * Minecraft's format strings, which is what arrives in a translation: %s in order, %1$s by position,
-   * %% for a literal per cent. Anything else is left alone rather than guessed at.
-   */
   function format(template, ...args) {
     let next = 0;
     return String(template).replace(/%(?:(\d+)\$)?([s%])/g, (whole, index, kind) => {
@@ -987,13 +1020,8 @@
     });
   }
 
-  /** One of our own phrases, with its arguments filled in. */
   const t = (key, ...args) => format(L.text[key] ?? DEFAULTS.text[key] ?? key, ...args);
-
-  /** Whether the language in use has a word for this key at all, for the labels that are optional. */
   const has = key => (L.text[key] ?? DEFAULTS.text[key]) !== undefined;
-
-  /** One enum name in words. Falls back to a readable version of the name itself. */
   const word = (group, key) =>
     (L[group] ?? {})[key] ?? String(key).toLowerCase().replace(/_/g, " ");
 
@@ -1002,8 +1030,6 @@
     .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 
-  // Objectives are no longer a fixed list: Claude names them, and there are five shapes it can name.
-  // The seven old rungs keep the names they always had, so all of it has to read the same here.
   const SHAPES = [
     [/^GET_(\d+)_(\w+)$/, m => t("shape.gather", m[1], word("resource", m[2]))],
     [/^GO_(\w+)$/, m => t("shape.travel", word("terrain", m[1]))],
@@ -1023,18 +1049,10 @@
     return word("objective", key);
   };
 
-  /**
-   * A folder's name in words. A folder is a resource — LOG, IRON — or one of the handful of pursuits
-   * that are not about a thing: travelling, climbing, building, threats, being between orders.
-   */
   const folderLabel = name => has("folder." + name) ? t("folder." + name) : word("resource", name);
-
-  // A source is a block id or a mob id — oak_log, deepslate_iron_ore, zombie — shown as words, and not at
-  // all when the key has none ("-").
   const sourceWords = source => !source || source === "-" ? "" : source.replaceAll("_", " ");
   const sourceOf = source => sourceWords(source) ? " · " + sourceWords(source) : "";
 
-  /** "LOG/oak_log" as words: the folder, and the source within it when there is one. */
   const pursuitLabel = label => {
     const [name, source] = String(label ?? "").split("/");
     if (!name) {
@@ -1043,51 +1061,82 @@
     return folderLabel(name) + (sourceWords(source) ? " · " + sourceWords(source) : "");
   };
 
-  /** "y 40..70", or the word for no band at all. */
   const bandLabel = (floor, ceiling) =>
     floor === null || floor === undefined ? t("plan.anyheight") : `y ${floor}..${ceiling}`;
 
-  // One decimal is enough until it rounds a real opinion down to "0.0", which reads as "knows nothing"
-  // and is the opposite of what a small positive value means.
   const figure = value => Math.abs(value) < 0.05 ? value.toFixed(2) : value.toFixed(1);
-
-  // The panel's own locale, so "2.4" and "2,4" are decided by the same setting as the words around them.
   const count = value => (value || 0).toLocaleString(L.locale);
   const gigabytes = bytes => (bytes / GIGABYTE).toLocaleString(L.locale, { maximumFractionDigits: 1 });
-
+  const megabytes = bytes => (bytes / (1024 * 1024)).toLocaleString(L.locale, { maximumFractionDigits: 1 });
   const percent = fraction => Math.round(fraction * 100);
-
   const el = id => document.getElementById(id);
+
+  /** "45s" / "3m" / "2h", so a line can say how long ago it was without a clock on the page. */
+  const elapsed = millis => {
+    const seconds = Math.max(0, Math.round(millis / 1000));
+    if (seconds < 90) {
+      return seconds + "s";
+    }
+    const minutes = Math.round(seconds / 60);
+    return minutes < 90 ? minutes + "m" : Math.round(minutes / 60) + "h";
+  };
+
+  const clock = millis => new Date(millis).toLocaleTimeString(L.locale, { hour12: false });
 
   /** Writes the words that sit in the markup rather than being drawn each frame. */
   function applyLabels() {
     const fixed = {
       "t-objective": "objective", "t-pursuit": "pursuit", "t-doing": "doing", "t-making": "making",
-      "t-plan": "plan", "t-pursuits": "pursuits", "t-shared": "shared", "t-planner": "planner",
-      "t-mentor": "mentor",
-      "t-machine": "machine", "t-cpu": "cpu", "t-memory": "memory",
+      "t-driving": "driving",
+      "t-vitals-health": "vitals.health", "t-vitals-food": "vitals.food",
+      "t-vitals-position": "vitals.position", "t-vitals-biome": "vitals.biome",
+      "t-vitals-time": "vitals.time", "t-vitals-fps": "vitals.fps", "t-vitals-world": "vitals.world",
+      "t-vitals-clips": "vitals.clips",
+      "t-tab-overview": "tab.overview", "t-tab-learning": "tab.learning", "t-tab-talk": "tab.talk",
+      "t-tab-skills": "tab.skills", "t-tab-logs": "tab.logs", "t-tab-clips": "tab.clips",
+      "t-tab-control": "tab.control",
+      "t-overview-plan": "overview.plan", "t-overview-now": "overview.now",
+      "t-overview-talk": "overview.talk", "t-overview-skills": "overview.skills",
+      "t-overview-alerts": "overview.alerts", "t-overview-machine": "overview.machine",
+      "t-more-talk": "overview.more", "t-more-skills": "overview.more", "t-more-logs": "overview.more",
+      "t-pursuits": "pursuits", "t-shared": "shared", "t-planner": "planner", "t-mentor": "mentor",
+      "t-talk-filter-1": "talk.filter", "t-talk-filter-2": "talk.filter",
+      "t-skills": "tab.skills", "t-clips": "tab.clips",
+      "t-logs-level": "logs.level", "logs-own": "logs.mod", "logs-clear": "logs.clear",
+      "logs-follow": "logs.follow", "clips-refresh": "clips.refresh",
+      "t-control-world": "control.world", "t-control-hint": "control.hint",
+      "world-resume": "control.resume", "world-new": "control.newworld",
+      "learning-reset": "control.reset", "stop-all": "control.stop",
+      "learn-opinion": "learning.opinion",
+      "t-cpu": "cpu", "t-memory": "memory",
       "t-key-worse": "key.worse", "t-key-better": "key.better", "t-key-bar": "key.bar",
       "t-key-best": "key.best", "t-key-distance": "key.distance", "t-key-tables": "key.tables",
     };
     for (const [id, key] of Object.entries(fixed)) {
-      el(id).textContent = t(key);
+      const node = el(id);
+      if (node) {
+        node.textContent = t(key);
+      }
+    }
+    el("learn-search").placeholder = t("learning.search");
+    el("logs-filter").placeholder = t("logs.filter");
+    el("world-name").placeholder = t("control.name");
+    el("logs-pause").textContent = logs.paused ? t("logs.resume") : t("logs.pause");
+    for (const id of ["planner-filter", "mentor-filter"]) {
+      const select = el(id);
+      select.options[0].textContent = t("talk.all");
+      select.options[1].textContent = t("talk.answered");
+      select.options[2].textContent = t("talk.failed");
     }
   }
 
-  /**
-   * The state key's flag letters, spelled out. One letter each and in a fixed order — W walled in, B
-   * carrying blocks, H hungry — so a row written before a letter existed still reads correctly.
-   */
-  const QUALIFIERS = [["W", "qualifier.wall"], ["B", "qualifier.blocks"], ["H", "qualifier.hungry"]];
+  // --- labels for the learned tables --------------------------------------------------------
 
+  const QUALIFIERS = [["W", "qualifier.wall"], ["B", "qualifier.blocks"], ["H", "qualifier.hungry"]];
   const qualifiers = flags =>
     QUALIFIERS.filter(([letter]) => flags && flags.includes(letter))
       .map(([, key]) => " · " + t(key)).join("");
 
-  /**
-   * The goal table's key is "<source>|<subject>|<distance>|<health>|<flags>". The folder the table lives
-   * in already says what the run is after; the source is which tree, ore or mob within that.
-   */
   function stateLabel(key, verdict) {
     const [source, focus, distance, health, flags] = key.split("|");
     const near = word("distance", distance);
@@ -1096,11 +1145,6 @@
            `${qualifiers(flags)}</span>` + verdict;
   }
 
-  /**
-   * The timing table's key is the goal table's with the move on the end: "<state>/<ACTION>". The move
-   * leads, because "how long to flee" and "how long to mine" are the different questions, and the
-   * situation follows as the qualifier.
-   */
   function timingLabel(key, verdict) {
     const slash = key.lastIndexOf("/");
     const state = slash < 0 ? key : key.slice(0, slash);
@@ -1112,8 +1156,6 @@
            `${near ? " · " + near : ""} · ${word("health", health)}${qualifiers(flags)}</span>` + verdict;
   }
 
-  // The crafting table is keyed by "<what is short>|<what is held>": what the plan still needs and what
-  // is already in the bag, which is what actually decides a craft.
   function craftLabel(key, verdict) {
     const [short, held] = key.split("|");
     const wanted = !short || short === "-"
@@ -1126,11 +1168,6 @@
            `<span class="qualifier"> · ${holding}</span>` + verdict;
   }
 
-  /**
-   * The position table is keyed by "<source>|<where in its band>|<terrain>|<how the trail reads>|<flags>":
-   * which source it is looking for, whether it is at a height and in a kind of place the planner said the
-   * source is found, and whether it has been walking in circles.
-   */
   function groundLabel(key, verdict) {
     const [source, band, terrain, trail, flags] = key.split("|");
     const height = band && band !== "ANY" ? " · " + t("band." + band) : "";
@@ -1139,11 +1176,6 @@
            `<span class="qualifier">${sourceOf(source)}${height}${place}${qualifiers(flags)}</span>` + verdict;
   }
 
-  /**
-   * The water table is keyed by "<how deep>|<how much air>|<where air is>|<where land is>". How deep and
-   * how much air is the danger; the other two are what can be done about it, which is why a row with no
-   * way out in it reads so differently from one with the shore next door.
-   */
   function waterLabel(key, verdict) {
     const [depth, air, breath, shore] = key.split("|");
     const left = t("air." + (air || "FULL"));
@@ -1152,11 +1184,6 @@
            `<span class="qualifier"> · ${ways}</span>` + verdict;
   }
 
-  /**
-   * The passage table is keyed by "<wants>|<ahead>|<above>|<flags>": which way the body is trying to go,
-   * what is in front of it, whether there is room over its head, and what it could do about it — B
-   * carrying blocks, T able to break what is ahead, D able to dig down.
-   */
   function passageLabel(key, verdict) {
     const [wants, ahead, above, flags] = key.split("|");
     const can = [["B", "qualifier.blocks"], ["T", "qualifier.breakable"], ["D", "qualifier.diggable"]]
@@ -1166,39 +1193,27 @@
            `<span class="qualifier"> · ${t("above." + (above || "OPEN"))}${can}</span>` + verdict;
   }
 
-  /**
-   * The tactics table is keyed by "<hostiles><count>|<nearest>|<armed>|<health>|<cover>|<light>|<blocks>":
-   * what is hostile around the body and how many, how close the nearest is, whether it has a sword,
-   * how hurt it is, whether it is under the sky or a roof or down a pit, night or day, and how many
-   * blocks it could build with (B many, b a few, - none).
-   */
   function tacticLabel(key, verdict) {
     const [threat, nearest, armed, health, cover, light, blocks] = key.split("|");
     const match = /^([A-Z+]*?)(\d)$/.exec(threat || "NONE0");
     const kinds = (match ? match[1] : threat || "NONE").split("+").filter(Boolean)
       .map(k => t("threat." + k)).join(" + ") || t("threat.NONE");
-    const count = match && match[2] !== "0" ? " ×" + match[2] + (match[2] === "3" ? "+" : "") : "";
+    const many = match && match[2] !== "0" ? " ×" + match[2] + (match[2] === "3" ? "+" : "") : "";
     const near = nearest && nearest !== "NONE" ? " · " + t("distance." + nearest) : "";
     const stock = blocks === "B" ? " · " + t("qualifier.blocks")
       : blocks === "b" ? " · " + t("qualifier.blocks") + " (few)" : "";
-    return `<span class="focus">${kinds}${count}${near}</span>` +
+    return `<span class="focus">${kinds}${many}${near}</span>` +
            `<span class="qualifier"> · ${t(armed === "A" ? "qualifier.armed" : "qualifier.unarmed")}` +
            ` · ${t("health." + (health || "HIGH"))} · ${t("cover." + (cover || "SKY"))}` +
            ` · ${t("light." + (light || "DAY"))}${stock}</span>` + verdict;
   }
 
-  /**
-   * The placement table is keyed by "<source>|<verb>|<flags>": what it is working on, what it is about to
-   * do to it, and what is around it. All three matter, which is why all three are shown.
-   */
   function spotLabel(key, verdict) {
     const [source, action, flags] = key.split("|");
     return `<span class="focus">${word("action", action)}</span>` +
            `<span class="qualifier">${sourceOf(source)}${qualifiers(flags)}</span>` + verdict;
   }
 
-  // Three things a row can be saying, and they are not the same. It has found something worth doing; or
-  // the best it knows is an untried column and all it has really learned is what hurt; or it knows nothing.
   function verdictLabel(group, actions, values, best) {
     if (values[best] > 1e-4) {
       return `<span class="verdict"> → <b>${word(group, actions[best])}</b> ${figure(values[best])}</span>`;
@@ -1219,60 +1234,50 @@
            `<div class="track">${bar}</div></td>`;
   }
 
+  /** What the learning view is filtered by: a search text and whether rows with no opinion are hidden. */
+  const learning = { text: "", opinion: false };
+
   /**
    * One learned table, as markup. Every table on the page is the same shape — situations down the side,
    * columns across, a diverging bar per cell — so they are one function rather than six that drift
-   * apart. Returned as a string rather than written into a fixed element, because how many there are is
-   * decided by the data: four per folder, and as many folders as the run has opened.
-   *
-   * Nothing is trimmed. The page is read on a desktop by the one person who wants to know exactly what
-   * the run has learned, and a table that quietly stops at twelve rows hides the very states that only
-   * turn up after hours of play.
+   * apart. Nothing is trimmed but what the filter says; each table scrolls inside its own card.
    */
   function tableHtml(spec) {
     const { title, sideHead, actions, rows, group, label, current, empty } = spec;
     const head = `<thead><tr><th class="state-head">${t(sideHead)}</th>` +
       actions.map(a => `<th class="action-head">${word(group, a)}</th>`).join("") + "</tr></thead>";
 
-    let body;
-    if (!rows.length) {
-      body = `<tbody><tr><td class="empty" colspan="${actions.length + 1}">${t(empty)}</td></tr></tbody>`;
-    } else {
-      // Strongest opinions first. What the run is doing now is not a reason to show a row that has
-      // learned nothing yet, and the live row keeps its own ring either way.
-      const strength = r => Math.max(...r.values.map(Math.abs));
-      const shown = [...rows].sort((a, b) => strength(b) - strength(a));
-      // One shared scale across the table, so a long bar means the same thing on every row of it.
-      const scale = Math.max(1e-3, ...shown.flatMap(r => r.values.map(Math.abs)));
-      body = "<tbody>" + shown.map(row => {
-        const best = row.values.indexOf(Math.max(...row.values));
-        const live = row.state === current ? ' class="current"' : "";
-        const text = label(row.state, verdictLabel(group, actions, row.values, best));
-        // The whole label on the tooltip, for the rows the column is too narrow for: a label cut short
-        // loses its verdict, and the verdict is the point.
-        const plain = text.replace(/<[^>]+>/g, "").replaceAll('"', "&quot;");
-        return `<tr${live}><td class="state" title="${plain}">${text}</td>` +
-               row.values.map((v, i) =>
-                   cell(v, scale, word(group, actions[i]), i === best && Math.abs(v) > 1e-4)).join("") +
-               "</tr>";
-      }).join("") + "</tbody>";
+    const strength = r => Math.max(...r.values.map(Math.abs));
+    let shown = [...rows].sort((a, b) => strength(b) - strength(a));
+    if (learning.opinion) {
+      shown = shown.filter(r => strength(r) > 1e-4);
     }
-    return `<div class="table-block"><div class="sub-label">${t(title)}</div>` +
-           `<table style="--action-count:${actions.length}">${head}${body}</table></div>`;
+    const scale = Math.max(1e-3, ...shown.flatMap(r => r.values.map(Math.abs)));
+    const lines = [];
+    for (const row of shown) {
+      const best = row.values.indexOf(Math.max(...row.values));
+      const text = label(row.state, verdictLabel(group, actions, row.values, best));
+      const plain = text.replace(/<[^>]+>/g, "");
+      if (learning.text && !plain.toLowerCase().includes(learning.text) && !row.state.toLowerCase().includes(learning.text)) {
+        continue;
+      }
+      const live = row.state === current ? ' class="current"' : "";
+      lines.push(`<tr${live}><td class="state" title="${plain.replaceAll('"', "&quot;")}">${text}</td>` +
+        row.values.map((v, i) =>
+          cell(v, scale, word(group, actions[i]), i === best && Math.abs(v) > 1e-4)).join("") + "</tr>");
+    }
+    const body = lines.length
+      ? "<tbody>" + lines.join("") + "</tbody>"
+      : `<tbody><tr><td class="empty" colspan="${actions.length + 1}">${t(empty)}</td></tr></tbody>`;
+    return `<div class="table-block"><div class="sub-label">${t(title)}` +
+           `<span class="n">${t("learning.rows", count(lines.length))}</span></div>` +
+           `<div class="scroll"><table style="--action-count:${actions.length}">${head}${body}</table></div></div>`;
   }
 
-  /** A shopping list or a reserve as chips: "3 × logs". */
   const chips = amounts => amounts.length
     ? amounts.map(a => `<span class="chip"><b>${a.amount}</b> × ${escape(word("resource", a.item))}</span>`).join("")
     : `<span class="chip">${t("plan.nothing")}</span>`;
 
-  /**
-   * A plan, whole: what, why, at what height, needing what, keeping what back, and from where.
-   *
-   * The same markup serves the plan in force at the top of the page and every answer in the planner's
-   * history below it, so the two can be compared line for line. The one difference is `sought`: the
-   * source the body is looking for right now, which only the live plan has.
-   */
   function planHtml(plan, sought) {
     const reason = plan.reason
       ? `<div class="plan-reason">${escape(plan.reason)}</div>`
@@ -1284,7 +1289,7 @@
       `<span class="plan-list"><span class="plan-term">${t("plan.reserve")}</span>${chips(plan.reserve || [])}</span>` +
       `</div>`;
     const sources = (plan.sources || []).length
-      ? `<table class="sources"><thead><tr>` +
+      ? `<div class="scroll"><table class="sources"><thead><tr>` +
         `<th>${t("plan.sources")}</th><th>${t("head.tool")}</th><th>${t("plan.band")}</th>` +
         `<th>${t("head.terrain")}</th><th>${t("head.ways")}</th></tr></thead><tbody>` +
         plan.sources.map(source => {
@@ -1297,7 +1302,7 @@
                  `<td>${escape(word("tool", source.tool))}</td>` +
                  `<td>${escape(bandLabel(source.floor, source.ceiling))}</td>` +
                  `<td>${escape(terrain)}</td><td>${escape(ways)}</td></tr>`;
-        }).join("") + "</tbody></table>"
+        }).join("") + "</tbody></table></div>"
       : "";
     return `<div class="plan-head"><b>${escape(objectiveLabel(plan.objective))}</b></div>` +
            reason + lists + sources;
@@ -1306,8 +1311,6 @@
   function renderPlan(data) {
     const box = el("plan");
     if (data.phase === "UNPLANNED") {
-      // Nothing stands in for the planner, so this is the one state worth shouting about: the run is
-      // standing still on purpose, and the planner's own word on why goes right beside it.
       box.innerHTML = `<div class="empty-line warn">⚠ ${t("plan.unplanned")}` +
         `${data.phaseReason ? ` · ${escape(data.phaseReason)}` : ""}</div>`;
       return;
@@ -1316,18 +1319,88 @@
       box.innerHTML = `<div class="empty-line">${escape(objectiveLabel(data.phase))} · ${t("plan.none")}</div>`;
       return;
     }
-    // Which source the body is after right now is the second half of the pursuit label: "LOG/oak_log".
     const sought = String(data.pursuit || "").split("/")[1] || null;
     box.innerHTML = planHtml(data.plan, sought);
   }
 
-  /**
-   * Which folder the page is showing.
-   *
-   * Null follows the run: whatever folder the learning is landing in is the one on screen, which is what
-   * a viewer wants most of the time. Clicking a tab pins that folder — to read what it learned about
-   * zombies while it is off chopping wood — and clicking the pinned tab again lets go.
-   */
+  // --- the overview's "what is happening" ----------------------------------------------------
+
+  /** The last status the game reported, for the vitals and the overview. */
+  let lastStatus = null;
+
+  const biomeWords = biome => biome ? String(biome).replace(/^minecraft:/, "").replaceAll("_", " ") : "—";
+
+  /** The time of day in words and as a clock: 0 is 06:00 in Minecraft's day. */
+  function timeOfDay(ticks) {
+    if (ticks === null || ticks === undefined || ticks < 0) {
+      return "—";
+    }
+    const hours = (Math.floor(ticks / 1000) + 6) % 24;
+    const minutes = Math.floor((ticks % 1000) / 1000 * 60);
+    const stamp = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+    const phase = ticks < 1000 ? "time.dawn" : ticks < 12000 ? "time.day" : ticks < 13000 ? "time.dusk"
+      : ticks < 23000 ? "time.night" : "time.dawn";
+    return `${t(phase)} · ${stamp}`;
+  }
+
+  function renderNow(data) {
+    if (!data) {
+      return;
+    }
+    const s = lastStatus || {};
+    const rows = [];
+    const row = (key, value, muted) =>
+      rows.push(`<span class="k">${t(key)}</span><span class="v${muted ? " muted" : ""}">${value}</span>`);
+    row("objective", escape(objectiveLabel(data.phase)) +
+      (data.phaseReason ? ` <span class="muted">· ${escape(data.phaseReason)}</span>` : ""));
+    row("pursuit", escape(pursuitLabel(data.pursuit)));
+    row("now.situation", data.currentState ? stateLabel(data.currentState, "") : "—");
+    row("doing", data.currentAction
+      ? escape(`${word("action", data.currentAction)} ${word("timing", data.currentTiming)}`.trim()) : "—");
+    row("making", data.currentCraft && data.currentCraft !== "NOTHING" ? escape(word("craft", data.currentCraft)) : "—",
+      !(data.currentCraft && data.currentCraft !== "NOTHING"));
+    row("driving", data.driver ? escape(data.driver) : "—", !data.driver);
+    row("now.folder", data.activeFolder
+      ? `${escape(folderLabel(data.activeFolder))} · ${t("folder.random", Math.round((data.epsilon || 0) * 100))}` : "—");
+    row("now.decisions", `${count(data.decisions)} · ${t("tally.stalls", count(data.stalls))}`);
+    row("vitals.position", s.inWorld ? `${s.x}, ${s.y}, ${s.z} · ${escape(biomeWords(s.biome))} · ${timeOfDay(s.dayTime)}` : "—");
+    el("ov-now").innerHTML = rows.join("");
+  }
+
+  function renderVitals(s) {
+    const inWorld = !!(s && s.inWorld);
+    const health = el("v-health");
+    health.textContent = inWorld ? `${s.health} / 20` : "—";
+    health.classList.toggle("low", inWorld && s.health <= 6);
+    const food = el("v-food");
+    food.textContent = inWorld ? `${s.food} / 20` : "—";
+    food.classList.toggle("low", inWorld && s.food <= 6);
+    el("v-position").textContent = inWorld ? `${s.x}, ${s.y}, ${s.z}` : "—";
+    el("v-biome").textContent = inWorld ? biomeWords(s.biome) : "—";
+    el("v-time").textContent = inWorld ? timeOfDay(s.dayTime) : "—";
+    el("v-fps").textContent = s ? String(s.fps) : "—";
+    const world = el("v-world");
+    world.textContent = s ? (s.worldName ? s.worldName : t(inWorld ? "status.inworld" : "status.noworld")) : "—";
+    world.classList.toggle("dim", !inWorld);
+    el("v-clips").textContent = s ? String(s.clips) : "—";
+  }
+
+  async function fetchStatus() {
+    try {
+      const answer = await fetch("status");
+      if (!answer.ok) {
+        return;
+      }
+      lastStatus = await answer.json();
+      renderVitals(lastStatus);
+      renderNow(latest);
+    } catch {
+      // The run going away is the ordinary end of this; the event stream says so.
+    }
+  }
+
+  // --- the folders --------------------------------------------------------------------------
+
   let pinned = null;
 
   function renderFolders(data) {
@@ -1362,7 +1435,6 @@
       `<span>${t("folder.decisions", count(shown.decisions))}</span>` +
       `<span>${t("folder.random", Math.round((shown.epsilon || 0) * 100))}</span>`;
 
-    // The live row is only live in the folder the body is actually in.
     const current = shown.name === data.activeFolder ? data.currentState : null;
     const timingCurrent = current && data.currentAction ? current + "/" + data.currentAction : null;
     el("folder").innerHTML =
@@ -1376,7 +1448,6 @@
         rows: shown.timing, group: "timing", label: timingLabel, current: timingCurrent, empty: "empty.timing" });
   }
 
-  // Pin and unpin by clicking the tabs. Delegated, since the tabs are redrawn on every decision.
   el("tabs").addEventListener("click", event => {
     const tab = event.target.closest(".tab");
     if (!tab || !latest) {
@@ -1391,34 +1462,38 @@
     el("shared").innerHTML =
       tableHtml({ title: "crafts", sideHead: "head.craft", actions: data.craftActions || [],
         rows: data.craftRows || [], group: "craft", label: craftLabel, current: null, empty: "empty.crafts" }) +
-      tableHtml({ title: "water", sideHead: "head.water", actions: data.waterActions || [],
-        rows: data.waterRows || [], group: "swim", label: waterLabel, current: null, empty: "empty.water" }) +
       tableHtml({ title: "passage", sideHead: "head.passage", actions: data.passageActions || [],
         rows: data.passageRows || [], group: "passage", label: passageLabel, current: null,
         empty: "empty.passage" }) +
       tableHtml({ title: "tactics", sideHead: "head.tactics", actions: data.tacticActions || [],
         rows: data.tacticRows || [], group: "tactic", label: tacticLabel, current: null,
-        empty: "empty.tactics" });
+        empty: "empty.tactics" }) +
+      tableHtml({ title: "water", sideHead: "head.water", actions: data.waterActions || [],
+        rows: data.waterRows || [], group: "swim", label: waterLabel, current: null, empty: "empty.water" });
   }
 
-  /** "45s" / "3m", so a line can say how long ago it was without a clock on the page. */
-  const elapsed = millis => {
-    const seconds = Math.max(0, Math.round(millis / 1000));
-    return seconds < 90 ? seconds + "s" : Math.round(seconds / 60) + "m";
-  };
+  el("learn-search").addEventListener("input", event => {
+    learning.text = event.target.value.trim().toLowerCase();
+    if (latest) {
+      renderFolders(latest);
+      renderShared(latest);
+    }
+  });
 
-  /** The revision the drawn history belongs to, so it is fetched once per change and not per decision. */
+  el("learn-opinion").addEventListener("click", () => {
+    learning.opinion = !learning.opinion;
+    el("learn-opinion").classList.toggle("on", learning.opinion);
+    if (latest) {
+      renderFolders(latest);
+      renderShared(latest);
+    }
+  });
+
+  // --- the conversations ----------------------------------------------------------------------
+
   let plannerRevision = null;
-
-  /** The last history drawn, kept so a change of language redraws without asking for it again. */
   let plannerEntries = [];
 
-  /**
-   * Asks for the planner's whole conversation.
-   *
-   * Relative, so the same page works on loopback inside OBS and through the proxy in the panel, where
-   * the credential is added on the way past.
-   */
   async function fetchPlanner() {
     try {
       const answer = await fetch("planner");
@@ -1428,49 +1503,43 @@
       plannerEntries = (await answer.json()).entries || [];
       renderPlanner(plannerEntries);
     } catch {
-      // The run going away is the ordinary end of this, not a fault worth drawing.
+      // Nothing to draw; the stream will say if the run is gone.
     }
   }
 
-  /**
-   * What the planner was asked and what it said, newest first, with everything each decision was made
-   * of: for an answer, the plan the run took from it — band, list, reserve, sources — and the reply it
-   * was read from; for a question, the line of situation and the whole prompt behind it. The raw text is
-   * folded, one click away, so the page can be skimmed and still be checked.
-   */
   function renderPlanner(entries) {
-    // Two conversations, kept apart: the planner chooses what to do next, the mentor is asked only when
-    // the run is stuck and teaches the way out. They arrive in one stream, tagged by source.
     const planner = [];
     const mentor = [];
     for (const entry of entries) {
       (entry.source === "MENTOR" ? mentor : planner).push(entry);
     }
-    renderTalk("planner", planner, "planner", "empty.planner");
-    renderTalk("mentor", mentor, "mentor", "empty.mentor");
+    renderTalk("planner", planner, "planner", "empty.planner", el("planner-filter").value);
+    renderTalk("mentor", mentor, "mentor", "empty.mentor", el("mentor-filter").value);
+    renderTalkMini(entries);
   }
 
-  /**
-   * One conversation panel, newest first. @param words which word group names the kinds (the planner and
-   * the mentor label the same kinds differently — "answered" vs "taught").
-   */
-  function renderTalk(containerId, entries, words, emptyKey) {
+  const passesTalk = (entry, filter) => {
+    const kind = String(entry.kind || "").toUpperCase();
+    return filter === "all" || (filter === "answered" && kind === "ANSWERED") || (filter === "failed" && kind === "FAILED");
+  };
+
+  function entryTitle(entry) {
+    return entry.plan
+      ? `<b>${escape(objectiveLabel(entry.plan.objective))}</b>` +
+        (entry.text ? ` <span class="reason">${escape(entry.text)}</span>` : "")
+      : (entry.objective ? `<b>${escape(objectiveLabel(entry.objective))}</b> · ` : "") +
+        escape(entry.text || "");
+  }
+
+  function renderTalk(containerId, entries, words, emptyKey, filter) {
     const talk = el(containerId);
-    if (!talk) {
-      return;
-    }
-    if (!entries.length) {
+    const shown = entries.filter(e => passesTalk(e, filter || "all"));
+    if (!shown.length) {
       talk.innerHTML = `<div class="empty-line">${t(emptyKey)}</div>`;
       return;
     }
-    talk.innerHTML = [...entries].reverse().map(entry => {
+    talk.innerHTML = [...shown].reverse().map(entry => {
       const kind = String(entry.kind || "").toLowerCase();
-      // An answer's title is the objective in the panel's own words; its reason follows in the model's.
-      const title = entry.plan
-        ? `<b>${escape(objectiveLabel(entry.plan.objective))}</b>` +
-          (entry.text ? ` <span class="reason">${escape(entry.text)}</span>` : "")
-        : (entry.objective ? `<b>${escape(objectiveLabel(entry.objective))}</b> · ` : "") +
-          escape(entry.text || "");
       const plan = entry.plan ? `<div class="plan">${planHtml(entry.plan, null)}</div>` : "";
       const raw = entry.detail
         ? `<details class="raw"><summary>${kind === "asked" ? t("planner.prompt") : t("planner.reply")}</summary>` +
@@ -1478,11 +1547,390 @@
         : "";
       return `<article class="entry ${kind}">` +
              `<div class="entry-head"><span class="talk-kind ${kind}">${word(words, entry.kind)}</span>` +
-             `<span class="entry-title">${title}</span>` +
+             `<span class="entry-title">${entryTitle(entry)}</span>` +
              `<span class="talk-ago">${t("ago", elapsed(entry.ago || 0))}</span></div>` +
              plan + raw + `</article>`;
     }).join("");
   }
+
+  /** The overview's short form: the last eight lines of both conversations, newest first. */
+  function renderTalkMini(entries) {
+    const box = el("ov-talk");
+    const shown = [...entries].slice(-8).reverse();
+    if (!shown.length) {
+      box.innerHTML = `<div class="empty-line">${t("empty.planner")}</div>`;
+      return;
+    }
+    box.innerHTML = shown.map(entry => {
+      const kind = String(entry.kind || "").toLowerCase();
+      const words = entry.source === "MENTOR" ? "mentor" : "planner";
+      return `<div class="mini-row"><span class="talk-kind ${kind}">${word(words, entry.kind)}</span>` +
+             `<span class="txt">${entryTitle(entry)}</span>` +
+             `<span class="talk-ago">${t("ago", elapsed(entry.ago || 0))}</span></div>`;
+    }).join("");
+  }
+
+  el("planner-filter").addEventListener("change", () => renderPlanner(plannerEntries));
+  el("mentor-filter").addEventListener("change", () => renderPlanner(plannerEntries));
+
+  // --- skills ---------------------------------------------------------------------------------
+
+  let skills = [];
+
+  const stepWords = steps => (steps || []).map(step => {
+    const [verb, argument] = Object.entries(step)[0] || ["?", ""];
+    const arg = Array.isArray(argument) ? argument.join(",") : argument === true ? "" : String(argument);
+    return `${verb} ${arg}`.trim();
+  }).join(" → ");
+
+  const skillTag = skill => skill.retired
+    ? `<span class="tag retired">${t("skills.retired")}</span>`
+    : `<span class="tag live">${t("skills.live")}</span>`;
+
+  function renderSkills() {
+    const box = el("skills");
+    if (!skills.length) {
+      box.innerHTML = `<div class="empty-line">${t("empty.skills")}</div>`;
+      el("ov-skills").innerHTML = `<div class="empty-line">${t("empty.skills")}</div>`;
+      return;
+    }
+    box.innerHTML = `<table class="list"><thead><tr>` +
+      `<th>${t("skills.name")}</th><th>${t("skills.layer")}</th><th>${t("skills.state")}</th>` +
+      `<th>${t("skills.uses")}</th><th>${t("skills.done")}</th><th>${t("skills.failed")}</th>` +
+      `<th>${t("skills.makes")}</th><th>${t("skills.prior")}</th><th>${t("skills.when")}</th>` +
+      `<th>${t("skills.until")}</th><th>${t("skills.steps")}</th><th>${t("skills.reason")}</th>` +
+      `</tr></thead><tbody>` +
+      skills.map(skill => `<tr>` +
+        `<td class="name">${escape(skill.name)}</td>` +
+        `<td><span class="tag">${escape(String(skill.layer || "").toLowerCase())}</span></td>` +
+        `<td>${skillTag(skill)}</td>` +
+        `<td class="num">${count(skill.uses)}</td><td class="num">${count(skill.completions)}</td>` +
+        `<td class="num">${count(skill.failures)}</td>` +
+        `<td>${skill.makes ? escape(word("resource", skill.makes)) : "—"}</td>` +
+        `<td class="num">${skill.prior ?? "—"}</td>` +
+        `<td><code>${escape(skill.when || "")}</code></td>` +
+        `<td><code>${escape(skill.until && skill.until !== "true" ? skill.until : "—")}</code></td>` +
+        `<td><code>${escape(stepWords(skill.steps))}${skill.repeat ? " ↻" : ""}</code></td>` +
+        `<td>${escape(skill.reason || "")}</td></tr>`).join("") +
+      `</tbody></table>`;
+    el("ov-skills").innerHTML = skills.map(skill =>
+      `<div class="mini-row"><span class="txt"><b>${escape(skill.name)}</b> ` +
+      `<span class="tag">${escape(String(skill.layer || "").toLowerCase())}</span> ${skillTag(skill)}</span>` +
+      `<span class="talk-ago">${count(skill.uses)} · ${count(skill.completions)} ✓ · ${count(skill.failures)} ✗</span></div>`
+    ).join("");
+  }
+
+  async function fetchSkills() {
+    try {
+      const answer = await fetch("skills");
+      if (!answer.ok) {
+        return;
+      }
+      skills = (await answer.json()).skills || [];
+      renderSkills();
+    } catch {
+      // As above.
+    }
+  }
+
+  // --- logs -----------------------------------------------------------------------------------
+
+  const logs = {
+    entries: [],
+    lastSeq: 0,
+    levels: new Set(["INFO", "WARN", "ERROR", "FATAL"]),
+    own: true,
+    text: "",
+    paused: false,
+    follow: true,
+    unseen: 0,
+  };
+
+  const logView = el("log");
+
+  const passesLog = e =>
+    (logs.levels.has(e.level) || (e.level === "FATAL" && logs.levels.has("ERROR")))
+    && (!logs.own || e.own)
+    && (!logs.text || (e.msg + " " + e.logger).toLowerCase().includes(logs.text));
+
+  const logLineHtml = e =>
+    `<div class="log-line lvl-${escape(e.level)}${e.own ? " own" : ""}">` +
+    `<span class="lt">${clock(e.t)}</span><span class="ll">${escape(e.level)}</span>` +
+    `<span class="lg" title="${escape(e.thread)}">${escape(e.logger)}</span>` +
+    `<span class="lm">${escape(e.msg)}</span></div>`;
+
+  function logCount() {
+    const shown = logView.childElementCount;
+    el("logs-count").textContent = `${t("logs.count", count(shown))} / ${count(logs.entries.length)}`;
+  }
+
+  function scrollLog() {
+    if (logs.follow) {
+      logView.scrollTop = logView.scrollHeight;
+    }
+  }
+
+  function rebuildLog() {
+    const shown = logs.entries.filter(passesLog);
+    logView.innerHTML = shown.length ? shown.map(logLineHtml).join("") : `<div class="empty-line">${t("empty.logs")}</div>`;
+    logCount();
+    scrollLog();
+  }
+
+  /** The overview's notices: warnings and errors from anywhere, and the mod's own INFO lines. */
+  function renderAlerts() {
+    const picked = logs.entries.filter(e => e.level === "WARN" || e.level === "ERROR" || e.level === "FATAL"
+      || (e.own && e.level === "INFO")).slice(-14);
+    const box = el("ov-alerts");
+    box.innerHTML = picked.length ? picked.map(logLineHtml).join("") : `<div class="empty-line">${t("empty.logs")}</div>`;
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function addLogEntries(list) {
+    let appended = 0;
+    let alarming = 0;
+    const fragments = [];
+    for (const e of list) {
+      if (e.seq <= logs.lastSeq) {
+        continue;
+      }
+      logs.lastSeq = e.seq;
+      logs.entries.push(e);
+      if (e.level === "WARN" || e.level === "ERROR" || e.level === "FATAL") {
+        alarming++;
+      }
+      if (!logs.paused && passesLog(e)) {
+        fragments.push(logLineHtml(e));
+        appended++;
+      }
+    }
+    while (logs.entries.length > LOG_KEEP) {
+      logs.entries.shift();
+    }
+    if (appended) {
+      if (logView.firstElementChild && logView.firstElementChild.classList.contains("empty-line")) {
+        logView.innerHTML = "";
+      }
+      logView.insertAdjacentHTML("beforeend", fragments.join(""));
+      while (logView.childElementCount > LOG_KEEP) {
+        logView.removeChild(logView.firstElementChild);
+      }
+      scrollLog();
+    }
+    logCount();
+    renderAlerts();
+    if (alarming && currentView !== "logs") {
+      logs.unseen += alarming;
+      const badge = el("logs-badge");
+      badge.textContent = String(logs.unseen);
+      badge.hidden = false;
+    }
+  }
+
+  async function fetchLogs(after) {
+    try {
+      const answer = await fetch(`logs?after=${after}&limit=800`);
+      if (!answer.ok) {
+        return;
+      }
+      const got = await answer.json();
+      addLogEntries(got.entries || []);
+    } catch {
+      // As above.
+    }
+  }
+
+  for (const toggle of document.querySelectorAll("[data-level]")) {
+    toggle.addEventListener("click", () => {
+      const level = toggle.dataset.level;
+      if (logs.levels.has(level)) {
+        logs.levels.delete(level);
+      } else {
+        logs.levels.add(level);
+      }
+      toggle.classList.toggle("on", logs.levels.has(level));
+      rebuildLog();
+    });
+  }
+
+  el("logs-own").addEventListener("click", () => {
+    logs.own = !logs.own;
+    el("logs-own").classList.toggle("on", logs.own);
+    el("logs-own").textContent = logs.own ? t("logs.mod") : t("logs.all");
+    rebuildLog();
+  });
+
+  el("logs-filter").addEventListener("input", event => {
+    logs.text = event.target.value.trim().toLowerCase();
+    rebuildLog();
+  });
+
+  el("logs-pause").addEventListener("click", () => {
+    logs.paused = !logs.paused;
+    el("logs-pause").textContent = logs.paused ? t("logs.resume") : t("logs.pause");
+    if (!logs.paused) {
+      rebuildLog();
+    }
+  });
+
+  el("logs-clear").addEventListener("click", () => {
+    logs.entries = [];
+    rebuildLog();
+    renderAlerts();
+  });
+
+  el("logs-follow").addEventListener("click", () => {
+    logs.follow = !logs.follow;
+    el("logs-follow").classList.toggle("on", logs.follow);
+    scrollLog();
+  });
+
+  // Scrolling up is asking to read; scrolling back to the bottom is asking to follow again.
+  logView.addEventListener("scroll", () => {
+    const atBottom = logView.scrollHeight - logView.scrollTop - logView.clientHeight < 24;
+    if (logs.follow !== atBottom) {
+      logs.follow = atBottom;
+      el("logs-follow").classList.toggle("on", logs.follow);
+    }
+  });
+
+  // --- clips ----------------------------------------------------------------------------------
+
+  async function fetchClips() {
+    const box = el("clips");
+    try {
+      const answer = await fetch("clips");
+      if (!answer.ok) {
+        return;
+      }
+      const list = (await answer.json()).clips || [];
+      if (!list.length) {
+        box.innerHTML = `<div class="empty-line">${t("empty.clips")}</div>`;
+        return;
+      }
+      box.innerHTML = `<table class="list"><thead><tr><th>${t("clips.name")}</th><th>${t("clips.size")}</th>` +
+        `<th>${t("clips.age")}</th><th></th></tr></thead><tbody>` +
+        list.map(clip => `<tr><td class="name">${escape(clip.name)}</td>` +
+          `<td class="num">${megabytes(clip.bytes)} MB</td>` +
+          `<td class="num">${t("ago", elapsed(clip.ago || 0))}</td>` +
+          `<td><a href="clips/${encodeURIComponent(clip.name)}">${t("clips.download")}</a></td></tr>`).join("") +
+        `</tbody></table>`;
+    } catch {
+      box.innerHTML = `<div class="empty-line">${t("empty.clips")}</div>`;
+    }
+  }
+
+  el("clips-refresh").addEventListener("click", fetchClips);
+
+  // --- control --------------------------------------------------------------------------------
+
+  async function post(path, body, button) {
+    const result = el("control-result");
+    result.classList.remove("bad");
+    result.textContent = t("control.busy");
+    if (button) {
+      button.disabled = true;
+    }
+    try {
+      const answer = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : null,
+      });
+      let said = "";
+      try {
+        const json = await answer.json();
+        said = json.message || json.error || "";
+      } catch {
+        said = "";
+      }
+      result.textContent = `${answer.ok ? t("control.done") : t("control.failed")}${said ? " · " + said : ""}`;
+      result.classList.toggle("bad", !answer.ok);
+    } catch (e) {
+      result.textContent = `${t("control.failed")} · ${e}`;
+      result.classList.add("bad");
+    } finally {
+      if (button) {
+        button.disabled = false;
+      }
+      fetchStatus();
+    }
+  }
+
+  el("world-resume").addEventListener("click", event => {
+    const name = el("world-name").value.trim();
+    post("world/resume", name ? { name } : {}, event.currentTarget);
+  });
+
+  el("world-new").addEventListener("click", event => {
+    if (!confirm(t("control.newworld.confirm"))) {
+      return;
+    }
+    const name = el("world-name").value.trim();
+    post("world/new", name ? { name } : {}, event.currentTarget);
+  });
+
+  el("learning-reset").addEventListener("click", event => {
+    if (confirm(t("control.reset.confirm"))) {
+      post("learning/reset", null, event.currentTarget);
+    }
+  });
+
+  el("stop-all").addEventListener("click", event => {
+    if (confirm(t("control.stop.confirm"))) {
+      post("stop", null, event.currentTarget);
+    }
+  });
+
+  // --- views ----------------------------------------------------------------------------------
+
+  let currentView = "overview";
+
+  function showView(name) {
+    if (!el("view-" + name)) {
+      name = "overview";
+    }
+    currentView = name;
+    for (const section of document.querySelectorAll(".view")) {
+      section.classList.toggle("on", section.id === "view-" + name);
+    }
+    for (const button of document.querySelectorAll("nav.views button")) {
+      button.classList.toggle("on", button.dataset.view === name);
+    }
+    try {
+      localStorage.setItem("autocraft.view", name);
+    } catch {
+      // Private mode, or storage blocked: the tab is simply not remembered.
+    }
+    if (name === "logs") {
+      logs.unseen = 0;
+      el("logs-badge").hidden = true;
+      scrollLog();
+    }
+    if (name === "clips") {
+      fetchClips();
+    }
+    if (name === "skills") {
+      fetchSkills();
+    }
+  }
+
+  el("views").addEventListener("click", event => {
+    const button = event.target.closest("button");
+    if (button) {
+      showView(button.dataset.view);
+    }
+  });
+
+  document.addEventListener("click", event => {
+    const link = event.target.closest("[data-goto]");
+    if (link) {
+      event.preventDefault();
+      showView(link.dataset.goto);
+    }
+  });
+
+  // --- machine load ---------------------------------------------------------------------------
 
   function meter(id, fraction, hot) {
     const bar = el(id);
@@ -1490,12 +1938,7 @@
     bar.classList.toggle("hot", hot);
   }
 
-  // What the game is costing the machine. It arrives on its own beat, apart from the table, so it draws
-  // on its own too — and with null when the game has gone, because a load left frozen on screen reads as
-  // a game that is still running.
   function renderStats(stats) {
-    // The process load, not the machine's: the question the panel is answering is what this game costs.
-    // A JVM that will not say reports it negative, and a dash is the honest answer to that.
     const cpu = stats && stats.processCpu >= 0 ? stats.processCpu : null;
     el("cpu").textContent = cpu === null ? "—" : percent(cpu) + " %";
     meter("cpu-bar", cpu ?? 0, false);
@@ -1503,7 +1946,6 @@
       t("tip.cpu", percent(cpu)) +
       (stats.systemCpu >= 0 ? " · " + t("tip.cpu.machine", percent(stats.systemCpu)) : "");
 
-    // The heap, which is the memory a player can do anything about: it is what the launcher's slider set.
     const heap = stats && stats.heapMax > 0 ? stats.heapUsed / stats.heapMax : null;
     el("memory").textContent = heap === null ? "—" :
       `${gigabytes(stats.heapUsed)} / ${gigabytes(stats.heapMax)} GB`;
@@ -1514,34 +1956,28 @@
         ? " · " + t("tip.memory.machine", gigabytes(stats.ramUsed), gigabytes(stats.ramTotal)) : "");
   }
 
-  /** Everything the panel draws from one snapshot: the moment, the plan, the folders, the shared tables. */
+  // --- one snapshot, drawn --------------------------------------------------------------------
+
   function render(data) {
     el("phase").textContent = objectiveLabel(data.phase);
     el("phase").classList.toggle("warn", data.phase === "UNPLANNED");
     el("working").textContent = pursuitLabel(data.pursuit);
-    // The planner's reason for the objective — or, with no objective and no answer coming, its account
-    // of why not. Empty only while an answer is on its way.
     const reason = el("phase-reason");
     reason.textContent = data.phaseReason || "";
     reason.hidden = !data.phaseReason;
-    // The duration belongs with the action: "fleeing" and "fleeing for ten seconds" are different moves.
     el("doing").textContent = data.currentAction
       ? `${word("action", data.currentAction)} ${word("timing", data.currentTiming)}`.trim()
       : "—";
     el("making").textContent = data.currentCraft && data.currentCraft !== "NOTHING"
       ? word("craft", data.currentCraft)
       : "—";
+    el("driving").textContent = data.driver ? data.driver : "—";
 
-    // The compact strip draws none of the rest, and building it there would be work thrown away
-    // several times a minute.
     if (!COMPACT) {
       renderPlan(data);
+      renderNow(data);
       renderFolders(data);
       renderShared(data);
-
-      // The conversation is not in the snapshot — it is whole prompts and whole replies, and it would
-      // be resent on every decision to say nothing new. The snapshot carries a revision, and this asks
-      // for the history only when that has moved.
       if (data.plannerRevision !== plannerRevision) {
         plannerRevision = data.plannerRevision;
         fetchPlanner();
@@ -1552,20 +1988,16 @@
       + t("tally.random", Math.round((data.epsilon || 0) * 100)) + " · "
       + t("tally.stalls", count(data.stalls));
     el("status").textContent = t("status.live");
-    el("status").classList.remove("offline");
+    el("live").classList.remove("offline");
   }
 
-  /** The last snapshot, kept so a change of language redraws rather than waiting for the next decision. */
   let latest = null;
   let latestStats = null;
+  let wasOffline = false;
 
-  // Relative on purpose: everything the mod serves lives under one prefix so a single proxy rule
-  // covers it, and a relative URL is what lets the page work at "/autocraft/" without knowing it is there.
   const stream = new EventSource("events");
   stream.addEventListener("labels", event => {
     const sent = JSON.parse(event.data);
-    // Group by group, so a language that has translated half of them keeps English for the other half
-    // instead of losing it.
     L = { locale: sent.locale || DEFAULTS.locale };
     for (const [group, words] of Object.entries(DEFAULTS)) {
       if (group !== "locale") {
@@ -1576,22 +2008,57 @@
     if (latest) {
       render(latest);
     }
-    // render() only redraws the conversation when the log itself moved, so a change of language has
-    // to redraw it from what is already held rather than ask the server for it again.
-    if (!COMPACT && plannerEntries.length) {
-      renderPlanner(plannerEntries);
+    if (!COMPACT) {
+      if (plannerEntries.length) {
+        renderPlanner(plannerEntries);
+      }
+      renderSkills();
+      rebuildLog();
+      renderAlerts();
+      renderVitals(lastStatus);
     }
     renderStats(latestStats);
   });
   stream.addEventListener("qtable", event => render(latest = JSON.parse(event.data)));
   stream.addEventListener("stats", event => renderStats(latestStats = JSON.parse(event.data)));
+  stream.addEventListener("log", event => {
+    if (!COMPACT) {
+      addLogEntries(JSON.parse(event.data));
+    }
+  });
+  stream.onopen = () => {
+    if (wasOffline && !COMPACT) {
+      // Back after a gap: the lines logged meanwhile are still on the server.
+      fetchLogs(logs.lastSeq);
+      fetchStatus();
+    }
+    wasOffline = false;
+  };
   stream.onerror = () => {
+    wasOffline = true;
     el("status").textContent = t("status.offline");
-    el("status").classList.add("offline");
+    el("live").classList.add("offline");
     renderStats(latestStats = null);
+    renderVitals(null);
   };
 
   el("status").textContent = t("status.connecting");
+  applyLabels();
+
+  if (!COMPACT) {
+    let remembered = "overview";
+    try {
+      remembered = location.hash.replace("#", "") || localStorage.getItem("autocraft.view") || "overview";
+    } catch {
+      remembered = location.hash.replace("#", "") || "overview";
+    }
+    showView(remembered);
+    fetchStatus();
+    fetchSkills();
+    fetchLogs(0);
+    setInterval(fetchStatus, 2000);
+    setInterval(fetchSkills, 15000);
+  }
 </script>
 </body>
 </html>

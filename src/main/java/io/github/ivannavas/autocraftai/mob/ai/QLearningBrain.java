@@ -657,6 +657,20 @@ public final class QLearningBrain {
     }
 
     /**
+     * Whether the running tactic is one to see through: a shelter, or a climb back to daylight that is
+     * still getting somewhere. The layer woke for DAYLIGHT because the body was stuck under a roof; the
+     * first block gained cleared "stuck", the surroundings read as quiet, and the climb was dropped ten
+     * seconds in with the body still underground and starving.
+     */
+    private boolean committed() {
+        if (sheltering()) {
+            return true;
+        }
+        return tacticGoal != null && engine.isRunning(tacticGoal) && tacticChoice == Tactic.DAYLIGHT
+                && !tacticGoal.isDone() && tacticGoal.stalledTicks() < STALL_TICKS;
+    }
+
+    /**
      * Takes in the skills the planner wrote beside its last answer. Each becomes a column of its table,
      * seeded with its prior in the row the run is in right now — the planner wrote it for the objective
      * in hand, and this is where the objective is being worked.
@@ -816,6 +830,33 @@ public final class QLearningBrain {
             return installedGoal.name() + " (the chosen goal move)";
         }
         return "nothing is running";
+    }
+
+    /**
+     * The same as {@link #driver()} in a few words, for the overlay's status line: which goal has the body
+     * and which layer it belongs to. The answer to "it is deciding, so why is nothing happening" — a
+     * tactic sealed in a hole, a craft standing at a table, a passage move in a wall.
+     */
+    private String driverName() {
+        if (tacticGoal != null && engine.isRunning(tacticGoal)) {
+            return tacticGoal.name() + " (tactic)";
+        }
+        if (craftSkill != null && engine.isRunning(craftSkill)) {
+            return craftSkill.name() + " (craft)";
+        }
+        if (craftGoal != null && engine.isRunning(craftGoal) && !craftGoal.controls().isEmpty()) {
+            return craftGoal.name() + " (craft)";
+        }
+        if (passageGoal != null && engine.isRunning(passageGoal)) {
+            return passageGoal.name() + " (passage)";
+        }
+        if (swimGoal != null && engine.isRunning(swimGoal)) {
+            return swimGoal.name() + " (water)";
+        }
+        if (installedGoal != null && engine.isRunning(installedGoal)) {
+            return installedGoal.name();
+        }
+        return "";
     }
 
     private Obstruction ground(LocalPlayer player) {
@@ -1604,7 +1645,7 @@ public final class QLearningBrain {
         // A shelter is not undone by working: the second the cap goes on, the surroundings read as a
         // roof with nothing hostile in range and stopped calling for anything — and the hole-up was
         // dropped, the goal underneath broke back out, and the night was spent digging the same hole.
-        if (!here.demanding() && !sheltering()) {
+        if (!here.demanding() && !committed()) {
             settleTactics(player, here);
             return;
         }
@@ -1645,7 +1686,7 @@ public final class QLearningBrain {
             return false;
         }
         // A shelter is for whatever turns up: something hostile arriving is not a reason to leave it.
-        return sheltering() || tacticSeen == null || tacticSeen.threat().equals(here.threat());
+        return committed() || tacticSeen == null || tacticSeen.threat().equals(here.threat());
     }
 
     /** The surroundings have gone quiet: the last choice is credited with no continuation and let go. */
@@ -1701,6 +1742,26 @@ public final class QLearningBrain {
             allowed[i] = options[i].isApplicable(here);
         }
         legalSkills(Skill.Layer.TACTIC, allowed, player);
+        // Shelter is for something: hostiles in range, or a night in the open, or a night with nothing to
+        // fight with. A body that is armed, underground and alone woke this layer only because its
+        // objective had stopped getting anywhere, and answered by sealing itself in a hole for two
+        // minutes — decisions ticking, nothing moving — which is the opposite of the way out.
+        // A hostile that is far off in daylight is not a reason either: a creeper on the horizon had the
+        // body sealed in for two minutes with the pickaxe half made.
+        boolean night = here.light() == Surroundings.Light.NIGHT;
+        boolean threatened = (here.count() > 0 && (night || here.nearest() != Perception.Distance.FAR))
+                || (night && (here.cover() == Surroundings.Cover.SKY || !here.armed()));
+        if (!threatened) {
+            allowed[Tactic.HOLE_UP.ordinal()] = false;
+            allowed[Tactic.TOWER.ordinal()] = false;
+            allowed[Tactic.WALL_OFF.ordinal()] = false;
+        }
+        // Getting back to the sky is only a way out when the sky is where the plan wants the body. With
+        // iron at Y -10..50 and the surface at 64, a body stuck under a roof was offered DAYLIGHT every
+        // second and climbed away from its own objective; the mentor taught against it every time.
+        if (here.surface() > progression.bounds().ceiling()) {
+            allowed[Tactic.DAYLIGHT.ordinal()] = false;
+        }
         if (here.light() == Surroundings.Light.NIGHT && !here.armed() && here.count() > 0) {
             allowed[Tactic.CARRY_ON.ordinal()] = false;
             allowed[Tactic.FIGHT.ordinal()] = false;
@@ -2127,20 +2188,23 @@ public final class QLearningBrain {
                 // blocks away because "PICKAXE=1" stayed on the list after the first one was in the bag.
                 allowed[i] = false;
                 reason = "the list already has enough of it";
-            } else if (!choices[i].handheld() && !choices[i].isSmelted() && made != after
-                    && !needs.containsKey(made) && !tableInSight) {
-                // A table craft the plan did not ask for is a trek to a table, and a trek outranks every
-                // move the goal table can choose. Only worth it when the table is right here.
+            } else if (!choices[i].handheld() && !choices[i].isSmelted() && !tableInSight) {
+                // A three-wide recipe needs a table, in the hotbar or standing within reach. Without one
+                // it used to fall through to the two-by-two grid and run there forever, never making
+                // anything; now it is simply not on offer, and the reason is said, so the list's own
+                // CRAFTING_TABLE craft is what gets chosen instead.
                 allowed[i] = false;
+                reason = "no crafting table in the hotbar or in sight to make it at";
             } else if (choices[i].isSmelted()) {
                 // Smelting is not on the recipe book: it is legal when the ore is in the bag and there is
                 // something to burn. The goal finds or places the furnace itself.
                 allowed[i] = held.count(choices[i].input()) > 0 && hasFuel(held)
                         && context.reserve().allowsMaking(made, held)
                         && keepsTheList(made, held, needs);
-                if (!allowed[i]) {
-                    reason = held.count(choices[i].input()) <= 0 ? "no " + choices[i].input() + " to smelt"
-                            : !hasFuel(held) ? "nothing to burn"
+                // No ore in the bag is not a craft being refused, it is the mining not done yet: an
+                // objective for iron logged "not legal: no RAW_IRON to smelt" from its first second.
+                if (!allowed[i] && held.count(choices[i].input()) > 0) {
+                    reason = !hasFuel(held) ? "nothing to burn"
                             : !context.reserve().allowsMaking(made, held) ? "the reserve holds the ore back"
                             : "making it would eat into the shopping list";
                 }
@@ -2426,6 +2490,10 @@ public final class QLearningBrain {
             // it cannot take the step to a table, which is exactly the spot a stuck planks craft died in.
             craftGoal = new CraftAtTableGoal(choice.resource());
             engine.addGoal(CRAFT_AT_TABLE_PRIORITY, craftGoal);
+        } else if (!choice.handheld()) {
+            // Three wide and no table to make it at: the mask should have ruled it out, and the grid in
+            // the inventory would only pretend to try.
+            return;
         } else {
             craftGoal = new CraftGoal(choice.resource());
             engine.addGoal(CRAFT_PRIORITY, craftGoal);
@@ -2507,7 +2575,7 @@ public final class QLearningBrain {
                 active == null ? 0.0 : active.goals.table.epsilon(), decisions(),
                 progression.stateKey(), progression.reason(), pursuit.label(),
                 progression.plan().map(QTableSnapshot.PlanView::of).orElse(null),
-                state, action, timingChoice, craftChoice, stalls,
+                state, action, timingChoice, craftChoice, driverName(), stalls,
                 crafting.columns, crafting.table.rows(), CraftLog.get().recent(),
                 water.columns, water.table.rows(),
                 passage.columns, passage.table.rows(),

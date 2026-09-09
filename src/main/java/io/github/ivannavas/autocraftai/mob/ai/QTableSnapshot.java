@@ -37,6 +37,7 @@ public record QTableSnapshot(
         String currentAction,
         String currentTiming,
         String currentCraft,
+        String driver,
         long stalls,
         List<String> craftActions,
         List<Row> craftRows,
@@ -134,7 +135,7 @@ public record QTableSnapshot(
 
     public static QTableSnapshot empty(List<String> actions) {
         return new QTableSnapshot(actions, List.of(), List.of(), List.of(), List.of(), "", 0.0, 0L,
-                "-", "", "", null, null, null, null, null, 0L,
+                "-", "", "", null, null, null, null, null, "", 0L,
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
                 List.of(), List.of());
     }

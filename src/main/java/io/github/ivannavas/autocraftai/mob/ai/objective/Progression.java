@@ -15,6 +15,7 @@ import io.github.ivannavas.autocraftai.mob.ai.FocusKind;
 import io.github.ivannavas.autocraftai.mob.ai.Recipes;
 import io.github.ivannavas.autocraftai.mob.ai.Sighting;
 import io.github.ivannavas.autocraftai.mob.goal.CraftAtTableGoal;
+import io.github.ivannavas.autocraftai.mob.goal.SmeltGoal;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.ClaudePlanner;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.ObjectivePlanner;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.Situation;
@@ -182,6 +183,8 @@ public final class Progression {
     private final Set<Resource> readied = EnumSet.noneOf(Resource.class);
     /** Whether the objective in hand has already had its early review for a shortage it cannot make up. */
     private boolean reviewedShort;
+    /** Whether the planner has been asked about this objective because the body is starving. */
+    private boolean reviewedStarving;
 
     /**
      * Told the name of each objective the moment it is reached. No-op until something wants it.
@@ -468,11 +471,17 @@ public final class Progression {
      * question about readiness is asked of this census rather than the bag's own.
      */
     public InventoryCensus effective(InventoryCensus held, LocalPlayer player) {
-        if (player == null || held.count(Resource.CRAFTING_TABLE) > 0
-                || !CraftAtTableGoal.tableInSight(player)) {
+        if (player == null) {
             return held;
         }
-        return held.atLeast(Resource.CRAFTING_TABLE, 1);
+        InventoryCensus counted = held;
+        if (counted.count(Resource.CRAFTING_TABLE) <= 0 && CraftAtTableGoal.tableInSight(player)) {
+            counted = counted.atLeast(Resource.CRAFTING_TABLE, 1);
+        }
+        if (counted.count(Resource.FURNACE) <= 0 && SmeltGoal.furnaceInSight(player)) {
+            counted = counted.atLeast(Resource.FURNACE, 1);
+        }
+        return counted;
     }
 
     /**
@@ -630,6 +639,7 @@ public final class Progression {
         stepsSinceProgress = 0;
         readied.clear();
         reviewedShort = false;
+        reviewedStarving = false;
     }
 
     /**
@@ -842,10 +852,19 @@ public final class Progression {
         // slow objective, it is one that needs another objective in front of it.
         boolean shortEarly = !reviewedShort && stepsOnCurrent >= REVIEW_WHEN_SHORT_STEPS
                 && shortOfWhatItCannotMake(context);
-        if (stepsOnCurrent < REVIEW_AFTER_STEPS && !shortEarly) {
+        // Starving is not a slow objective either: it is the one thing that ends the run whatever the
+        // objective was. Asked at once, once, unless the objective is already food.
+        boolean starving = !reviewedStarving && context.player() != null
+                && context.player().getFoodData().getFoodLevel() <= Situation.STARVING_AT
+                && Resource.FOOD.countIn(context.player().getInventory()) == 0
+                && current.scores().orElse(null) != Resource.FOOD;
+        if (stepsOnCurrent < REVIEW_AFTER_STEPS && !shortEarly && !starving) {
             return;
         }
-        if (shortEarly) {
+        if (starving) {
+            reviewedStarving = true;
+            log.info("Starving on {}; asking the planner for the way to food", current.name());
+        } else if (shortEarly) {
             reviewedShort = true;
             log.info("{} is short of something it cannot make; asking the planner to look at it",
                     current.name());

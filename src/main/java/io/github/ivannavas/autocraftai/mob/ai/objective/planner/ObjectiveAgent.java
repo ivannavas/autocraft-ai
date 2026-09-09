@@ -120,7 +120,10 @@ public class ObjectiveAgent extends AgentExecutor {
               sword or a shelter is worth more than iron.
             - Watch the hunger. Below about half a bar with nothing edible in the inventory it is urgent:
               ask for FOOD, and the player will hunt for it. A player that has food in the bag will eat it
-              on its own when it needs to, so do not ask for more of it than a couple of meals.
+              on its own when it needs to, so do not ask for more of it than a couple of meals. A
+              situation marked STARVING is the emergency: answer with the quickest route to food and
+              nothing else — FOOD when it is on the surface, ASCEND to the surface height when it is
+              underground — and keep the band wide enough that it can climb.
             - Readiness. The player is rewarded for already holding what an objective needs when the
               objective arrives, and charged every second it pursues a block its tools cannot break. So
               never set an objective whose tool is missing from the inventory — cobblestone with no

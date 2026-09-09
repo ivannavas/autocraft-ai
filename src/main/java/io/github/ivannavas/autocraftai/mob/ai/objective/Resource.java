@@ -212,6 +212,11 @@ public enum Resource {
         return AT_A_TABLE.contains(this);
     }
 
+    /** Whether this comes out of a furnace rather than a grid: a smelted thing needs one standing by. */
+    public boolean needsFurnace() {
+        return this == IRON;
+    }
+
     /**
      * What making one of these costs, one step back: each ingredient and how many of it.
      *

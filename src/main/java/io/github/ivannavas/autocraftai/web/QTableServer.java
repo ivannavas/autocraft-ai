@@ -76,13 +76,29 @@ public final class QTableServer {
 
     private final AtomicBoolean pending = new AtomicBoolean();
 
+    /** Whether log lines have arrived since the last "log" event. */
+    private final AtomicBoolean logsPending = new AtomicBoolean();
+
+    /** The newest log line already sent, so each event carries only what is new. Broadcaster thread only. */
+    private long logsSent;
+
+    /** Log events are batched: a burst of lines goes out as one event, at most this often. */
+    private static final long LOG_FLUSH_NANOS = TimeUnit.MILLISECONDS.toNanos(250);
+
     private final Settings settings;
 
     /** The endpoints. Null when the mod is running without them, which keeps the overlay standalone. */
     private final Control control;
 
-    private HttpServer server;
-    private Thread broadcaster;
+    private volatile HttpServer server;
+    private volatile Thread broadcaster;
+
+    /** The thread trying the port again after a failed start, or null. */
+    private volatile Thread retrier;
+
+    /** How often, and for how long, a port that is taken is tried again. Ten minutes in all. */
+    private static final long RETRY_MILLIS = 15_000;
+    private static final int MOST_RETRIES = 40;
 
     public QTableServer(List<String> actions, Settings settings, Control control) {
         this.latest = new AtomicReference<>(QTableSnapshot.empty(actions));
@@ -114,6 +130,43 @@ public final class QTableServer {
             log.error("Not starting the overlay or the control API: {}", refusal);
             return;
         }
+        if (!tryStart(true)) {
+            retryLater();
+        }
+    }
+
+    /**
+     * Keeps trying a port that was taken. Two games on one machine — a test client still shutting down
+     * while the next comes up — is the ordinary way the port is busy at start, and it is free again
+     * within seconds; without this the second game ran with no page at all until it was restarted.
+     */
+    private void retryLater() {
+        if (retrier != null) {
+            return;
+        }
+        Thread thread = daemon("autocraft-ai-overlay-retry").newThread(() -> {
+            try {
+                for (int attempt = 1; attempt <= MOST_RETRIES; attempt++) {
+                    Thread.sleep(RETRY_MILLIS);
+                    if (tryStart(false)) {
+                        log.info("The overlay came up on try {}: the port was free again", attempt + 1);
+                        return;
+                    }
+                }
+                log.warn("Port {} stayed busy for {} minutes; the overlay is not coming up this session",
+                        PORT, MOST_RETRIES * RETRY_MILLIS / 60_000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                retrier = null;
+            }
+        });
+        retrier = thread;
+        thread.start();
+    }
+
+    /** One attempt at binding and serving. @param loud whether a failure is worth a warning with its cause */
+    private boolean tryStart(boolean loud) {
         try {
             server = HttpServer.create(new InetSocketAddress(address(), PORT), 0);
             // Longest prefix wins, so the two specific paths are picked out of BASE before the
@@ -130,6 +183,14 @@ public final class QTableServer {
             // several seconds, and the event streams must not be behind it when it is.
             server.setExecutor(Executors.newFixedThreadPool(4, daemon("autocraft-ai-overlay")));
             server.start();
+            // The page shows the game's log: caught here rather than read off disk, and pushed as it
+            // arrives. Installed before the broadcaster so no line between the two is missed.
+            LogBuffer.install();
+            LogBuffer.get().onAppend(() -> {
+                if (logsPending.compareAndSet(false, true)) {
+                    published.release();
+                }
+            });
             broadcaster = daemon("autocraft-ai-overlay-events").newThread(this::broadcast);
             broadcaster.start();
             log.info("Q-table overlay at http://{}:{}{} — add it to OBS as a browser source",
@@ -138,9 +199,16 @@ public final class QTableServer {
                 log.info("Control endpoints on the same port under {} ({})", BASE,
                         settings.token().isEmpty() ? "loopback only, no token set" : "bearer token required");
             }
+            return true;
         } catch (IOException e) {
-            log.warn("Could not start the q-table overlay on port {}; carrying on without it", PORT, e);
+            if (loud) {
+                log.warn("Could not start the q-table overlay on port {}; trying again every {} s for a while",
+                        PORT, RETRY_MILLIS / 1000, e);
+            } else {
+                log.debug("Port {} still busy: {}", PORT, e.toString());
+            }
             server = null;
+            return false;
         }
     }
 
@@ -161,6 +229,10 @@ public final class QTableServer {
     }
 
     public void stop() {
+        Thread retrying = retrier;
+        if (retrying != null) {
+            retrying.interrupt();
+        }
         if (broadcaster != null) {
             broadcaster.interrupt();
             broadcaster = null;
@@ -182,21 +254,48 @@ public final class QTableServer {
      */
     private void broadcast() {
         long nextStats = System.nanoTime();
+        long lastLogs = 0;
         try {
             while (!Thread.currentThread().isInterrupted()) {
-                long wait = nextStats - System.nanoTime();
-                if (wait > 0 && published.tryAcquire(wait, TimeUnit.NANOSECONDS)) {
-                    // Cleared before the read, never after: a publish landing in between then raises the
-                    // flag again and goes out next time round, where the other order would drop it.
-                    pending.set(false);
-                    send("qtable", Json.of(latest.get()));
+                long now = System.nanoTime();
+                if (logsPending.get() && now - lastLogs >= LOG_FLUSH_NANOS) {
+                    logsPending.set(false);
+                    lastLogs = now;
+                    flushLogs();
                     continue;
                 }
-                nextStats = System.nanoTime() + STATS_INTERVAL_NANOS;
-                send("stats", Json.of(Stats.sample()));
+                // Sleep until the next beat: the stats tick, or the log batch if one is waiting, or
+                // sooner if a snapshot or a line comes in.
+                long until = nextStats;
+                if (logsPending.get()) {
+                    until = Math.min(until, lastLogs + LOG_FLUSH_NANOS);
+                }
+                long wait = until - now;
+                if (wait > 0 && published.tryAcquire(wait, TimeUnit.NANOSECONDS)) {
+                    if (pending.compareAndSet(true, false)) {
+                        send("qtable", Json.of(latest.get()));
+                    }
+                    continue;
+                }
+                if (System.nanoTime() >= nextStats) {
+                    nextStats = System.nanoTime() + STATS_INTERVAL_NANOS;
+                    send("stats", Json.of(Stats.sample()));
+                }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    /** Everything logged since the last event, as one event. */
+    private void flushLogs() {
+        List<LogBuffer.Entry> fresh = LogBuffer.get().since(logsSent, 400);
+        if (fresh.isEmpty()) {
+            return;
+        }
+        logsSent = fresh.get(fresh.size() - 1).seq();
+        if (!subscribers.isEmpty()) {
+            send("log", Json.logs(fresh));
         }
     }
 

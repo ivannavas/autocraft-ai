@@ -85,6 +85,8 @@ public record Situation(
     private static final long DAWN = 23000L;
     /** A full hunger bar, which the game has no getter for because it is never anything else. */
     private static final int MAX_FOOD = 20;
+    /** At or below this the situation says STARVING, and a fresh question is worth asking. */
+    public static final int STARVING_AT = 3;
     /** Said when the game has not settled on one, which is never in practice. */
     private static final String DEFAULT_LANGUAGE = "en_us";
 
@@ -192,7 +194,7 @@ public record Situation(
     public String signature() {
         return dimension + '|' + biome + '|' + (night ? "night" : "day")
                 + '|' + (health < maxHealth / 2 ? "hurt" : "ok")
-                + '|' + (food < 10 ? "hungry" : "fed")
+                + '|' + (food <= STARVING_AT ? "starving" : food < 10 ? "hungry" : "fed")
                 + '|' + (hostilesNearby > 0 ? "threat" : "safe")
                 + '|' + tierReached() + '|' + objective
                 + '|' + achieved.size() + ':' + (achieved.isEmpty() ? "-" : achieved.get(achieved.size() - 1))
@@ -228,6 +230,11 @@ public record Situation(
                 .append(", light ").append(lightLevel).append("/15\n");
         text.append(String.format(Locale.ROOT, "Health: %.1f/%.1f%n", health, maxHealth));
         text.append(String.format(Locale.ROOT, "Hunger: %d/%d%n", food, maxFood));
+        if (food <= STARVING_AT) {
+            text.append("STARVING: the hunger bar is almost empty. If there is nothing edible in the inventory"
+                    + " this comes before everything else: the objective has to be the quickest way to food"
+                    + " — the surface and its animals, or FOOD itself when it is already up there.\n");
+        }
         text.append("Height Y: ").append(depth).append('\n');
         text.append("Hostiles in sight: ").append(hostilesNearby).append('\n');
         text.append("Inventory: ").append(carrying.isEmpty() ? "empty" : String.join(", ", carrying))

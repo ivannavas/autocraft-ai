@@ -57,12 +57,24 @@ public record Plan(Phase objective, Bounds bounds, Map<Resource, Integer> needs,
      */
     private static Map<Resource, Integer> withTable(Phase objective, Map<Resource, Integer> needs) {
         Resource own = objective.scores().orElse(null);
-        if (own == null || !own.needsTable() || needs.containsKey(Resource.CRAFTING_TABLE)) {
+        if (own == null) {
             return needs;
         }
         Map<Resource, Integer> both = new java.util.LinkedHashMap<>(needs);
-        both.put(Resource.CRAFTING_TABLE, 1);
-        return Map.copyOf(both);
+        // The same for the furnace: iron is asked for with the ore's band and the fuel held back, and
+        // the furnace that turns the ore into the ingot forgotten every time.
+        if (own.needsFurnace()) {
+            both.putIfAbsent(Resource.FURNACE, 1);
+        }
+        // And the table for anything on the list that is made at one — the furnace itself included —
+        // not only for the objective's own item: a furnace on the list with no table anywhere was a
+        // craft that ran in the two-by-two grid forever, where a furnace cannot be made.
+        boolean atATable = own.needsTable()
+                || both.keySet().stream().anyMatch(Resource::needsTable);
+        if (atATable) {
+            both.putIfAbsent(Resource.CRAFTING_TABLE, 1);
+        }
+        return both.size() == needs.size() ? needs : Map.copyOf(both);
     }
 
     /**

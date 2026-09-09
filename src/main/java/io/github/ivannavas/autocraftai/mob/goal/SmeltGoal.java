@@ -252,8 +252,13 @@ public final class SmeltGoal implements CraftingGoal {
 
     /** A furnace within walking distance, or one the body set up earlier and walked away from. */
     private BlockPos furnace(MobBody body) {
-        Level level = body.level();
-        BlockPos origin = body.player().blockPosition();
+        return nearbyFurnace(body.player());
+    }
+
+    /** The same lookup for anyone holding only the player: the census counts a furnace in sight as held. */
+    public static BlockPos nearbyFurnace(LocalPlayer player) {
+        Level level = player.level();
+        BlockPos origin = player.blockPosition();
         BlockPos best = null;
         double bestDistance = Double.MAX_VALUE;
         for (BlockPos pos : BlockPos.betweenClosed(
@@ -262,14 +267,18 @@ public final class SmeltGoal implements CraftingGoal {
             if (!level.isLoaded(pos) || !level.getBlockState(pos).is(Blocks.FURNACE)) {
                 continue;
             }
-            double distance = Vec3.atCenterOf(pos).distanceToSqr(body.player().position());
+            double distance = Vec3.atCenterOf(pos).distanceToSqr(player.position());
             if (distance < bestDistance) {
                 bestDistance = distance;
                 best = pos.immutable();
             }
         }
-        return best != null ? best
-                : Placed.get().nearestOwn(level, body.player().position(), Blocks.FURNACE);
+        return best != null ? best : Placed.get().nearestOwn(level, player.position(), Blocks.FURNACE);
+    }
+
+    /** Whether there is a furnace to smelt at: one standing within range, or one in the hotbar. */
+    public static boolean furnaceInSight(LocalPlayer player) {
+        return player != null && (nearbyFurnace(player) != null || hotbarSlotWithFurnace(player) >= 0);
     }
 
     private static int hotbarSlotWithFurnace(LocalPlayer player) {

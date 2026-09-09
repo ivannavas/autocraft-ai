@@ -90,6 +90,8 @@ public record Surroundings(List<LivingEntity> hostiles, String threat, int count
 
     /** How far out hostiles are counted. What a skeleton shoots from. */
     private static final double THREAT_RANGE = 16.0;
+    /** Within this, a hostile counts even unseen: it is round the corner, not behind the rock. */
+    private static final double CLOSE_ANYWAY = 3.0;
     /** Light below which the body's own spot counts as dark: what mobs spawn in. */
     private static final int DARK_BELOW = 8;
     /** How far under the surface a body with the sky over it is still in a pit. */
@@ -115,9 +117,14 @@ public record Surroundings(List<LivingEntity> hostiles, String threat, int count
         Level level = player.level();
         BlockPos feet = player.blockPosition();
 
+        // Only what the body can see, or what is right on top of it. Underground the box reaches into
+        // every cave within sixteen blocks, and three mobs behind solid rock had the tactics layer
+        // choosing FIGHT against things it could not get to, then RETREAT from them, then FIGHT again,
+        // while the coal in front of it went unmined.
         List<LivingEntity> hostiles = new ArrayList<>();
         for (Entity candidate : level.getEntities(player, player.getBoundingBox().inflate(THREAT_RANGE),
-                entity -> entity instanceof Enemy && entity instanceof LivingEntity living && living.isAlive())) {
+                entity -> entity instanceof Enemy && entity instanceof LivingEntity living && living.isAlive()
+                        && (player.distanceTo(living) < CLOSE_ANYWAY || player.hasLineOfSight(living)))) {
             hostiles.add((LivingEntity) candidate);
         }
         hostiles.sort(Comparator.comparingInt(Surroundings::danger)

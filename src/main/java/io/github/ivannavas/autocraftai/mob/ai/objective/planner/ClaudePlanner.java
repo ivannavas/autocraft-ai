@@ -83,7 +83,8 @@ public final class ClaudePlanner implements ObjectivePlanner {
     /** The model this asks. Deliberately the strongest one: it is asked once an objective, not once a tick. */
     private static final String MODEL = "claude-opus-5";
     private static final String API_URL = "https://api.anthropic.com/v1/messages";
-    private static final int MAX_TOKENS = 1024;
+    /** Room for the thinking as well as the answer; see {@code ClaudeMentor#MAX_TOKENS}. */
+    private static final int MAX_TOKENS = 2500;
     private static final int TIMEOUT_SECONDS = 30;
     /** One transcript per world, so the planner remembers what it has already asked for in this one. */
     private static final String CONVERSATION = "run";

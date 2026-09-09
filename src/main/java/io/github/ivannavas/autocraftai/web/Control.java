@@ -5,6 +5,9 @@ import java.io.OutputStream;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.Map;
+import java.util.List;
+import io.github.ivannavas.autocraftai.mob.ai.skill.Skills;
 import java.util.OptionalLong;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -128,6 +131,8 @@ public final class Control {
                 case QTableServer.BASE + "status" -> require(exchange, method, "GET", this::status);
                 case QTableServer.BASE + "clips" -> require(exchange, method, "GET", this::listClips);
                 case QTableServer.BASE + "planner" -> require(exchange, method, "GET", this::planner);
+                case QTableServer.BASE + "logs" -> require(exchange, method, "GET", this::logs);
+                case QTableServer.BASE + "skills" -> require(exchange, method, "GET", this::skills);
                 case QTableServer.BASE + "learning/reset" -> require(exchange, method, "POST", this::resetLearning);
                 case QTableServer.BASE + "world/new" -> require(exchange, method, "POST", this::startWorld);
                 case QTableServer.BASE + "world/resume" -> require(exchange, method, "POST", this::resumeWorld);
@@ -202,6 +207,11 @@ public final class Control {
                 + ",\"z\":" + (inWorld ? client.player.getBlockZ() : 0)
                 + ",\"biome\":" + (inWorld ? quote(client.level.getBiome(client.player.blockPosition())
                         .getRegisteredName()) : "null")
+                // The time of day in ticks (0 dawn, 6000 noon, 13000 dusk, 18000 midnight) and the
+                // world's own name, for a page read without the game on screen.
+                + ",\"dayTime\":" + (inWorld ? client.level.getDefaultClockTime() % 24000L : -1)
+                + ",\"worldName\":" + (client.getSingleplayerServer() != null
+                        ? quote(client.getSingleplayerServer().getWorldData().getLevelName()) : "null")
                 + ",\"world\":" + quote(newWorld.state())
                 + ",\"worldBusy\":" + newWorld.busy()
                 // Whether the run is down because it was told to, rather than because something broke.
@@ -283,6 +293,46 @@ public final class Control {
      * whole reply, and the snapshot goes out on every decision. The snapshot carries
      * {@code plannerRevision} so a reader knows when this is worth asking for again.
      */
+    /**
+     * The log lines kept in memory: {@code ?after=N} for what came after a sequence number, {@code ?limit=N}
+     * for at most that many of the newest. The page asks once and then follows the event stream.
+     */
+    private void logs(HttpExchange exchange) throws IOException {
+        Map<String, String> query = query(exchange);
+        long after = 0;
+        int limit = 600;
+        try {
+            after = Long.parseLong(query.getOrDefault("after", "0"));
+            limit = Math.max(1, Math.min(3000, Integer.parseInt(query.getOrDefault("limit", "600"))));
+        } catch (NumberFormatException e) {
+            // A bad number is a default, not a refusal: the page is the only caller.
+        }
+        List<LogBuffer.Entry> entries = LogBuffer.get().since(after, limit);
+        reply(exchange, 200, "{\"ok\":true,\"last\":" + LogBuffer.get().last()
+                + ",\"entries\":" + Json.logs(entries) + "}");
+    }
+
+    /** Every skill written so far, live or retired, with its record. */
+    private void skills(HttpExchange exchange) throws IOException {
+        reply(exchange, 200, "{\"ok\":true,\"skills\":" + Skills.get().json() + "}");
+    }
+
+    /** The query string as a map; the values are URL-decoded. */
+    private static Map<String, String> query(HttpExchange exchange) {
+        Map<String, String> found = new java.util.HashMap<>();
+        String raw = exchange.getRequestURI().getRawQuery();
+        if (raw == null || raw.isEmpty()) {
+            return found;
+        }
+        for (String pair : raw.split("&")) {
+            int eq = pair.indexOf('=');
+            String key = java.net.URLDecoder.decode(eq < 0 ? pair : pair.substring(0, eq), StandardCharsets.UTF_8);
+            String value = eq < 0 ? "" : java.net.URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
+            found.put(key, value);
+        }
+        return found;
+    }
+
     private void planner(HttpExchange exchange) throws IOException {
         reply(exchange, 200, "{\"ok\":true,\"revision\":" + PlannerLog.get().revision()
                 + ",\"entries\":" + Json.planner(PlannerLog.get().recent()) + "}");
