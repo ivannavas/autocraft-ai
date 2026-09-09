@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -19,6 +20,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import io.github.ivannavas.autocraftai.mob.ai.skill.Skill;
+import io.github.ivannavas.autocraftai.mob.ai.skill.Skills;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Ascend;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Build;
@@ -236,6 +239,7 @@ public final class ClaudePlanner implements ObjectivePlanner {
                 log.info("Dropping a plan that arrived after its world was left");
                 return;
             }
+            takeSkills(reply);
             Optional<Phase> errand = parse(reply);
             if (errand.isPresent()) {
                 // Built before it is logged: an empty list is filled in from the objective, and the line
@@ -275,6 +279,28 @@ public final class ClaudePlanner implements ObjectivePlanner {
             PlannerLog.get().failed(shorten(e.getMessage()), null);
             rest(shorten(e.getMessage()));
         }
+    }
+
+    /**
+     * The skills the reply hands the player, checked and offered to the run. A skill that does not parse
+     * is logged with what was wrong and dropped; the objective beside it is taken all the same.
+     */
+    private void takeSkills(String reply) {
+        object(reply).map(node -> node.path("skills")).filter(JsonNode::isArray).ifPresent(listed -> {
+            Set<String> taken = Skills.taken();
+            for (JsonNode entry : listed) {
+                try {
+                    Skill skill = Skill.parse(entry, taken);
+                    taken.add(skill.name());
+                    Skills.get().offer(skill);
+                    log.info("The planner wrote a skill: {}", skill.describe());
+                    PlannerLog.get().plannerNoted("new skill " + skill.describe());
+                } catch (IllegalArgumentException e) {
+                    log.warn("The planner's skill was refused: {}", e.getMessage());
+                    PlannerLog.get().plannerNoted("skill refused: " + e.getMessage());
+                }
+            }
+        });
     }
 
     /** Whether the reply is the planner saying the objective it was asked about is still the right one. */

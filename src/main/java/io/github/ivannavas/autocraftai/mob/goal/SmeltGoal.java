@@ -151,7 +151,9 @@ public final class SmeltGoal implements CraftingGoal {
 
     @Override
     public void stop(MobBody body) {
-        gaveUp = !smelted;
+        // Given up only when this goal ran out of time itself. Being displaced by something with a
+        // higher claim on the legs is not giving up — see CraftAtTableGoal for what calling it that cost.
+        gaveUp = !smelted && ticksRunning >= GIVE_UP_TICKS;
         body.moveControl().stop();
         closeFurnace(body.player());
     }

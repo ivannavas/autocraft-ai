@@ -35,6 +35,8 @@ import net.minecraft.world.phys.Vec3;
  * @param aheadBreakable whether what is ahead could be broken with what it has, in reasonable time
  * @param ceilingBreakable the same for what is overhead
  * @param canDig         whether the block under its feet could be broken without opening a drop
+ * @param canStack       whether a block could go where its feet are: not while it stands in a slab, a
+ *                       carpet or anything else a placed block will not push aside
  * @param aheadBlocks    the solid blocks in its way ahead, head height first, for breaking through
  * @param ceilingBlocks  the solid blocks over its head, for breaking upward
  * @param under          the block under its feet
@@ -46,8 +48,8 @@ import net.minecraft.world.phys.Vec3;
  */
 public record Obstruction(Wanted wanted, Ahead ahead, Above above, boolean hasBlocks,
                           boolean aheadBreakable, boolean ceilingBreakable, boolean canDig,
-                          List<BlockPos> aheadBlocks, List<BlockPos> ceilingBlocks, BlockPos under,
-                          double facing, int side, Vec3 target, BlockPos sought) {
+                          boolean canStack, List<BlockPos> aheadBlocks, List<BlockPos> ceilingBlocks,
+                          BlockPos under, double facing, int side, Vec3 target, BlockPos sought) {
 
     /** Which way the body is trying to go. */
     public enum Wanted {
@@ -120,11 +122,16 @@ public record Obstruction(Wanted wanted, Ahead ahead, Above above, boolean hasBl
         BlockPos headAhead = feetAhead.above();
         BlockPos head = feet.above();
 
-        boolean feetSolid = solid(level, feetAhead);
-        boolean headSolid = solid(level, headAhead);
-        boolean overStepSolid = solid(level, headAhead.above());
+        boolean feetSolid = obstructs(level, feetAhead);
+        boolean headSolid = obstructs(level, headAhead);
+        boolean overStepSolid = obstructs(level, headAhead.above());
+        // A fence, a wall or a shut gate is one block on the map and a block and a half to the legs:
+        // the hop that clears a step does not clear it, and read as a step it was a step the body hopped
+        // at for the rest of the commitment while the tree stood behind it. What is in the way is
+        // measured by what the legs meet, not by what the map says is there.
+        boolean tall = feetSolid && collisionTop(level, feetAhead) > 1.0;
         Ahead ahead;
-        if (headSolid || (feetSolid && overStepSolid)) {
+        if (headSolid || tall || (feetSolid && overStepSolid)) {
             ahead = Ahead.WALL;
         } else if (feetSolid) {
             ahead = Ahead.STEP;
@@ -150,9 +157,22 @@ public record Obstruction(Wanted wanted, Ahead ahead, Above above, boolean hasBl
         return new Obstruction(wanted, ahead, ceiling.isEmpty() ? Above.OPEN : Above.CEILING, hasBlocks,
                 !wall.isEmpty() && wall.stream().allMatch(pos -> breakable(player, pos)),
                 !ceiling.isEmpty() && ceiling.stream().allMatch(pos -> breakable(player, pos)),
-                Perception.canDigDown(player), wall, ceiling, feet.below().immutable(),
+                Perception.canDigDown(player), canStack(level, feet), wall, ceiling,
+                feet.below().immutable(),
                 Math.toRadians(player.getYRot()), ThreadLocalRandom.current().nextBoolean() ? 1 : -1,
                 target, null);
+    }
+
+    /**
+     * Whether a block could be put where the feet are.
+     *
+     * <p>Pillaring drops a block into the space the feet have just left, and that only works when the
+     * space is one a placed block goes into: air, grass, a snow layer. A body standing on a bottom slab
+     * has its feet inside the slab's own block, and every click to pillar there was refused — for as
+     * long as the lesson that said to pillar stood, which was for ever.
+     */
+    private static boolean canStack(Level level, BlockPos feet) {
+        return level.isLoaded(feet) && level.getBlockState(feet).canBeReplaced();
     }
 
     /**
@@ -184,7 +204,8 @@ public record Obstruction(Wanted wanted, Ahead ahead, Above above, boolean hasBl
                 hasBlocks,
                 !between.isEmpty() && between.stream().allMatch(pos -> breakable(player, pos)),
                 !ceiling.isEmpty() && ceiling.stream().allMatch(pos -> breakable(player, pos)),
-                Perception.canDigDown(player), between, ceiling, player.blockPosition().below().immutable(),
+                Perception.canDigDown(player), canStack(level, player.blockPosition()), between, ceiling,
+                player.blockPosition().below().immutable(),
                 Math.toRadians(player.getYRot()), ThreadLocalRandom.current().nextBoolean() ? 1 : -1,
                 Vec3.atCenterOf(sought), sought.immutable());
     }
@@ -281,6 +302,21 @@ public record Obstruction(Wanted wanted, Ahead ahead, Above above, boolean hasBl
 
     private static boolean solid(Level level, BlockPos pos) {
         return level.isLoaded(pos) && level.getBlockState(pos).isSolid();
+    }
+
+    /**
+     * Whether the body cannot walk through this block: anything with a collision box, which is what
+     * the legs are stopped by. Solid by the map's word is not the test — a fence and a pane of glass
+     * are thin on the map and stop a body dead, and a tall grass is drawn as a block and does not.
+     */
+    private static boolean obstructs(Level level, BlockPos pos) {
+        return level.isLoaded(pos) && !level.getBlockState(pos).getCollisionShape(level, pos).isEmpty();
+    }
+
+    /** How high the block's collision box reaches above its own base: one for a cube, more for a fence. */
+    private static double collisionTop(Level level, BlockPos pos) {
+        var shape = level.getBlockState(pos).getCollisionShape(level, pos);
+        return shape.isEmpty() ? 0.0 : shape.max(Direction.Axis.Y);
     }
 
     /** Whether the ground ahead is far enough down that walking on would be a fall. */

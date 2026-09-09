@@ -43,8 +43,50 @@ public record Plan(Phase objective, Bounds bounds, Map<Resource, Integer> needs,
 
     public Plan {
         bounds = bounds == null ? Bounds.anywhere() : bounds;
-        needs = union(objective.needs(), needs);
+        needs = withTable(objective, union(objective.needs(), needs));
         reserved = merge(objective, reserved);
+    }
+
+    /**
+     * The list with a crafting table on it, for an objective that is made at one.
+     *
+     * <p>The planner lists planks and sticks for a pickaxe and forgets the table every time, and the run
+     * was "prepared" for a stone pickaxe with no table within a hundred blocks. A table standing within
+     * reach counts as held — see {@code Progression#effective} — so this costs nothing when there is one,
+     * and says exactly what is short when there is not.
+     */
+    private static Map<Resource, Integer> withTable(Phase objective, Map<Resource, Integer> needs) {
+        Resource own = objective.scores().orElse(null);
+        if (own == null || !own.needsTable() || needs.containsKey(Resource.CRAFTING_TABLE)) {
+            return needs;
+        }
+        Map<Resource, Integer> both = new java.util.LinkedHashMap<>(needs);
+        both.put(Resource.CRAFTING_TABLE, 1);
+        return Map.copyOf(both);
+    }
+
+    /**
+     * The planner's reserve, less what the objective's own recipe consumes.
+     *
+     * <p>The brief says not to reserve what the objective is meant to consume, and the planner did it
+     * anyway: three planks and two sticks put aside while asking for a sword, which is two planks and a
+     * stick. A reserve is what may not be spent, so the sword's share is spent by the objective and what
+     * is kept is what the planner wanted left <em>after</em> it. Without this a body with seven planks
+     * could not make a sword that costs two, and was shot standing next to the table.
+     */
+    private static Map<Resource, Integer> lessOwnRecipe(Phase objective, Map<Resource, Integer> kept) {
+        Resource own = objective.scores().orElse(null);
+        if (own == null || kept.isEmpty() || own.ingredients().isEmpty()) {
+            return kept;
+        }
+        Map<Resource, Integer> left = new java.util.LinkedHashMap<>();
+        kept.forEach((resource, amount) -> {
+            int remaining = amount - own.ingredients().getOrDefault(resource, 0);
+            if (remaining > 0) {
+                left.put(resource, remaining);
+            }
+        });
+        return Map.copyOf(left);
     }
 
     /**
@@ -73,10 +115,11 @@ public record Plan(Phase objective, Bounds bounds, Map<Resource, Integer> needs,
      */
     private static Reserve merge(Phase objective, Reserve told) {
         Map<Resource, Integer> own = objective.reserved();
-        if (told == null || told.isEmpty()) {
+        Map<Resource, Integer> kept = told == null ? Map.of() : lessOwnRecipe(objective, told.kept());
+        if (kept.isEmpty()) {
             return Reserve.fromCrafts(own);
         }
-        return own.isEmpty() ? told : new Reserve(told.kept(), own);
+        return own.isEmpty() ? new Reserve(kept) : new Reserve(kept, own);
     }
 
     /** A plan with no opinion about height and no list but the objective's own, which is most of them. */

@@ -1,5 +1,6 @@
 package io.github.ivannavas.autocraftai.mob.ai.objective.planner;
 
+import io.github.ivannavas.autocraftai.mob.ai.skill.Skill;
 import io.github.ivannavas.sprout.annotation.Agent;
 import io.github.ivannavas.sprout.anthropic.executor.AnthropicModelExecutor;
 import io.github.ivannavas.sprout.executor.AgentExecutor;
@@ -194,6 +195,22 @@ public class ObjectiveAgent extends AgentExecutor {
             Every "target" is one of the words listed under its own shape. They are the only words the
             player understands: an objective naming anything else is thrown away, and the player carries on
             with whatever it was already doing.
+
+            You may also hand the player a skill it will need for the objective, as "skills": [ ... ] beside
+            the objective. The player's built-in moves gather, walk, dig, fight, place blocks and craft
+            the plan's resources; anything else it has to be shown — loading a furnace, using a bucket,
+            throwing an ender pearl, opening a chest, a way of building it has no move for. A skill you
+            write becomes a column the player learns when to use, and is kept across objectives; the
+            skills written so far are listed in the situation when there are any, so do not write one
+            that exists. Write one only when the objective genuinely needs it, at most one per answer.
+            """ + Skill.LANGUAGE + """
+            A CRAFT skill that makes one of the plan's resources should say so with "makes", and its
+            "when" should say what it needs in the bag and nearby, e.g.
+              {"name": "SMELT_IRON", "layer": "CRAFT", "makes": "IRON", "prior": 4,
+               "when": "has(RAW_IRON) > 0 and (has(COAL) > 0 or has(PLANKS) > 0) and near(furnace) and menu == NONE",
+               "steps": [{"walk": "furnace"}, {"use": "furnace"}, {"put": "RAW_IRON"}, {"put": "COAL"},
+                         {"wait": 220}, {"take": "output"}, {"close": true}],
+               "reason": "smelt raw iron in the furnace"}
 
             Answer with a JSON object ONLY, no text around it and no code fences:
             {"objective": "<SHAPE>", "target": "<TARGET FOR THAT SHAPE>", "amount": <integer>,

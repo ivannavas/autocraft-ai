@@ -66,7 +66,19 @@ final class Pillar {
         LocalPlayer player = body.player();
         // Standing still: the block has to go under the body, not wherever it drifted to.
         body.moveControl().stop();
-        BlockPos support = supportBelow(body, player.blockPosition());
+        BlockPos feet = player.blockPosition();
+        if (player.onGround()) {
+            // On the ground the support is the block under the feet and nothing else. Searching
+            // further down found the floor under a slab the body was standing on, and put the block
+            // in the gap under the slab — three times, thirty seconds apart, with no height gained.
+            // Feet inside a block that is not a whole one (a bottom slab) are feet in the space the
+            // new block would need, and there is no building there.
+            if (!body.level().getBlockState(feet).getCollisionShape(body.level(), feet).isEmpty()
+                    || !supports(body, feet.below())) {
+                return Step.NO_SUPPORT;
+            }
+        }
+        BlockPos support = player.onGround() ? feet.below() : supportBelow(body, feet);
         if (support == null) {
             return Step.NO_SUPPORT;
         }
@@ -98,14 +110,29 @@ final class Pillar {
         return Step.PLACED;
     }
 
-    /** The highest solid block under the feet within reach, which is the one a new block goes on top of. */
+    /**
+     * The highest block under the feet within reach that a block could go on top of, for a body in
+     * the air mid-jump: the one it left and will land back on.
+     */
     private static BlockPos supportBelow(MobBody body, BlockPos feet) {
         for (int drop = 1; drop <= SUPPORT_SEARCH; drop++) {
             BlockPos candidate = feet.below(drop);
-            if (body.level().isLoaded(candidate) && body.level().getBlockState(candidate).isSolid()) {
+            if (supports(body, candidate)) {
                 return candidate;
             }
         }
         return null;
+    }
+
+    /**
+     * Whether a block could be put on top of this one: its collision box reaches the top of its space.
+     * A whole block does, and so do a top slab and a fence; a bottom slab does not, and nor does air.
+     */
+    private static boolean supports(MobBody body, BlockPos pos) {
+        if (!body.level().isLoaded(pos)) {
+            return false;
+        }
+        var shape = body.level().getBlockState(pos).getCollisionShape(body.level(), pos);
+        return !shape.isEmpty() && shape.max(net.minecraft.core.Direction.Axis.Y) >= 1.0 - 1.0E-6;
     }
 }

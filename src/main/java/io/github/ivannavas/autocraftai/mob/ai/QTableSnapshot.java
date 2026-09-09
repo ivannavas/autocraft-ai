@@ -44,7 +44,9 @@ public record QTableSnapshot(
         List<String> waterActions,
         List<Row> waterRows,
         List<String> passageActions,
-        List<Row> passageRows) {
+        List<Row> passageRows,
+        List<String> tacticActions,
+        List<Row> tacticRows) {
 
     public QTableSnapshot {
         actions = List.copyOf(actions);
@@ -60,6 +62,8 @@ public record QTableSnapshot(
         waterRows = List.copyOf(waterRows);
         passageActions = List.copyOf(passageActions);
         passageRows = List.copyOf(passageRows);
+        tacticActions = List.copyOf(tacticActions);
+        tacticRows = List.copyOf(tacticRows);
     }
 
     /** One state and what it believes each action is worth. */
@@ -131,6 +135,7 @@ public record QTableSnapshot(
     public static QTableSnapshot empty(List<String> actions) {
         return new QTableSnapshot(actions, List.of(), List.of(), List.of(), List.of(), "", 0.0, 0L,
                 "-", "", "", null, null, null, null, null, 0L,
-                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of());
     }
 }

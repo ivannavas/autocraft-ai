@@ -1,5 +1,6 @@
 package io.github.ivannavas.autocraftai.mob.ai.objective.mentor;
 
+import io.github.ivannavas.autocraftai.mob.ai.skill.Skill;
 import io.github.ivannavas.sprout.annotation.Agent;
 import io.github.ivannavas.sprout.anthropic.executor.AnthropicModelExecutor;
 import io.github.ivannavas.sprout.executor.AgentExecutor;
@@ -52,12 +53,36 @@ public class MentorAgent extends AgentExecutor {
                 teach the GOAL table instead — APPROACH/MINE, or FLEE.
 
             CRAFT choices - what to make meanwhile (the row is the shopping situation you are given):
-              NOTHING, PLANKS, STICK, CRAFTING_TABLE, SWORD, PICKAXE, STONE_PICKAXE, FURNACE, IRON.
+              NOTHING, PLANKS, STICK, CRAFTING_TABLE, SWORD, PICKAXE, STONE_PICKAXE, FURNACE, IRON, and
+              any craft skill on the situation's list of what it can make now.
               A craft at a table or a furnace WALKS the body there and holds it, outranking every goal
               move, until it finishes or gives up. Read the "driving the body" line: if such a craft is
               holding the body and it is not what the plan needs right now, the block is that craft, not
               the terrain - teach that craft a large negative value and NOTHING a positive one, and leave
               the other tables alone.
+
+            TACTICS - what to do about the surroundings as a whole (the row is the surroundings key you
+            are given: hostiles and how many, nearest, armed or not, health, cover, light, blocks):
+              CARRY_ON (the surroundings are not the problem), FIGHT (attack the most dangerous hostile
+              first - the skeleton before the zombie, never a creeper), RETREAT (run from the nearest),
+              TOWER (stack three blocks under its feet and stay up; needs three blocks and room above),
+              WALL_OFF (two blocks between it and the nearest hostile; needs two blocks), HOLE_UP (dig two
+              down and cap the hole with the dirt; the classic way through a night with nothing in hand),
+              DAYLIGHT (get back under the open sky: break the ceiling, stack up, cut steps into the pit
+              wall - for a body trapped under a roof or down a hole with an objective that lives on the
+              surface).
+              Teach these when the block is really about survival or about being trapped: a body with no
+              sword and a skeleton on it at night should HOLE_UP or TOWER, not fight; a body in a cave with
+              the objective on the surface and no way it has found should DAYLIGHT; a body being chased in
+              a corridor with blocks in hand should WALL_OFF.
+
+            WRITING A NEW MOVE. When no move on the lists is the way out, write one as a skill and it
+            becomes a column of its table from then on: the run adds it, seeds it in this row with the
+            value you give, and learns when it pays. Write at most one per answer, only when the lists
+            really lack it, and never one that already exists (the list of skills written so far is in
+            the situation, with how often each was used and finished; a skill that never finishes is
+            retired).
+            """ + Skill.LANGUAGE + """
 
             If a previous lesson for this same block is quoted and it is still stuck, do not repeat it;
             teach a different way out.
@@ -84,6 +109,8 @@ public class MentorAgent extends AgentExecutor {
             {"lessons": [{"action": "<GOAL MOVE>", "value": <number>}, ...],
              "passage": [{"action": "<PASSAGE MOVE>", "value": <number>}, ...],
              "craft": [{"action": "<CRAFT CHOICE>", "value": <number>}, ...],
+             "tactic": [{"action": "<TACTIC>", "value": <number>}, ...],
+             "skill": <a skill object as above, or leave the field out>,
              "replan": "<empty, or one sentence in English saying why the objective should be given up>",
              "reason": "<one short sentence, in the player's language named in the situation>"}
             Any list may be empty, and "replan" is empty unless the objective is the problem. Give a large

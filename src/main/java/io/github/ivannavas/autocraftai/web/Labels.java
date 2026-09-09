@@ -9,6 +9,7 @@ import java.util.Optional;
 import io.github.ivannavas.autocraftai.mob.ai.CraftChoice;
 import io.github.ivannavas.autocraftai.mob.ai.FocusKind;
 import io.github.ivannavas.autocraftai.mob.ai.GoalAction;
+import io.github.ivannavas.autocraftai.mob.ai.Tactic;
 import io.github.ivannavas.autocraftai.mob.ai.Ground;
 import io.github.ivannavas.autocraftai.mob.ai.Passage;
 import io.github.ivannavas.autocraftai.mob.ai.Perception;
@@ -63,6 +64,11 @@ final class Labels {
             "goals", "crafts", "planner", "placement", "position",
             "water", "timing", "head.timing", "empty.timing", "empty.folders", "pursuit",
             "passage", "head.passage", "empty.passage",
+            "tactics", "head.tactics", "empty.tactics",
+            "threat.NONE", "threat.ZOMBIE", "threat.SKELETON", "threat.CREEPER", "threat.SPIDER",
+            "threat.OTHER", "threat.MANY",
+            "cover.SKY", "cover.PIT", "cover.ROOF", "light.DAY", "light.NIGHT", "light.DARK",
+            "qualifier.armed", "qualifier.unarmed",
             "want.UP", "want.DOWN", "want.FLAT", "want.TOWARD",
             "ahead.NONE", "ahead.STEP", "ahead.WALL", "ahead.GAP", "ahead.LEAVES", "ahead.SOFT",
             "ahead.HARD",
@@ -116,6 +122,7 @@ final class Labels {
         groups.put("ground", enums("ground", Ground.values()));
         groups.put("swim", enums("swim", Swim.values()));
         groups.put("passage", enums("passage", Passage.values()));
+        groups.put("tactic", enums("tactic", Tactic.values()));
         groups.put("way", enums("way", Way.values()));
         groups.put("tool", enums("tool", Tool.values()));
         // The named objectives the planner may hand back, plus the two states that are not one at all.

@@ -62,6 +62,8 @@ final class Json {
         out.append("\"waterRows\":").append(rows(snapshot.waterRows())).append(',');
         out.append("\"passageActions\":").append(strings(snapshot.passageActions())).append(',');
         out.append("\"passageRows\":").append(rows(snapshot.passageRows())).append(',');
+        out.append("\"tacticActions\":").append(strings(snapshot.tacticActions())).append(',');
+        out.append("\"tacticRows\":").append(rows(snapshot.tacticRows())).append(',');
         out.append("\"folders\":").append(folders(snapshot.folders()));
         out.append('}');
         return out.toString();

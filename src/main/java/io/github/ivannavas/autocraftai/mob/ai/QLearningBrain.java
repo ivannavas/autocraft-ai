@@ -32,6 +32,9 @@ import io.github.ivannavas.autocraftai.mob.ai.objective.mentor.ClaudeMentor;
 import io.github.ivannavas.autocraftai.mob.ai.objective.mentor.Mentor;
 import io.github.ivannavas.autocraftai.mob.ai.objective.mentor.MentorAsk;
 import io.github.ivannavas.autocraftai.mob.ai.objective.mentor.Rescue;
+import io.github.ivannavas.autocraftai.mob.ai.skill.Readings;
+import io.github.ivannavas.autocraftai.mob.ai.skill.Skill;
+import io.github.ivannavas.autocraftai.mob.ai.skill.Skills;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.PlannerLog;
 import io.github.ivannavas.autocraftai.mob.ai.objective.StepContext;
@@ -45,6 +48,7 @@ import io.github.ivannavas.autocraftai.mob.goal.CraftGoal;
 import io.github.ivannavas.autocraftai.mob.goal.CraftingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.MineSightingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.PlaceBlockGoal;
+import io.github.ivannavas.autocraftai.mob.goal.SkillGoal;
 import io.github.ivannavas.autocraftai.mob.goal.SmeltGoal;
 import io.github.ivannavas.autocraftai.mob.goal.TravelGoal;
 import lombok.extern.slf4j.Slf4j;
@@ -201,6 +205,23 @@ public final class QLearningBrain {
      * see the standing costs of a second learns nothing from a second that opened the way.
      */
     private static final double PASSAGE_PROGRESS_WEIGHT = 0.6;
+    /**
+     * Above everything but the water: a body being shot at is not chopping a tree, and not drowning
+     * still beats not being shot. Level with the swim goal, so whichever of the two has the body keeps
+     * it — and the tactics layer steps aside for a wet body anyway.
+     */
+    private static final int TACTIC_PRIORITY = 0;
+    /** Per hostile that died over a second the tactics layer was in charge of. About a log and a half. */
+    private static final double KILL_BONUS = 6.0;
+    /** Per block of height gained while trapped under a roof or down a pit: the way out is up. */
+    private static final double TACTIC_HEIGHT_WEIGHT = 0.6;
+    /** Paid once, for getting the sky back over the head. */
+    private static final double DAYLIGHT_BONUS = 4.0;
+    /**
+     * Seconds the objective may go without getting nearer, under a roof or down a pit, before the
+     * surroundings are worth a decision: trapped is a minute of nothing, not ten seconds of it.
+     */
+    private static final int STUCK_UNDER_COVER_STEPS = 60;
 
     private final MobEngine engine;
     private final Perception perception = new Perception();
@@ -264,11 +285,19 @@ public final class QLearningBrain {
     private static final long CRAFT_BACKOFF_MILLIS = 60_000L;
     /** Crafts that gave up recently, and until when they are not to be tried again. */
     private final Map<Resource, Long> craftBackoff = new EnumMap<>(Resource.class);
+    /** When each craft skill may be tried again after failing, by name: its failure is its own, not its product's. */
+    private final Map<String, Long> skillBackoff = new HashMap<>();
+    /** When the craft skill in flight was handed to the engine, for giving up on one that never starts. */
+    private long craftSkillAddedAt;
+    /** How long a craft skill may wait for the body before the choice is given back. */
+    private static final long CRAFT_SKILL_PENDING_MILLIS = 15000;
 
     private final Path directory;
     private final Table crafting;
     private final Table water;
     private final Table passage;
+    /** What to do about the surroundings as a whole — hostiles, night, a roof — keyed by {@link Surroundings}. */
+    private final Table tactics;
     /** One set of the four objective-bound tables per pursuit name, opened the first time it comes up. */
     private final Map<String, Suite> suites = new LinkedHashMap<>();
     /** The folder the move in flight was chosen from, whose tables hold the claims on its reward. */
@@ -293,13 +322,33 @@ public final class QLearningBrain {
     private boolean doneNow;
 
     private GoalAction installedAction;
+    /** The skill in flight when the move is one the mentor wrote rather than a built-in move. */
+    private Skill installedSkill;
     private MobGoal installedGoal;
     private Object installedTarget;
     private CraftingGoal craftGoal;
+    /**
+     * A craft skill in flight — a move the planner or the mentor wrote for the crafting layer, such as
+     * loading a furnace. It holds the body the way a table craft does, and is settled the way a skill is.
+     */
+    private SkillGoal craftSkill;
+    /** What the craft skill in flight makes, in the plan's vocabulary, for the mask and the backoff. */
+    private Resource craftSkillMakes;
     private MobGoal swimGoal;
     private Swim swimChoice = Swim.CARRY_ON;
     private MobGoal passageGoal;
-    private Passage passageChoice = Passage.CARRY_ON;
+    /** The passage column in flight: a built-in move's ordinal, or past those a skill. */
+    private int passageColumn = Passage.CARRY_ON.ordinal();
+    private MobGoal tacticGoal;
+    /** The tactic column in flight, and the built-in tactic it is, or null when it is a skill. */
+    private int tacticColumn = Tactic.CARRY_ON.ordinal();
+    private Tactic tacticChoice = Tactic.CARRY_ON;
+    /** The body as it was when the tactics table last chose, or null while the surroundings are quiet. */
+    private Moment tacticSince;
+    /** The surroundings as they were then: what was alive, and whether the body was under a roof. */
+    private Surroundings tacticSeen;
+    /** The last reason the objective's own craft was illegal, so it is logged once and not every second. */
+    private String lastIllegalCraft = "";
 
     /** How many moves have been cut short for going nowhere. Shown on the overlay, learned from nowhere. */
     private long stalls;
@@ -366,18 +415,85 @@ public final class QLearningBrain {
         this.progression = Progression.planned(directory);
         this.mentor = ClaudeMentor.create(directory);
         this.directory = directory;
-        this.crafting = new Table(names(CraftChoice.values()), directory.resolve("crafting.txt"));
+        // The skills first: they are columns, and the tables have to open with them.
+        Skills.get().load(directory);
+        this.crafting = new Table(columnsFor(Skill.Layer.CRAFT), directory.resolve("crafting.txt"));
         this.water = new Table(names(Swim.values()), directory.resolve("water.txt"));
-        this.passage = new Table(names(Passage.values()), directory.resolve("passage.txt"));
+        this.passage = new Table(columnsFor(Skill.Layer.PASSAGE), directory.resolve("passage.txt"));
+        this.tactics = new Table(columnsFor(Skill.Layer.TACTIC), directory.resolve("tactics.txt"));
         crafting.load();
         water.load();
         passage.load();
+        tactics.load();
+        // A skill written while the run is up becomes a column of its layer's table the moment it is
+        // taken in — every folder's goal table for a goal skill — so the lesson that comes with it has
+        // somewhere to land.
+        Skills.get().onAdded(skill -> {
+            switch (skill.layer()) {
+                case GOAL -> suites.values().forEach(suite -> suite.goals.addColumn(skill.name()));
+                case PASSAGE -> passage.addColumn(skill.name());
+                case TACTIC -> tactics.addColumn(skill.name());
+                case CRAFT -> crafting.addColumn(skill.name());
+            }
+        });
     }
 
-    /** Every table there is right now: the three shared ones and the four of each folder opened so far. */
+    /** The columns of a layer's table: the built-in moves, then the live skills, in the order written. */
+    private static List<String> columnsFor(Skill.Layer layer) {
+        List<String> columns = new java.util.ArrayList<>(switch (layer) {
+            case GOAL -> names(GoalAction.values());
+            case PASSAGE -> names(Passage.values());
+            case TACTIC -> names(Tactic.values());
+            case CRAFT -> names(CraftChoice.values());
+        });
+        Skills.get().live(layer).forEach(skill -> columns.add(skill.name()));
+        return columns;
+    }
+
+    /** The live skills of a layer, in column order: column {@code enumLength + i} is the i-th. */
+    private static List<Skill> skillsOf(Skill.Layer layer) {
+        return Skills.get().live(layer);
+    }
+
+    /** Every table there is right now: the four shared ones and the four of each folder opened so far. */
     private Stream<Table> tables() {
-        return Stream.concat(Stream.of(crafting, water, passage),
+        return Stream.concat(Stream.of(crafting, water, passage, tactics),
                 suites.values().stream().flatMap(Suite::tables));
+    }
+
+    /**
+     * The surroundings as a skill's conditions read them, fresh. Built on demand: a skill goal asks
+     * while it is idle and once every few ticks while it runs, and each asking is an entity query.
+     */
+    private Readings readings(LocalPlayer player) {
+        boolean stuck = progression.current().isPresent()
+                && progression.stepsWithoutProgress() >= STUCK_UNDER_COVER_STEPS;
+        return Readings.of(player, Surroundings.around(player, progression.reserved(), stuck), wet != null,
+                progression.needs());
+    }
+
+    /** A skill's goal, wired to read the surroundings through this brain. */
+    private SkillGoal skillGoal(Skill skill) {
+        return new SkillGoal(skill, progression.reserved(), () -> {
+            LocalPlayer player = Minecraft.getInstance().player;
+            return player == null ? null : readings(player);
+        });
+    }
+
+    /**
+     * Counts a skill goal's outcome, for the skill's record, when it is taken out. Done or failed is
+     * counted; a goal taken out mid-way was interrupted, which says nothing about the skill.
+     */
+    private static void settleSkill(MobGoal goal) {
+        if (goal instanceof SkillGoal run) {
+            if (run.isDone()) {
+                log.info("Skill {} finished", run.skill().name());
+                Skills.get().completed(run.skill().name());
+            } else if (run.failed()) {
+                log.info("Skill {} failed: {}", run.skill().name(), run.failure());
+                Skills.get().failed(run.skill().name());
+            }
+        }
     }
 
     /** The folder for a pursuit, opened and read from disk the first time it is asked for. */
@@ -404,7 +520,7 @@ public final class QLearningBrain {
     }
 
     public List<String> actionNames() {
-        return names(GoalAction.values());
+        return columnsFor(Skill.Layer.GOAL);
     }
 
     /** Hands every later snapshot to {@code listener}, and one now so a watcher starts with something. */
@@ -480,6 +596,8 @@ public final class QLearningBrain {
         retireFinishedCraft();
         // On its own clock, whatever the commitment is doing: the water does not wait for a decision.
         tendWater(player);
+        // Nor does a skeleton, or nightfall, or a roof the objective is on the other side of.
+        tendTactics(player);
         // And the terrain, on the same footing: a wall does not wait for a decision either.
         tendPassage(player);
         // Booked before the hold is tested, because whether the move has anything to show for the second
@@ -520,9 +638,49 @@ public final class QLearningBrain {
                 || installedGoal.stalledTicks() >= STALL_TICKS;
     }
 
-    /** Whether something with a higher claim — water, a craft, the terrain — has the body off the primary. */
+    /** Whether something with a higher claim — water, a tactic, a craft, the terrain — has the body off the primary. */
     private boolean displaced() {
-        return busy(swimGoal) || busy(craftGoal) || busy(passageGoal) || crafting();
+        return busy(swimGoal) || busy(tacticGoal) || busy(craftGoal) || busy(craftSkill) || busy(passageGoal)
+                || crafting();
+    }
+
+    /**
+     * Whether a tactic is holding the body still on purpose: sealed in a hole, or standing on a tower.
+     *
+     * <p>Not moving is what those are for, and everything that reads "not moving" as trouble — the
+     * pinned count, the planner's self-rescue, the mentor — has to be told so, or the body climbs out of
+     * its own shelter to satisfy a rule about being stuck.
+     */
+    private boolean sheltering() {
+        return tacticGoal != null && engine.isRunning(tacticGoal)
+                && (tacticChoice == Tactic.HOLE_UP || tacticChoice == Tactic.TOWER);
+    }
+
+    /**
+     * Takes in the skills the planner wrote beside its last answer. Each becomes a column of its table,
+     * seeded with its prior in the row the run is in right now — the planner wrote it for the objective
+     * in hand, and this is where the objective is being worked.
+     */
+    private void takeOfferedSkills(String stateKey, String craftKey, LocalPlayer player) {
+        for (Skill skill : Skills.get().takeOffered()) {
+            Optional<String> refused = Skills.get().add(skill);
+            if (refused.isPresent()) {
+                log.info("Planner's skill {} not taken: {}", skill.name(), refused.get());
+                PlannerLog.get().plannerNoted("skill " + skill.name() + " refused: " + refused.get());
+                continue;
+            }
+            switch (skill.layer()) {
+                case GOAL -> {
+                    if (active != null) {
+                        active.goals.seed(stateKey, skill.name(), skill.prior());
+                    }
+                }
+                case CRAFT -> crafting.seed(craftKey, skill.name(), skill.prior());
+                case PASSAGE -> passage.seed(ground(player).key(), skill.name(), skill.prior());
+                case TACTIC -> tactics.seed(Surroundings.around(player, progression.reserved(), false).key(),
+                        skill.name(), skill.prior());
+            }
+        }
     }
 
     /**
@@ -536,6 +694,37 @@ public final class QLearningBrain {
             return;
         }
         Rescue rescue = taken.get();
+        if (rescue.skill() != null) {
+            // A move the mentor wrote. Taken in first, so it is a column by the time the lessons — which
+            // may name it — are planted; then seeded in the row it was written for at the value given.
+            Skill skill = rescue.skill();
+            Optional<String> refused = Skills.get().add(skill);
+            if (refused.isPresent()) {
+                log.info("Skill {} not taken: {}", skill.name(), refused.get());
+                PlannerLog.get().mentorNoted("skill " + skill.name() + " refused: " + refused.get());
+            } else {
+                PlannerLog.get().mentorNoted("new skill " + skill.describe());
+                switch (skill.layer()) {
+                    case GOAL -> {
+                        Suite folder = suites.get(rescue.pursuit());
+                        if (folder != null) {
+                            folder.goals.seed(rescue.state(), skill.name(), skill.prior());
+                        }
+                    }
+                    case PASSAGE -> passage.seed(rescue.terrain(), skill.name(), skill.prior());
+                    case TACTIC -> {
+                        if (!rescue.tacticKey().isEmpty()) {
+                            tactics.seed(rescue.tacticKey(), skill.name(), skill.prior());
+                        }
+                    }
+                    case CRAFT -> {
+                        if (!rescue.craftKey().isEmpty()) {
+                            crafting.seed(rescue.craftKey(), skill.name(), skill.prior());
+                        }
+                    }
+                }
+            }
+        }
         Suite suite = suites.get(rescue.pursuit());
         if (suite != null) {
             rescue.lessons().forEach(lesson -> suite.goals.seed(rescue.state(), lesson.action(), lesson.value()));
@@ -545,6 +734,11 @@ public final class QLearningBrain {
         rescue.passageLessons().forEach(lesson -> passage.seed(rescue.terrain(), lesson.action(), lesson.value()));
         // And the crafting table, for the block that is not terrain at all: a craft holding the body.
         rescue.craftLessons().forEach(lesson -> crafting.seed(rescue.craftKey(), lesson.action(), lesson.value()));
+        // And the tactics table, for the block that is the surroundings: a night, a roof, a mob.
+        if (!rescue.tacticKey().isEmpty()) {
+            rescue.tacticLessons().forEach(lesson ->
+                    tactics.seed(rescue.tacticKey(), lesson.action(), lesson.value()));
+        }
         if (rescue.asksToReplan()) {
             // The one lesson no table can hold: the objective itself is the problem. The plan goes and
             // the planner is asked again with the mentor's sentence in the question; there is nothing to
@@ -604,8 +798,12 @@ public final class QLearningBrain {
      * which is the one fact that explained the longest block seen so far.
      */
     private String driver() {
+        if (tacticGoal != null && engine.isRunning(tacticGoal)) {
+            return tacticGoal.name() + " (a tactic: the surroundings layer has the body)";
+        }
         if (crafting()) {
-            return craftGoal.name() + " — a craft that walks to a table or furnace and holds the body,"
+            MobGoal making = craftGoal != null && engine.isRunning(craftGoal) ? craftGoal : craftSkill;
+            return making.name() + " — a craft that walks to a table or furnace and holds the body,"
                     + " outranking every goal move, until it finishes or gives up";
         }
         if (passageGoal != null && engine.isRunning(passageGoal)) {
@@ -648,6 +846,14 @@ public final class QLearningBrain {
      * second-guess them while they run.
      */
     private boolean crafting() {
+        // A craft skill counts from the moment it is handed to the engine, not from when it gets the body:
+        // the passage layer's stroll ran at the same priority, so a skill that waited for it to end was
+        // pulled off by the next stroll for thirteen seconds before it ever started.
+        if (craftSkill != null && !craftSkill.isDone() && !craftSkill.failed()
+                && (engine.isRunning(craftSkill)
+                    || System.currentTimeMillis() - craftSkillAddedAt <= CRAFT_SKILL_PENDING_MILLIS)) {
+            return true;
+        }
         return (craftGoal instanceof CraftAtTableGoal || craftGoal instanceof SmeltGoal)
                 && engine.isRunning(craftGoal) && !craftGoal.isFinished();
     }
@@ -725,8 +931,7 @@ public final class QLearningBrain {
 
         // What the move that just ended did, before anything replaces it. The planner reads these when an
         // objective drags on: a run of them is what a rut looks like from outside.
-        DecisionLog.get().record(lastState, installedAction == null ? null : installedAction.name(),
-                step.steps(), reward);
+        DecisionLog.get().record(lastState, installedName(), step.steps(), reward);
 
         // Looking is also what settles which folder of tables this decision is made in.
         ActionContext context = surroundings(client, player);
@@ -750,11 +955,13 @@ public final class QLearningBrain {
         Observation observation = Observation.of(player, context, pursuit.source());
 
         boolean[] legalGoals = legalGoals(context);
-        boolean[] legalCrafts = legalCrafts(context, step.after(), player);
+        // The bag as the plan counts it: a workbench standing within reach is a table held.
+        InventoryCensus held = progression.effective(step.after(), player);
+        boolean[] legalCrafts = legalCrafts(context, held, player);
 
         // All three learn from the same reward over the same move: each one's share of the credit is
         // whatever its own column was doing while that reward was earned.
-        String craftKey = CraftSituation.key(progression.needs(), step.after());
+        String craftKey = CraftSituation.key(progression.needs(), held);
         active.goals.learn(observation.key(), reward, step.steps(), legalGoals);
         crafting.learn(craftKey, reward, step.steps(), legalCrafts);
 
@@ -769,6 +976,7 @@ public final class QLearningBrain {
         pinnedStreak = territory.pinned() ? (samePursuit ? pinnedStreak + 1 : 1) : 0;
         settleRescue();
         applyLessons();
+        takeOfferedSkills(observation.key(), craftKey, player);
         // Not while a table craft or a smelt has the body and is getting on with it: standing at a table
         // is work, not a block, and a craft whose walk has stalled lets go on its own within seconds.
         //
@@ -778,20 +986,28 @@ public final class QLearningBrain {
         // and may answer by giving the objective up rather than by teaching a way to it.
         boolean pinned = pinnedStreak >= PINNED_BEFORE_MENTOR;
         boolean stalled = progression.stepsWithoutProgress() >= STALLED_BEFORE_MENTOR;
+        // Nor while a tactic has the body: a body sealed in a hole for the night is pinned on purpose,
+        // and a coach asked about it would teach it the way out of its own shelter.
         if ((pinned || stalled) && progression.current().isPresent()
-                && !objectiveCraftable(legalCrafts) && !crafting()) {
+                && !objectiveCraftable(legalCrafts) && !crafting() && !sheltering()) {
             MentorAsk.Reason reason = pinned ? MentorAsk.Reason.BLOCK : MentorAsk.Reason.STALL;
             String stuck = observation.key();
             String folder = pursuit.name();
-            List<String> moves = names(GoalAction.values());
-            List<String> passageMoves = names(Passage.values());
-            List<String> craftMoves = names(CraftChoice.values());
+            // The moves the body may actually make here, not every column: a lesson about a move the
+            // mask has taken away is a lesson nobody consults.
+            List<String> moves = legalNames(active.goals.columns, legalGoals);
+            List<String> craftMoves = legalNames(crafting.columns, legalCrafts);
             int y = player.getBlockY();
+            boolean stuckUnderCover = stalled;
             mentor.consider(() -> {
                 Obstruction ground = ground(player);
+                Surroundings around = Surroundings.around(player, progression.reserved(), stuckUnderCover);
+                List<String> passageMoves = legalNames(passage.columns, legalPassages(ground, player));
+                List<String> tacticMoves = legalNames(tactics.columns, legalTactics(around, player));
                 return new MentorAsk(reason, progression.blockSituation(player, obtained), folder, stuck,
                         moves, ground.key(), ground.words(), passageMoves, y, driver(), craftKey,
-                        craftMoves);
+                        craftMoves, around.key(), around.words(), tacticMoves,
+                        Skills.get().catalogue(), "");
             });
         }
 
@@ -800,15 +1016,21 @@ public final class QLearningBrain {
             // WANDER is always legal, so this cannot happen; bail rather than index nothing.
             return;
         }
-        GoalAction action = GoalAction.values()[goalIndex];
+        // A column past the built-in moves is a skill the mentor wrote.
+        GoalAction action = goalIndex < GoalAction.values().length ? GoalAction.values()[goalIndex] : null;
+        Skill goalSkill = action == null ? skillAt(Skill.Layer.GOAL, goalIndex) : null;
+        if (action == null && goalSkill == null) {
+            return;
+        }
+        String chosenName = action != null ? action.name() : goalSkill.name();
 
         // Timing is keyed by the goal as well as the state: the question is not "how long to commit" but
         // "how long to commit to this".
-        String timingKey = observation.key() + '/' + action.name();
+        String timingKey = observation.key() + '/' + chosenName;
         active.timing.learn(timingKey, reward, step.steps(), active.timing.everything);
         Commitment chosen = Commitment.values()[active.timing.choose(timingKey, active.timing.everything)];
 
-        CraftChoice craft = chooseCraft(craftKey, legalCrafts);
+        int craft = chooseCraft(craftKey, legalCrafts);
         Aim aim = new Aim(
                 chooseSpot(player, action, context, reward, step.steps()),
                 chooseHeading(player, action, context, reward, step.steps()));
@@ -829,9 +1051,9 @@ public final class QLearningBrain {
             uninstall();
         }
 
-        install(action, context, aim, player);
+        install(action, goalSkill, context, aim, player);
         installCraft(craft, player);
-        followingTheMap = headingIsFact && action.usesGround();
+        followingTheMap = headingIsFact && action != null && action.usesGround();
 
         commitment = chosen;
         stepsRun = 0;
@@ -846,7 +1068,7 @@ public final class QLearningBrain {
         placedSinceDecision = Map.of();
         reclaimedSinceDecision = Map.of();
 
-        publish(observation.key(), action.name(), chosen.name(), craft.name());
+        publish(observation.key(), chosenName, chosen.name(), crafting.columns.get(craft));
         maintain(climbed > 0.0);
     }
 
@@ -869,29 +1091,57 @@ public final class QLearningBrain {
      * for it: the craft layer makes the thing and the objective moves on.
      */
     private boolean objectiveCraftable(boolean[] legalCrafts) {
-        Resource after = progression.current().flatMap(Phase::scores).orElse(null);
-        if (after == null) {
-            return false;
-        }
-        for (CraftChoice choice : CraftChoice.values()) {
-            if (choice.resource() == after && legalCrafts[choice.ordinal()]) {
-                return true;
-            }
-        }
-        return false;
+        return waysToMakeTheObjective(legalCrafts).length > 0;
     }
 
-    private CraftChoice chooseCraft(String craftKey, boolean[] legalCrafts) {
+    /**
+     * The legal columns that make the very thing the objective scores: the built-in choice for it and
+     * any craft skill that says it makes it. Empty when there is nothing to make, or no way to.
+     */
+    private int[] waysToMakeTheObjective(boolean[] legalCrafts) {
         Resource after = progression.current().flatMap(Phase::scores).orElse(null);
-        if (after != null) {
-            for (CraftChoice choice : CraftChoice.values()) {
-                if (choice.resource() == after && legalCrafts[choice.ordinal()]) {
-                    crafting.forget();
-                    return choice;
-                }
+        if (after == null) {
+            return new int[0];
+        }
+        List<Integer> ways = new java.util.ArrayList<>();
+        for (CraftChoice choice : CraftChoice.values()) {
+            if (choice.resource() == after && legalCrafts[choice.ordinal()]) {
+                ways.add(choice.ordinal());
             }
         }
-        return CraftChoice.values()[crafting.choose(craftKey, legalCrafts)];
+        List<Skill> skills = skillsOf(Skill.Layer.CRAFT);
+        for (int i = 0; i < skills.size(); i++) {
+            int column = CraftChoice.values().length + i;
+            if (column < legalCrafts.length && legalCrafts[column]
+                    && Readings.resource(skills.get(i).makes()) == after) {
+                ways.add(column);
+            }
+        }
+        return ways.stream().mapToInt(Integer::intValue).toArray();
+    }
+
+    /**
+     * What to make: the thing the plan is after when it can be made right now, else what the table has
+     * learned. With one way to make it, the way is forced and the table's claim is dropped; with several —
+     * the built-in craft and a skill that makes the same thing — the table chooses among them and learns
+     * which way pays, which is the whole point of letting a skill make what a built-in already makes.
+     */
+    private int chooseCraft(String craftKey, boolean[] legalCrafts) {
+        int[] ways = waysToMakeTheObjective(legalCrafts);
+        if (ways.length == 1) {
+            crafting.forget();
+            return ways[0];
+        }
+        if (ways.length > 1) {
+            boolean[] among = new boolean[legalCrafts.length];
+            for (int way : ways) {
+                among[way] = true;
+            }
+            int column = crafting.choose(craftKey, among);
+            return column < 0 ? ways[0] : column;
+        }
+        int column = crafting.choose(craftKey, legalCrafts);
+        return column < 0 ? CraftChoice.NOTHING.ordinal() : column;
     }
 
     /**
@@ -906,7 +1156,7 @@ public final class QLearningBrain {
      */
     private BlockPos chooseSpot(LocalPlayer player, GoalAction action, ActionContext context,
                                 double reward, int steps) {
-        if (!action.usesSpot()) {
+        if (action == null || !action.usesSpot()) {
             // Nothing this table chose is going to matter to the move now being made, so its last choice
             // is settled with no continuation rather than left hanging.
             active.placement.learnTerminal(reward);
@@ -946,7 +1196,7 @@ public final class QLearningBrain {
      */
     private OptionalDouble chooseHeading(LocalPlayer player, GoalAction action, ActionContext context,
                                          double reward, int steps) {
-        if (!action.usesGround()) {
+        if (action == null || !action.usesGround()) {
             // The move now being made goes nowhere, so whatever this table last chose has no continuation.
             active.position.learnTerminal(reward);
             active.position.forget();
@@ -1148,7 +1398,8 @@ public final class QLearningBrain {
      * body's swings: that goal is not stuck, it is working.
      */
     private void tendPassage(LocalPlayer player) {
-        if (passageGoal != null && !engine.isRunning(passageGoal) && passageChoice != Passage.CARRY_ON) {
+        if (passageGoal != null && !engine.isRunning(passageGoal)
+                && passageColumn != Passage.CARRY_ON.ordinal()) {
             // The fix has done what it could. The goal underneath gets another go at what it was doing,
             // because the world it gave up on is not the world it is in now: the leaves are gone.
             removePassage();
@@ -1166,7 +1417,7 @@ public final class QLearningBrain {
             }
             return;
         }
-        boolean[] legal = legalPassages(here);
+        boolean[] legal = legalPassages(here, player);
         String key = here.key();
         if (stuckSince != null) {
             passage.learn(key, passageReward(player), 1, legal);
@@ -1178,7 +1429,7 @@ public final class QLearningBrain {
         stuckBetween = here.aheadBlocks().size();
 
         int column = passage.choose(key, legal);
-        installPassage(column < 0 ? Passage.CARRY_ON : Passage.values()[column], here);
+        installPassage(column, here);
     }
 
     /**
@@ -1189,7 +1440,11 @@ public final class QLearningBrain {
      * counts as stuck too, so the table keeps being asked — and keeps learning — until the way is open.
      */
     private Obstruction obstruction(LocalPlayer player) {
+        // A tactic that has the body keeps it, stalled or not: a tower being refused is not a wall in
+        // the way, and a passage move that dug out the block the tower had just laid was the loop the
+        // body sat in for a night.
         if (wet != null || installedGoal == null || busy(swimGoal) || busy(craftGoal) || crafting()
+                || (tacticGoal != null && engine.isRunning(tacticGoal))
                 || engine.isCommitted(installedGoal)) {
             return null;
         }
@@ -1276,23 +1531,37 @@ public final class QLearningBrain {
     }
 
     /** Doing nothing and going round always work; the rest need something to break, build or dig. */
-    private boolean[] legalPassages(Obstruction here) {
+    private boolean[] legalPassages(Obstruction here, LocalPlayer player) {
         Passage[] options = Passage.values();
-        boolean[] allowed = new boolean[options.length];
+        boolean[] allowed = new boolean[passage.columns.size()];
         for (int i = 0; i < options.length; i++) {
             allowed[i] = options[i].isApplicable(here);
         }
+        legalSkills(Skill.Layer.PASSAGE, allowed, player);
         return allowed;
     }
 
-    /** Puts the passage choice in place over the committed goal, left alone while unchanged and running. */
-    private void installPassage(Passage choice, Obstruction here) {
-        if (passageGoal != null && choice == passageChoice && engine.isRunning(passageGoal)) {
+    /**
+     * Puts the passage choice in place over the committed goal, left alone while unchanged and running.
+     *
+     * @param column the chosen column: a built-in move, or past those a skill
+     */
+    private void installPassage(int column, Obstruction here) {
+        if (column < 0) {
+            column = Passage.CARRY_ON.ordinal();
+        }
+        if (passageGoal != null && column == passageColumn && engine.isRunning(passageGoal)) {
             return;
         }
         removePassage();
-        passageChoice = choice;
-        MobGoal goal = choice.create(here, progression.reserved());
+        passageColumn = column;
+        MobGoal goal;
+        if (column < Passage.values().length) {
+            goal = Passage.values()[column].create(here, progression.reserved());
+        } else {
+            Skill skill = skillAt(Skill.Layer.PASSAGE, column);
+            goal = skill == null ? null : skillGoal(skill);
+        }
         if (goal != null) {
             passageGoal = goal;
             engine.addGoal(PASSAGE_PRIORITY, goal);
@@ -1301,10 +1570,196 @@ public final class QLearningBrain {
 
     private void removePassage() {
         if (passageGoal != null) {
+            settleSkill(passageGoal);
             engine.removeGoal(passageGoal);
             passageGoal = null;
         }
-        passageChoice = Passage.CARRY_ON;
+        passageColumn = Passage.CARRY_ON.ordinal();
+    }
+
+    /**
+     * Keeps the tactics layer in step with the surroundings, once a second, whatever the commitment is
+     * doing.
+     *
+     * <p>The third layer on its own clock, and the one that sees the whole picture: what is hostile and
+     * how much of it, night or day, sky or roof, what is in hand — see {@link Surroundings}. It is asked
+     * only while the surroundings call for it, learns every second from what the last second earned,
+     * and is settled the moment they go quiet. What it installs sits over everything but the water,
+     * because a body being shot at is not chopping a tree however committed it is.
+     *
+     * <p>Two rewards on top of the ordinary second: a hostile that died, and height gained by a body
+     * that was under a roof or down a pit. The death penalty reaches this table like every other, and
+     * it is the main lesson here: a night survived is a night that did not end in minus twenty.
+     */
+    private void tendTactics(LocalPlayer player) {
+        if (wet != null) {
+            // The water layer owns a wet body. Whatever was being done about the surroundings is
+            // settled on what it earned; the water is the surroundings now.
+            settleTactics(player, null);
+            return;
+        }
+        boolean stuck = progression.current().isPresent()
+                && progression.stepsWithoutProgress() >= STUCK_UNDER_COVER_STEPS;
+        Surroundings here = Surroundings.around(player, progression.reserved(), stuck);
+        // A shelter is not undone by working: the second the cap goes on, the surroundings read as a
+        // roof with nothing hostile in range and stopped calling for anything — and the hole-up was
+        // dropped, the goal underneath broke back out, and the night was spent digging the same hole.
+        if (!here.demanding() && !sheltering()) {
+            settleTactics(player, here);
+            return;
+        }
+        boolean[] legal = legalTactics(here, player);
+        String key = here.key();
+        if (tacticSince != null) {
+            tactics.learn(key, tacticReward(player, here), 1, legal);
+        }
+        boolean hold = holdsTactic(here);
+        tacticSince = Moment.of(player);
+        tacticSeen = here;
+
+        if (hold) {
+            // A tactic under way and getting somewhere keeps the body. Choosing again every second
+            // tore a six-second hole and a three-block tower down after one second each, over and over,
+            // as a fresh table's exploration picked something else — and nothing ever got built. The
+            // claim is re-staked on the same column so the next second's reward is still its own.
+            tactics.hold(key, tacticColumn);
+            return;
+        }
+        int column = tactics.choose(key, legal);
+        installTactic(column, here);
+    }
+
+    /**
+     * Whether the tactic in flight should be left to finish rather than reconsidered this second.
+     *
+     * <p>Kept while its goal is running, not done, and not stalled, and while what is hostile has not
+     * changed — a skeleton turning up is a new question whatever the tower was doing. A tactic that
+     * has finished, given up or stalled hands the second back to the table.
+     */
+    private boolean holdsTactic(Surroundings here) {
+        if (tacticGoal == null || tacticColumn == Tactic.CARRY_ON.ordinal()) {
+            return false;
+        }
+        if (!engine.isRunning(tacticGoal) || tacticGoal.isDone()
+                || tacticGoal.stalledTicks() >= STALL_TICKS) {
+            return false;
+        }
+        // A shelter is for whatever turns up: something hostile arriving is not a reason to leave it.
+        return sheltering() || tacticSeen == null || tacticSeen.threat().equals(here.threat());
+    }
+
+    /** The surroundings have gone quiet: the last choice is credited with no continuation and let go. */
+    private void settleTactics(LocalPlayer player, Surroundings now) {
+        if (tacticSince != null) {
+            tactics.learnTerminal(tacticReward(player, now));
+            tactics.forget();
+            tacticSince = null;
+            tacticSeen = null;
+            if (tacticGoal != null) {
+                log.debug("Tactic {} let go: {}", tacticChoice,
+                        wet != null ? "in water" : now == null ? "no surroundings" : "quiet: " + now.key());
+            }
+        }
+        removeTactic();
+    }
+
+    /**
+     * What the last second of dealing with the surroundings was worth: the ordinary reward for the
+     * second, plus a lump per hostile that is no longer alive, plus something per block of height a
+     * trapped body gained, plus a lump for getting the sky back.
+     */
+    private double tacticReward(LocalPlayer player, Surroundings now) {
+        double reward = score(stepSince(tacticSince, player, 1, 0, 0, List.of(), placedThisStep,
+                reclaimedThisStep));
+        if (tacticSeen == null) {
+            return reward;
+        }
+        long dead = tacticSeen.hostiles().stream().filter(hostile -> !hostile.isAlive()).count();
+        reward += KILL_BONUS * dead;
+        if (tacticSeen.cover() != Surroundings.Cover.SKY) {
+            reward += TACTIC_HEIGHT_WEIGHT * Math.max(0.0, player.getY() - tacticSince.position().y);
+            if (now != null && now.cover() == Surroundings.Cover.SKY) {
+                reward += DAYLIGHT_BONUS;
+            }
+        }
+        return reward;
+    }
+
+    /**
+     * Which tactics the surroundings allow, and one rule over them.
+     *
+     * <p>The rule: at night, with nothing to fight with and something hostile in view, standing about
+     * and fighting are off the table. Thirteen deaths in one night were thirteen bodies that fled
+     * across a beach with empty hands, and nothing about that is worth a fourteenth to learn. What is
+     * left — dig in, tower up, wall off, run — is a real question and a survivable one, and the table
+     * keeps it. By day, or armed, or with nothing in view, the table keeps every column.
+     */
+    private boolean[] legalTactics(Surroundings here, LocalPlayer player) {
+        Tactic[] options = Tactic.values();
+        boolean[] allowed = new boolean[tactics.columns.size()];
+        for (int i = 0; i < options.length; i++) {
+            allowed[i] = options[i].isApplicable(here);
+        }
+        legalSkills(Skill.Layer.TACTIC, allowed, player);
+        if (here.light() == Surroundings.Light.NIGHT && !here.armed() && here.count() > 0) {
+            allowed[Tactic.CARRY_ON.ordinal()] = false;
+            allowed[Tactic.FIGHT.ordinal()] = false;
+            boolean any = false;
+            for (boolean legal : allowed) {
+                any |= legal;
+            }
+            if (!any) {
+                allowed[Tactic.RETREAT.ordinal()] = true;
+            }
+        }
+        return allowed;
+    }
+
+    /**
+     * Puts the tactic in place over everything but the water, left alone while unchanged and running.
+     *
+     * <p>A tactic that has finished — the tower is built and held, the hole is capped and waited in —
+     * is made again when chosen again, which for a tower is a taller tower and for a wall is a wall on
+     * whichever side the nearest hostile is on now. {@link Tactic#CARRY_ON} takes whatever was there
+     * away and gives the body back to the commitment.
+     */
+    private void installTactic(int column, Surroundings here) {
+        if (column < 0) {
+            column = Tactic.CARRY_ON.ordinal();
+        }
+        if (tacticGoal != null && column == tacticColumn && engine.isRunning(tacticGoal)) {
+            return;
+        }
+        String name = tactics.columns.get(column);
+        if (tacticGoal != null) {
+            log.debug("Tactic {} replaced by {} in {}", tactics.columns.get(tacticColumn), name, here.key());
+        }
+        removeTactic();
+        tacticColumn = column;
+        MobGoal goal;
+        if (column < Tactic.values().length) {
+            tacticChoice = Tactic.values()[column];
+            goal = tacticChoice.create(here, progression.reserved());
+        } else {
+            tacticChoice = null;
+            Skill skill = skillAt(Skill.Layer.TACTIC, column);
+            goal = skill == null ? null : skillGoal(skill);
+        }
+        if (goal != null) {
+            tacticGoal = goal;
+            engine.addGoal(TACTIC_PRIORITY, goal);
+            log.debug("Tactic {} in {}", name, here.key());
+        }
+    }
+
+    private void removeTactic() {
+        if (tacticGoal != null) {
+            settleSkill(tacticGoal);
+            engine.removeGoal(tacticGoal);
+            tacticGoal = null;
+        }
+        tacticColumn = Tactic.CARRY_ON.ordinal();
+        tacticChoice = Tactic.CARRY_ON;
     }
 
     /** Which spots the world allows: you cannot mine air, and a block needs something to rest against. */
@@ -1403,7 +1858,8 @@ public final class QLearningBrain {
                 crafted,
                 placed,
                 reclaimed,
-                territory.pinned(),
+                // A body sheltering is still, not stuck: nobody should be climbing it out of its hole.
+                territory.pinned() && !sheltering(),
                 sawWhatItNeeds);
     }
 
@@ -1454,10 +1910,11 @@ public final class QLearningBrain {
 
     private boolean[] legalGoals(ActionContext context) {
         GoalAction[] actions = GoalAction.values();
-        boolean[] allowed = new boolean[actions.length];
+        boolean[] allowed = new boolean[active.goals.columns.size()];
         for (int i = 0; i < actions.length; i++) {
             allowed[i] = actions[i].isApplicable(context);
         }
+        legalSkills(Skill.Layer.GOAL, allowed, Minecraft.getInstance().player);
         underThreat(context, allowed);
         if (fetchesWhatItSees(context) && allowed[GoalAction.MINE.ordinal()]) {
             // The plan named the blocks its resource comes off and the eyes have found one. There is
@@ -1495,8 +1952,9 @@ public final class QLearningBrain {
     /** Leaves only the one move — and eating, when it was legal, for the reason given at the block rule. */
     private static void only(boolean[] allowed, GoalAction move) {
         GoalAction[] actions = GoalAction.values();
-        for (int i = 0; i < actions.length; i++) {
-            allowed[i] = actions[i] == move || (actions[i] == GoalAction.EAT && allowed[i]);
+        for (int i = 0; i < allowed.length; i++) {
+            allowed[i] = i < actions.length
+                    && (actions[i] == move || (actions[i] == GoalAction.EAT && allowed[i]));
         }
     }
 
@@ -1563,8 +2021,9 @@ public final class QLearningBrain {
         // reach here; walking to those is the rule above.
         boolean freebie = kind == FocusKind.ITEM;
         GoalAction[] actions = GoalAction.values();
-        for (int i = 0; i < actions.length; i++) {
-            boolean kept = switch (actions[i]) {
+        for (int i = 0; i < allowed.length; i++) {
+            // A skill is not a way there: when the way is a fact, walking it is the move.
+            boolean kept = i < actions.length && switch (actions[i]) {
                 case TRAVEL, EAT, REACH_BAND, DIG_DOWN -> true;
                 case ATTACK -> dinner;
                 case APPROACH -> dinner || freebie;
@@ -1648,22 +2107,26 @@ public final class QLearningBrain {
      */
     private boolean[] legalCrafts(ActionContext context, InventoryCensus held, LocalPlayer player) {
         CraftChoice[] choices = CraftChoice.values();
-        boolean[] allowed = new boolean[choices.length];
+        boolean[] allowed = new boolean[crafting.columns.size()];
         Map<Resource, Integer> needs = progression.needs();
         Resource after = progression.current().flatMap(Phase::scores).orElse(null);
         boolean tableInSight = CraftAtTableGoal.tableInSight(player);
         long now = System.currentTimeMillis();
+        String why = "";
         for (int i = 0; i < choices.length; i++) {
             Resource made = choices[i].resource();
+            String reason = null;
             if (made == null) {
                 allowed[i] = true;
             } else if (craftBackoff.getOrDefault(made, 0L) > now) {
                 // It gave up on this a moment ago; the same walk to the same table would give up the same way.
                 allowed[i] = false;
+                reason = "it gave up on that craft less than a minute ago";
             } else if (needs.containsKey(made) && held.count(made) >= needs.get(made)) {
                 // The list already has enough of it. A second wooden pickaxe was crafted at a table forty
                 // blocks away because "PICKAXE=1" stayed on the list after the first one was in the bag.
                 allowed[i] = false;
+                reason = "the list already has enough of it";
             } else if (!choices[i].handheld() && !choices[i].isSmelted() && made != after
                     && !needs.containsKey(made) && !tableInSight) {
                 // A table craft the plan did not ask for is a trek to a table, and a trek outranks every
@@ -1675,14 +2138,72 @@ public final class QLearningBrain {
                 allowed[i] = held.count(choices[i].input()) > 0 && hasFuel(held)
                         && context.reserve().allowsMaking(made, held)
                         && keepsTheList(made, held, needs);
+                if (!allowed[i]) {
+                    reason = held.count(choices[i].input()) <= 0 ? "no " + choices[i].input() + " to smelt"
+                            : !hasFuel(held) ? "nothing to burn"
+                            : !context.reserve().allowsMaking(made, held) ? "the reserve holds the ore back"
+                            : "making it would eat into the shopping list";
+                }
             } else {
                 allowed[i] = context.craftable().contains(made)
                         && context.reserve().allowsMaking(made, held)
                         && keepsTheList(made, held, needs)
                         && !(made == Resource.CRAFTING_TABLE && held.count(made) > 0);
+                if (!allowed[i]) {
+                    reason = !context.craftable().contains(made)
+                            ? "the recipe book cannot make it from the bag (" + ingredientsHeld(made, held) + ")"
+                            : !context.reserve().allowsMaking(made, held)
+                            ? "the reserve holds its ingredients back (" + context.reserve().kept() + ")"
+                            : !keepsTheList(made, held, needs) ? "making it would eat into the shopping list"
+                            : "a table is already held or in sight";
+                }
+            }
+            if (made != null && made == after && reason != null) {
+                why = reason;
+            }
+        }
+        noteIllegalCraft(after, why);
+        // The craft skills past the built-in choices: each applies when its own condition says so, and
+        // not when what it makes is already had, or it gave up on it a moment ago.
+        legalSkills(Skill.Layer.CRAFT, allowed, player);
+        List<Skill> craftSkills = skillsOf(Skill.Layer.CRAFT);
+        for (int i = 0; i < craftSkills.size(); i++) {
+            int column = choices.length + i;
+            if (column >= allowed.length || !allowed[column]) {
+                continue;
+            }
+            Resource made = Readings.resource(craftSkills.get(i).makes());
+            if (skillBackoff.getOrDefault(craftSkills.get(i).name(), 0L) > now
+                    || (made != null && needs.containsKey(made) && held.count(made) >= needs.get(made))) {
+                allowed[column] = false;
             }
         }
         return allowed;
+    }
+
+    /** The bag's count of each ingredient, for saying in one line why a recipe would not take. */
+    private static String ingredientsHeld(Resource made, InventoryCensus held) {
+        StringBuilder out = new StringBuilder();
+        made.ingredients().forEach((ingredient, amount) -> out.append(out.isEmpty() ? "" : ", ")
+                .append(ingredient).append(' ').append(held.count(ingredient)).append('/').append(amount));
+        return out.isEmpty() ? "no recipe known here" : out.toString();
+    }
+
+    /**
+     * Says, once per reason, why the very thing the objective is after cannot be made right now.
+     *
+     * <p>The sword the run died without was never attempted, and nothing in the log said why: the
+     * craft was simply not among the legal ones, decision after decision. This is that line.
+     */
+    private void noteIllegalCraft(Resource after, String why) {
+        String note = after == null || why.isEmpty() ? "" : after + ": " + why;
+        if (note.equals(lastIllegalCraft)) {
+            return;
+        }
+        lastIllegalCraft = note;
+        if (!note.isEmpty()) {
+            log.info("The objective's own craft is not legal — {}", note);
+        }
     }
 
     /** Whether the bag holds anything a furnace will burn. The reserve is honoured where it is spent. */
@@ -1732,7 +2253,21 @@ public final class QLearningBrain {
      * move that just ended was going nowhere, in which case {@link #decide} has already taken the goal out
      * and what arrives here is a fresh attempt rather than the same stalled one.
      */
-    private void install(GoalAction action, ActionContext context, Aim aim, LocalPlayer player) {
+    private void install(GoalAction action, Skill skill, ActionContext context, Aim aim, LocalPlayer player) {
+        if (action == null) {
+            // A skill: the same skill still running is left to run; anything else is replaced.
+            if (installedGoal != null && installedSkill == skill && engine.isRunning(installedGoal)) {
+                return;
+            }
+            uninstall();
+            installedSkill = skill;
+            installedTarget = null;
+            installedGoal = skillGoal(skill);
+            engine.addGoal(GOAL_PRIORITY, installedGoal);
+            log.debug("Chose skill {} on {} while on {}", skill.name(), context.sighting().kind(),
+                    progression.stateKey());
+            return;
+        }
         // For a move that acts on a block, the block is what identity means: the same verb aimed somewhere
         // else is a different move and has to replace what is running. A heading is not part of it — a
         // journey re-aimed every decision would never get anywhere, which is the thing this is here to fix.
@@ -1756,6 +2291,63 @@ public final class QLearningBrain {
         log.debug("Chose {} on {} while on {}", action, context.sighting().kind(), progression.stateKey());
     }
 
+    /** The names of the legal columns, for telling the mentor what may actually be chosen. */
+    private static List<String> legalNames(List<String> columns, boolean[] legal) {
+        List<String> names = new java.util.ArrayList<>();
+        for (int i = 0; i < columns.size() && i < legal.length; i++) {
+            if (legal[i]) {
+                names.add(columns.get(i));
+            }
+        }
+        return names;
+    }
+
+    /** The name of the move in flight, built in or skill, or null between moves. */
+    private String installedName() {
+        if (installedAction != null) {
+            return installedAction.name();
+        }
+        return installedSkill == null ? null : installedSkill.name();
+    }
+
+    /** The skill behind a column past the built-in moves of a layer, or null when there is none. */
+    private static Skill skillAt(Skill.Layer layer, int column) {
+        int builtIn = switch (layer) {
+            case GOAL -> GoalAction.values().length;
+            case PASSAGE -> Passage.values().length;
+            case TACTIC -> Tactic.values().length;
+            case CRAFT -> CraftChoice.values().length;
+        };
+        List<Skill> skills = skillsOf(layer);
+        int index = column - builtIn;
+        return index >= 0 && index < skills.size() ? skills.get(index) : null;
+    }
+
+    /**
+     * Whether each of a layer's skills applies right now, written into the columns past the built-in
+     * moves. Read once per asking from one set of readings, so every skill sees the same second.
+     */
+    private void legalSkills(Skill.Layer layer, boolean[] allowed, LocalPlayer player) {
+        List<Skill> skills = skillsOf(layer);
+        if (skills.isEmpty()) {
+            return;
+        }
+        int builtIn = allowed.length - skills.size();
+        Readings readings = readings(player);
+        for (int i = 0; i < skills.size(); i++) {
+            int column = builtIn + i;
+            if (column >= 0 && column < allowed.length) {
+                boolean applies;
+                try {
+                    applies = skills.get(i).when().test(readings);
+                } catch (RuntimeException e) {
+                    applies = false;
+                }
+                allowed[column] = applies;
+            }
+        }
+    }
+
     /**
      * The craft the table asked for, made whichever way it can be.
      *
@@ -1763,7 +2355,43 @@ public final class QLearningBrain {
      * made at all; otherwise it is the body's own two-by-two, which needs no limbs and so runs in the
      * background alongside whatever else is going on.
      */
-    private void installCraft(CraftChoice choice, LocalPlayer player) {
+    private void installCraft(int column, LocalPlayer player) {
+        // A craft skill that has run its course is settled and taken out; one still going keeps the body,
+        // the way a table craft does, and the new choice waits its turn.
+        if (craftSkill != null) {
+            boolean started = engine.isRunning(craftSkill) || craftSkill.isDone() || craftSkill.failed();
+            boolean waitedTooLong = !started
+                    && System.currentTimeMillis() - craftSkillAddedAt > CRAFT_SKILL_PENDING_MILLIS;
+            if (craftSkill.isDone() || craftSkill.failed() || waitedTooLong) {
+                if (craftSkill.failed()) {
+                    log.info("Gave up on craft skill {} ({}); not trying again for a minute",
+                            craftSkill.skill().name(), craftSkill.failure());
+                    skillBackoff.put(craftSkill.skill().name(), System.currentTimeMillis() + CRAFT_BACKOFF_MILLIS);
+                }
+                removeCraftSkill();
+            } else {
+                // Running, or still waiting for the body: either way the choice stands.
+                return;
+            }
+        }
+        if (column >= CraftChoice.values().length) {
+            Skill skill = skillAt(Skill.Layer.CRAFT, column);
+            if (skill == null) {
+                return;
+            }
+            if ((craftGoal instanceof CraftAtTableGoal || craftGoal instanceof SmeltGoal)
+                    && engine.isRunning(craftGoal) && !craftGoal.isFinished()) {
+                return;
+            }
+            removeCraft();
+            craftSkill = skillGoal(skill);
+            craftSkillMakes = Readings.resource(skill.makes());
+            craftSkillAddedAt = System.currentTimeMillis();
+            log.info("Trying craft skill {}", skill.name());
+            engine.addGoal(CRAFT_AT_TABLE_PRIORITY, craftSkill);
+            return;
+        }
+        CraftChoice choice = CraftChoice.values()[column];
         if (craftGoal != null && craftGoal.gaveUp()) {
             // It ran and let go without finishing. Putting it straight back is how a sword craft held the
             // body in a shaft for seven minutes; it sits out a while and the plan's own work gets the body.
@@ -1809,6 +2437,18 @@ public final class QLearningBrain {
         if (craftGoal != null && craftGoal.isFinished()) {
             removeCraft();
         }
+        if (craftSkill != null && craftSkill.isDone()) {
+            removeCraftSkill();
+        }
+    }
+
+    private void removeCraftSkill() {
+        if (craftSkill != null) {
+            settleSkill(craftSkill);
+            engine.removeGoal(craftSkill);
+            craftSkill = null;
+            craftSkillMakes = null;
+        }
     }
 
     private void removeCraft() {
@@ -1820,10 +2460,12 @@ public final class QLearningBrain {
 
     private void uninstall() {
         if (installedGoal != null) {
+            settleSkill(installedGoal);
             engine.removeGoal(installedGoal);
         }
         installedGoal = null;
         installedAction = null;
+        installedSkill = null;
         installedTarget = null;
     }
 
@@ -1868,7 +2510,8 @@ public final class QLearningBrain {
                 state, action, timingChoice, craftChoice, stalls,
                 crafting.columns, crafting.table.rows(), CraftLog.get().recent(),
                 water.columns, water.table.rows(),
-                passage.columns, passage.table.rows()));
+                passage.columns, passage.table.rows(),
+                tactics.columns, tactics.table.rows()));
     }
 
     /** Goal decisions made across every folder opened so far. */
@@ -1953,6 +2596,9 @@ public final class QLearningBrain {
         removeCraft();
         removeSwim();
         removePassage();
+        removeTactic();
+        tacticSince = null;
+        tacticSeen = null;
         stuckSince = null;
         tables().forEach(Table::forget);
         active = null;
@@ -2012,7 +2658,7 @@ public final class QLearningBrain {
             } catch (IOException e) {
                 log.warn("Could not create {}: {}", folder, e.getMessage());
             }
-            this.goals = new Table(names(GoalAction.values()), folder.resolve("goals.txt"));
+            this.goals = new Table(columnsFor(Skill.Layer.GOAL), folder.resolve("goals.txt"));
             this.timing = new Table(names(Commitment.values()), folder.resolve("timing.txt"));
             this.placement = new Table(names(Spot.values()), folder.resolve("placement.txt"));
             this.position = new Table(names(Ground.values()), folder.resolve("position.txt"));
@@ -2045,31 +2691,41 @@ public final class QLearningBrain {
      */
     private static final class Table {
 
+        /** The column names, in order. Grows when a skill is added; never shrinks while the run is up. */
         private final List<String> columns;
         private final Path path;
         private final QTable table;
-        private final String signature;
         /** Every column legal, for the tables whose choices are never ruled out. */
-        private final boolean[] everything;
+        private boolean[] everything;
 
         private String pendingState;
         private int pendingColumn = -1;
 
         private Table(List<String> columns, Path path) {
-            this.columns = columns;
+            this.columns = new java.util.ArrayList<>(columns);
             this.path = path;
             this.table = new QTable(columns.size());
-            this.signature = String.join(",", columns);
             this.everything = new boolean[columns.size()];
             Arrays.fill(this.everything, true);
         }
 
+        /** Another column, at nothing known in every row: a skill the mentor has just written. */
+        private void addColumn(String name) {
+            if (columns.contains(name)) {
+                return;
+            }
+            columns.add(name);
+            table.resize(columns.size());
+            everything = new boolean[columns.size()];
+            Arrays.fill(everything, true);
+        }
+
         private void load() {
-            table.load(path, signature);
+            table.load(path, columns);
         }
 
         private void save() {
-            table.save(path, signature);
+            table.save(path, columns);
         }
 
         /** Credits the choice this table is still waiting on, then leaves it waiting on the next one. */
@@ -2090,6 +2746,15 @@ public final class QLearningBrain {
             pendingState = state;
             pendingColumn = column;
             return column;
+        }
+
+        /**
+         * Stakes the claim on a column without choosing: the choice was made earlier and is being held
+         * to, and the next reward is still its own. No exploration, no decision counted.
+         */
+        private void hold(String state, int column) {
+            pendingState = state;
+            pendingColumn = column;
         }
 
         /** Plants a taught value at a state and a named column, ignoring a column this table does not have. */

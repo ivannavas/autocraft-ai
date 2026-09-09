@@ -81,7 +81,7 @@ public enum Passage {
 
         @Override
         public boolean isApplicable(Obstruction here) {
-            return here.hasBlocks() && here.above() == Obstruction.Above.OPEN;
+            return here.hasBlocks() && here.above() == Obstruction.Above.OPEN && here.canStack();
         }
     },
 

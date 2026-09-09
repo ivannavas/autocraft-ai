@@ -8,6 +8,7 @@ import java.util.Map;
 import io.github.ivannavas.autocraftai.mob.ai.DecisionLog;
 import io.github.ivannavas.autocraftai.mob.ai.objective.InventoryCensus;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
+import io.github.ivannavas.autocraftai.mob.ai.skill.Skills;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.entity.LivingEntity;
@@ -244,6 +245,11 @@ public record Situation(
             text.append('\n');
         }
         text.append("Player's language: ").append(language).append('\n');
+        String skills = Skills.get().catalogue();
+        if (!skills.isEmpty()) {
+            text.append("Skills the player already has (do not write these again):\n")
+                    .append(skills).append('\n');
+        }
 
         if (isReview()) {
             text.append('\n');

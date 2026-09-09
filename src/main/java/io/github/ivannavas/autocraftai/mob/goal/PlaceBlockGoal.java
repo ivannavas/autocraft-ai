@@ -19,6 +19,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -53,6 +54,9 @@ public final class PlaceBlockGoal implements MobGoal {
 
     private final BlockPos target;
     private final Reserve reserve;
+    private final boolean mayUseTable;
+    /** A hotbar slot to place from whatever it holds, or -1 to pick a building block. */
+    private final int fixedSlot;
 
     private int ticksRunning;
     private boolean placed;
@@ -74,8 +78,31 @@ public final class PlaceBlockGoal implements MobGoal {
      * @param reserve what the plan is holding back, which never reaches the hand
      */
     public PlaceBlockGoal(BlockPos target, Reserve reserve) {
+        this(target, reserve, true);
+    }
+
+    /**
+     * @param mayUseTable whether the crafting table counts as a block to put down when nothing else
+     *                    does. It does for the moves that build a workbench; it does not for a tower, a
+     *                    wall or a cap, where the only table in the bag was walled into the ground.
+     */
+    public PlaceBlockGoal(BlockPos target, Reserve reserve, boolean mayUseTable) {
+        this(target, reserve, mayUseTable, -1);
+    }
+
+    /**
+     * Places whatever a given hotbar slot holds — a table, a furnace, a torch — rather than a building
+     * block of the goal's own choosing. What a skill means by "select it, then place it".
+     */
+    public PlaceBlockGoal(BlockPos target, int slot) {
+        this(target, Reserve.none(), true, slot);
+    }
+
+    private PlaceBlockGoal(BlockPos target, Reserve reserve, boolean mayUseTable, int fixedSlot) {
         this.target = target == null ? null : target.immutable();
         this.reserve = reserve == null ? Reserve.none() : reserve;
+        this.mayUseTable = mayUseTable;
+        this.fixedSlot = fixedSlot;
     }
 
     @Override
@@ -85,7 +112,16 @@ public final class PlaceBlockGoal implements MobGoal {
 
     @Override
     public boolean canUse(MobBody body) {
-        return !placed && hotbarSlotWithBlock(body.player(), reserve) >= 0;
+        return !placed && slot(body) >= 0;
+    }
+
+    private int slot(MobBody body) {
+        if (fixedSlot >= 0) {
+            ItemStack held = body.player().getInventory().getItem(fixedSlot);
+            return held.getItem() instanceof BlockItem ? fixedSlot : -1;
+        }
+        return mayUseTable ? hotbarSlotWithBlock(body.player(), reserve)
+                : hotbarSlotWithBuildingBlock(body.player(), reserve);
     }
 
     @Override
@@ -120,7 +156,7 @@ public final class PlaceBlockGoal implements MobGoal {
     @Override
     public void tick(MobBody body) {
         ticksRunning++;
-        int slot = hotbarSlotWithBlock(body.player(), reserve);
+        int slot = slot(body);
         if (slot < 0) {
             // Nothing to put down and no way to get any from here. Standing with an empty hand is the
             // clearest case there is of a decision that has stopped going anywhere.
@@ -265,6 +301,15 @@ public final class PlaceBlockGoal implements MobGoal {
      * @return the hotbar slot, or -1 when there is nothing spare to build with
      */
     public static int hotbarSlotWithBlock(LocalPlayer player, Reserve reserve) {
+        return slotWithBlock(player, reserve, true);
+    }
+
+    /** The same, never the crafting table: for towers, walls and caps, which a table is wasted on. */
+    public static int hotbarSlotWithBuildingBlock(LocalPlayer player, Reserve reserve) {
+        return slotWithBlock(player, reserve, false);
+    }
+
+    private static int slotWithBlock(LocalPlayer player, Reserve reserve, boolean mayUseTable) {
         if (player == null) {
             return -1;
         }
@@ -273,15 +318,23 @@ public final class PlaceBlockGoal implements MobGoal {
         // nothing being held back, which is nearly every decision of nearly every run.
         InventoryCensus held = reserve.isEmpty() ? InventoryCensus.empty()
                 : InventoryCensus.of(inventory);
+        // Plain building material first, and the crafting table only when there is nothing else: a
+        // table is a block, and a table walled into a corridor is a pickaxe that cannot be made.
+        int table = -1;
         for (int slot = 0; slot < Inventory.SELECTION_SIZE; slot++) {
             ItemStack stack = inventory.getItem(slot);
             // Building material only. A log is a block too, and a body that could place one did, four
             // times in a row, the moment placing stopped costing anything: see Resource#buildsWith.
-            if (Resource.buildsWith(stack) && reserve.allowsPlacing(stack, held)) {
-                return slot;
+            if (!Resource.buildsWith(stack) || !reserve.allowsPlacing(stack, held)) {
+                continue;
             }
+            if (Resource.of(stack).orElse(null) == Resource.CRAFTING_TABLE) {
+                table = table < 0 && mayUseTable ? slot : table;
+                continue;
+            }
+            return slot;
         }
-        return -1;
+        return table;
     }
 
     private Optional<MultiPlayerGameMode> gameMode() {

@@ -138,8 +138,14 @@ public enum Resource {
             return false;
         }
         // A block that only goes on certain ground — bamboo, a sapling, a flower — is not something to
-        // stand on or hide behind. What builds is a full cube that can go anywhere.
-        if (!item.getBlock().defaultBlockState().isSolid()) {
+        // stand on or hide behind. What builds is a full cube that can go anywhere: not a fence, which
+        // the map calls solid and which is a post and a half tall, not a slab, not a stair. A fence the
+        // body had broken off a pen was the block it tried to pillar with, and a pillar of fence posts
+        // is not a pillar.
+        BlockState state = item.getBlock().defaultBlockState();
+        if (!state.isSolid() || !net.minecraft.world.level.block.Block.isShapeFullBlock(
+                state.getCollisionShape(net.minecraft.world.level.EmptyBlockGetter.INSTANCE,
+                        net.minecraft.core.BlockPos.ZERO))) {
             return false;
         }
         // The crafting table is the one valuable that is meant to be put down: standing, it is what the
@@ -164,7 +170,7 @@ public enum Resource {
             PLANKS, Map.of(LOG, 1),
             STICK, Map.of(PLANKS, 2),
             CRAFTING_TABLE, Map.of(PLANKS, 4),
-            SWORD, Map.of(PLANKS, 1, STICK, 1),
+            SWORD, Map.of(PLANKS, 2, STICK, 1),
             PICKAXE, Map.of(PLANKS, 3, STICK, 2),
             STONE_PICKAXE, Map.of(COBBLESTONE, 3, STICK, 2),
             FURNACE, Map.of(COBBLESTONE, 8),
@@ -189,6 +195,21 @@ public enum Resource {
             }
         }
         return false;
+    }
+
+    /** The things that are three wide on the grid: made at a table, or not at all. */
+    private static final java.util.Set<Resource> AT_A_TABLE =
+            java.util.EnumSet.of(SWORD, PICKAXE, STONE_PICKAXE, FURNACE);
+
+    /**
+     * Whether making this takes a crafting table standing or in the bag.
+     *
+     * <p>What a plan for one of these is short of when it lists planks and sticks and no table — which
+     * the planner does, and did, and the run spent six minutes "prepared" for a stone pickaxe it had no
+     * table within a hundred blocks to make.
+     */
+    public boolean needsTable() {
+        return AT_A_TABLE.contains(this);
     }
 
     /**

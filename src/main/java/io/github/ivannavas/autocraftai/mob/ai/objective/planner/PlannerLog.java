@@ -117,6 +117,11 @@ public final class PlannerLog {
         add(new Entry(System.currentTimeMillis(), Source.MENTOR, Kind.ANSWERED, "", reason, reply, null));
     }
 
+    /** A word from the planner beside its answer: a skill it wrote, or one that was refused. */
+    public void plannerNoted(String text) {
+        add(new Entry(System.currentTimeMillis(), Source.PLANNER, Kind.KEPT, "", text, null, null));
+    }
+
     /** What became of a lesson: the body got free, or it did not. The brain reports it; the page shows it. */
     public void mentorNoted(String text) {
         add(new Entry(System.currentTimeMillis(), Source.MENTOR, Kind.KEPT, "", text, null, null));

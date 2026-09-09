@@ -73,6 +73,21 @@ public record InventoryCensus(Map<Resource, Integer> counts) {
         return new InventoryCensus(total);
     }
 
+    /**
+     * This census with one count raised to at least the given number.
+     *
+     * <p>For the one thing the bag does not have to hold to count as had: a crafting table standing
+     * within reach is a crafting table for every purpose a plan has.
+     */
+    public InventoryCensus atLeast(Resource resource, int amount) {
+        if (count(resource) >= amount) {
+            return this;
+        }
+        Map<Resource, Integer> raised = new EnumMap<>(counts);
+        raised.put(resource, amount);
+        return new InventoryCensus(raised);
+    }
+
     /** How many more of this the body holds than the given earlier census. Never negative. */
     public int gainedSince(InventoryCensus earlier, Resource resource) {
         return Math.max(0, count(resource) - earlier.count(resource));

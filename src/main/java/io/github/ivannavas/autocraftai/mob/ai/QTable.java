@@ -49,7 +49,7 @@ public final class QTable {
 
     private final Map<String, double[]> values = new HashMap<>();
     private final Random random = new Random();
-    private final int actionCount;
+    private int actionCount;
 
     private double epsilon = EPSILON_START;
     private long decisions;
@@ -83,7 +83,28 @@ public final class QTable {
 
     /** Action values for a state, created at zero the first time the state is seen. */
     public double[] valuesFor(String state) {
-        return values.computeIfAbsent(state, key -> new double[actionCount]);
+        double[] row = values.computeIfAbsent(state, key -> new double[actionCount]);
+        if (row.length < actionCount) {
+            // A row written before a column was added: padded with nothing known, like a new state's.
+            row = Arrays.copyOf(row, actionCount);
+            values.put(state, row);
+        }
+        return row;
+    }
+
+    /**
+     * Gives the table another column, at zero in every row.
+     *
+     * <p>What lets a move be added while the run is going — a skill the mentor has just written. Every
+     * state it is asked about from now on has a value for it, which is nothing known, which is what
+     * the exploration rate is for.
+     */
+    public void resize(int columns) {
+        if (columns <= actionCount) {
+            return;
+        }
+        actionCount = columns;
+        values.replaceAll((state, row) -> Arrays.copyOf(row, columns));
     }
 
     /**
@@ -175,10 +196,16 @@ public final class QTable {
     // --- persistence ------------------------------------------------------------------------------
 
     /**
-     * Reads a table back. A file written for a different action set is dropped rather than read, since its
-     * columns no longer mean what this build thinks they mean.
+     * Reads a table back, matching its columns to this build's by name.
+     *
+     * <p>A file used to be dropped whole when its column list differed from the build's, which was the
+     * right thing while columns only ever changed when the code did. Now a column can be a skill the
+     * mentor wrote yesterday, and one can be retired, so the columns are matched by name: what the
+     * file has that this build has is kept, in this build's order; a column the file lacks starts at
+     * nothing; a column the build lacks is left behind. A renamed move still loses its values, which is
+     * what renaming means.
      */
-    public void load(Path path, String actionSignature) {
+    public void load(Path path, List<String> columns) {
         if (!Files.isRegularFile(path)) {
             log.info("No q-table at {}, starting from nothing", path);
             return;
@@ -187,6 +214,7 @@ public final class QTable {
             Map<String, double[]> loaded = new HashMap<>();
             double loadedEpsilon = EPSILON_START;
             long loadedDecisions = 0;
+            List<String> saved = columns;
 
             for (String line : Files.readAllLines(path, StandardCharsets.UTF_8)) {
                 if (line.isBlank() || line.startsWith("#")) {
@@ -201,15 +229,15 @@ public final class QTable {
 
                 switch (key) {
                     case ACTIONS_KEY -> {
-                        if (!value.equals(actionSignature)) {
-                            log.warn("Q-table at {} was written for actions [{}] but this build has [{}];"
-                                    + " discarding it", path, value, actionSignature);
-                            return;
+                        saved = List.of(value.split(","));
+                        if (!saved.equals(columns)) {
+                            log.info("Q-table at {} was written for [{}]; matching its columns to [{}] by name",
+                                    path, value, String.join(",", columns));
                         }
                     }
                     case EPSILON_KEY -> loadedEpsilon = Double.parseDouble(value);
                     case DECISIONS_KEY -> loadedDecisions = Long.parseLong(value);
-                    default -> loaded.put(key, parseRow(value));
+                    default -> loaded.put(key, parseRow(value, saved, columns));
                 }
             }
 
@@ -225,11 +253,15 @@ public final class QTable {
         }
     }
 
-    private double[] parseRow(String value) {
+    /** A saved row rearranged into this build's columns, by name. */
+    private double[] parseRow(String value, List<String> saved, List<String> columns) {
         String[] parts = value.split(",");
         double[] row = new double[actionCount];
-        for (int i = 0; i < Math.min(parts.length, actionCount); i++) {
-            row[i] = Double.parseDouble(parts[i].trim());
+        for (int i = 0; i < Math.min(parts.length, saved.size()); i++) {
+            int column = columns.indexOf(saved.get(i));
+            if (column >= 0 && column < actionCount) {
+                row[column] = Double.parseDouble(parts[i].trim());
+            }
         }
         return row;
     }
@@ -241,12 +273,12 @@ public final class QTable {
      * of learning as a truncated file. The reader survives a corrupt table by starting over, which is
      * exactly the outcome worth never reaching.
      */
-    public void save(Path path, String actionSignature) {
+    public void save(Path path, List<String> columns) {
         try {
             Files.createDirectories(path.getParent());
             List<String> lines = new ArrayList<>(values.size() + 4);
             lines.add(FORMAT_HEADER);
-            lines.add(ACTIONS_KEY + "=" + actionSignature);
+            lines.add(ACTIONS_KEY + "=" + String.join(",", columns));
             lines.add(EPSILON_KEY + "=" + format(epsilon));
             lines.add(DECISIONS_KEY + "=" + decisions);
             values.entrySet().stream()
@@ -286,7 +318,9 @@ public final class QTable {
     }
 
     private String formatRow(double[] row) {
-        return Arrays.stream(row).mapToObj(QTable::format).collect(Collectors.joining(","));
+        // Padded to the column count, so a row from before a column was added is written whole.
+        double[] whole = row.length < actionCount ? Arrays.copyOf(row, actionCount) : row;
+        return Arrays.stream(whole).mapToObj(QTable::format).collect(Collectors.joining(","));
     }
 
     /** Root locale on purpose: a decimal comma would make the row unreadable to its own parser. */

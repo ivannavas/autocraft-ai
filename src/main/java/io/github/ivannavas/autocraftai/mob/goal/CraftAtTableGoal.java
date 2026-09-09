@@ -171,7 +171,12 @@ public final class CraftAtTableGoal implements CraftingGoal {
 
     @Override
     public void stop(MobBody body) {
-        gaveUp = !crafted;
+        // Given up only when this goal itself ran out of time or of progress. Being stopped because
+        // something with a higher claim took the legs — a swim, a wall — is not giving up, and calling
+        // it that put the craft on a minute's backoff every time the body got its feet wet on the way
+        // to the table: the stone pickaxe was "given up" twice inside four seconds, and never made.
+        gaveUp = !crafted && (ticksRunning >= GIVE_UP_TICKS
+                || advance.stalledTicks() >= STALLED_GIVE_UP_TICKS);
         body.moveControl().stop();
         closeTable(body.player());
     }

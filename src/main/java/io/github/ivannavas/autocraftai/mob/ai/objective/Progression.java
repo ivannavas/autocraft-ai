@@ -12,7 +12,9 @@ import java.util.Set;
 import java.util.function.Predicate;
 
 import io.github.ivannavas.autocraftai.mob.ai.FocusKind;
+import io.github.ivannavas.autocraftai.mob.ai.Recipes;
 import io.github.ivannavas.autocraftai.mob.ai.Sighting;
+import io.github.ivannavas.autocraftai.mob.goal.CraftAtTableGoal;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.ClaudePlanner;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.ObjectivePlanner;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.Situation;
@@ -109,6 +111,18 @@ public final class Progression {
     private static final int REVIEW_WHEN_STUCK_STEPS = 60;
 
     /**
+     * How long an objective short of something the bag cannot make is left before the planner is asked
+     * about it.
+     *
+     * <p>A minute rather than the ordinary window, because the shortage was visible from the first
+     * decision and nothing the body can do here will end it: two logs short of the planks, with no
+     * tree in the plan, is a body that has to be sent for logs, and "8 x planks" sat for nine minutes
+     * while the stall clock ran down before anyone said so. Once per objective — the planner may answer
+     * that the objective stands, and it is not asked the same thing every minute after.
+     */
+    private static final int REVIEW_WHEN_SHORT_STEPS = 60;
+
+    /**
      * Paid once per item on the shopping list, the moment the bag first holds as many as the plan said
      * it would need — for everything but the objective's own item, which the objective pays for itself.
      *
@@ -166,6 +180,8 @@ public final class Progression {
     private long progressCount;
     /** The items on the shopping list the bag has already reached, so each is paid for once. */
     private final Set<Resource> readied = EnumSet.noneOf(Resource.class);
+    /** Whether the objective in hand has already had its early review for a shortage it cannot make up. */
+    private boolean reviewedShort;
 
     /**
      * Told the name of each objective the moment it is reached. No-op until something wants it.
@@ -439,9 +455,24 @@ public final class Progression {
     /** Everything the run knows about itself that the world does not show, attached to a situation. */
     private Situation situation(LocalPlayer player, InventoryCensus obtained, String objective) {
         Situation base = Situation.of(player, obtained, achieved, objective);
-        List<String> shortOf = current == null ? List.of()
-                : shortOf(InventoryCensus.of(player.getInventory()), player.getInventory());
+        List<String> shortOf = current == null ? List.of() : shortOf(player);
         return base.withRun(deaths, lastDeath, shortOf, minutesWithoutProgress(), mentorNote);
+    }
+
+    /**
+     * The bag as the plan counts it: what is held, and a crafting table when one stands within reach.
+     *
+     * <p>A table is the one thing on a shopping list the body does not have to be carrying to have. It
+     * is placed to be used, and a body standing beside its own workbench is not short of a table
+     * however empty the bag — while a body a hundred blocks from it is, whatever the plan said. Every
+     * question about readiness is asked of this census rather than the bag's own.
+     */
+    public InventoryCensus effective(InventoryCensus held, LocalPlayer player) {
+        if (player == null || held.count(Resource.CRAFTING_TABLE) > 0
+                || !CraftAtTableGoal.tableInSight(player)) {
+            return held;
+        }
+        return held.atLeast(Resource.CRAFTING_TABLE, 1);
     }
 
     /**
@@ -452,11 +483,13 @@ public final class Progression {
      * named that will not drop for anything in the hotbar, which is the shortage that makes the whole
      * objective futile rather than merely unfinished.
      */
-    public List<String> shortOf(InventoryCensus held, Inventory inventory) {
+    public List<String> shortOf(LocalPlayer player) {
         List<String> missing = new ArrayList<>();
-        if (current == null) {
+        if (current == null || player == null) {
             return missing;
         }
+        Inventory inventory = player.getInventory();
+        InventoryCensus held = effective(InventoryCensus.of(inventory), player);
         Resource own = current.scores().orElse(null);
         for (Map.Entry<Resource, Integer> need : needs.entrySet()) {
             if (need.getKey() != own && held.count(need.getKey()) < need.getValue()) {
@@ -533,6 +566,43 @@ public final class Progression {
     }
 
     /**
+     * Whether the objective is short of something the bag cannot make up from here: a thing that is
+     * found rather than made, a made thing whose ingredients are not in the bag, or a tool.
+     *
+     * <p>What separates a shortage the crafting layer will close in a few seconds from one that is the
+     * planner's to answer. Asked with the recipe book, because "makeable" is its word and not this
+     * class's.
+     */
+    private boolean shortOfWhatItCannotMake(StepContext context) {
+        if (current == null || context.player() == null) {
+            return false;
+        }
+        Inventory inventory = context.player().getInventory();
+        if (!toolsMissing(inventory).isEmpty()) {
+            return true;
+        }
+        InventoryCensus held = effective(context.after(), context.player());
+        Resource own = current.scores().orElse(null);
+        Set<Resource> makeable = null;
+        for (Map.Entry<Resource, Integer> need : needs.entrySet()) {
+            Resource item = need.getKey();
+            if (item == own || held.count(item) >= need.getValue()) {
+                continue;
+            }
+            if (item.ingredients().isEmpty()) {
+                return true;
+            }
+            if (makeable == null) {
+                makeable = Recipes.craftableNow(context.player());
+            }
+            if (!makeable.contains(item)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Drops the plan, so the next decision asks for a new one.
      *
      * <p>Called when an episode ends. A body that has just died is standing somewhere else with an empty
@@ -559,6 +629,7 @@ public final class Progression {
         bestProgress = Double.NEGATIVE_INFINITY;
         stepsSinceProgress = 0;
         readied.clear();
+        reviewedShort = false;
     }
 
     /**
@@ -669,12 +740,13 @@ public final class Progression {
         }
         double total = 0.0;
         Resource own = current.scores().orElse(null);
+        InventoryCensus held = effective(context.after(), context.player());
         for (Map.Entry<Resource, Integer> need : needs.entrySet()) {
             Resource item = need.getKey();
             if (item == own || readied.contains(item)) {
                 continue;
             }
-            if (context.after().count(item) >= need.getValue()) {
+            if (held.count(item) >= need.getValue()) {
                 readied.add(item);
                 total += READY_BONUS;
             }
@@ -698,9 +770,10 @@ public final class Progression {
         }
         double along = current.progress(context);
         Resource own = current.scores().orElse(null);
+        InventoryCensus held = effective(context.after(), context.player());
         for (Map.Entry<Resource, Integer> need : needs.entrySet()) {
             if (need.getKey() != own) {
-                along += Math.min(need.getValue(), context.after().count(need.getKey()));
+                along += Math.min(need.getValue(), held.count(need.getKey()));
             }
         }
         if (startedAt != null && context.positionAfter() != null && "GO".equals(current.shape())) {
@@ -765,11 +838,21 @@ public final class Progression {
 
         // Not stuck, just long: ask the planner whether the objective is still right. Rarely, and the
         // planner's own cache drops the call when nothing about the situation has changed since last time.
-        if (stepsOnCurrent < REVIEW_AFTER_STEPS) {
+        // Sooner, once, when the objective is short of something the bag cannot make: that is not a
+        // slow objective, it is one that needs another objective in front of it.
+        boolean shortEarly = !reviewedShort && stepsOnCurrent >= REVIEW_WHEN_SHORT_STEPS
+                && shortOfWhatItCannotMake(context);
+        if (stepsOnCurrent < REVIEW_AFTER_STEPS && !shortEarly) {
             return;
         }
+        if (shortEarly) {
+            reviewedShort = true;
+            log.info("{} is short of something it cannot make; asking the planner to look at it",
+                    current.name());
+        } else {
+            log.info("{} has been going a while; asking the planner to look at it", current.name());
+        }
         stepsOnCurrent = 0;
-        log.info("{} has been going a while; asking the planner to look at it", current.name());
         String objective = current.toString();
         planner.consider(() -> situation(context.player(), context.obtained(), objective));
     }
@@ -836,8 +919,9 @@ public final class Progression {
         forgetProgress();
         startedAt = context.positionAfter();
         Resource own = current.scores().orElse(null);
+        InventoryCensus held = effective(context.after(), context.player());
         for (Map.Entry<Resource, Integer> need : needs.entrySet()) {
-            if (need.getKey() != own && context.after().count(need.getKey()) >= need.getValue()) {
+            if (need.getKey() != own && held.count(need.getKey()) >= need.getValue()) {
                 readied.add(need.getKey());
             }
         }
@@ -847,7 +931,7 @@ public final class Progression {
             // Nothing to have anticipated: a plain gather with nothing behind it is neither.
             return 0.0;
         }
-        if (prepared(context.after(), inventory)) {
+        if (prepared(held, inventory)) {
             log.info("Prepared for {}: everything it needs is in hand", current.name());
             return PREPARED_BONUS;
         }

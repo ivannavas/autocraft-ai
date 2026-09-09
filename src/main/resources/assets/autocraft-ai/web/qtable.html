@@ -829,6 +829,15 @@
       "water": "When it is in the water", "passage": "When the terrain is in the way",
       "head.passage": "Wants to go where, what is in the way",
       "empty.passage": "nothing has been in its way yet",
+      "tactics": "When the surroundings call for it",
+      "head.tactics": "What is around it, and how it stands",
+      "empty.tactics": "the surroundings have not called for anything yet",
+      "threat.NONE": "nothing hostile", "threat.ZOMBIE": "zombie", "threat.SKELETON": "skeleton",
+      "threat.CREEPER": "creeper", "threat.SPIDER": "spider", "threat.OTHER": "hostile",
+      "threat.MANY": "several kinds",
+      "cover.SKY": "open sky", "cover.PIT": "in a pit", "cover.ROOF": "under a roof",
+      "light.DAY": "day", "light.NIGHT": "night", "light.DARK": "dark",
+      "qualifier.armed": "armed", "qualifier.unarmed": "unarmed",
       "want.UP": "wants up", "want.DOWN": "wants down", "want.FLAT": "wants on",
       "want.TOWARD": "wants the block",
       "ahead.NONE": "clear ahead", "ahead.STEP": "a step ahead", "ahead.WALL": "a wall ahead",
@@ -1158,6 +1167,27 @@
   }
 
   /**
+   * The tactics table is keyed by "<hostiles><count>|<nearest>|<armed>|<health>|<cover>|<light>|<blocks>":
+   * what is hostile around the body and how many, how close the nearest is, whether it has a sword,
+   * how hurt it is, whether it is under the sky or a roof or down a pit, night or day, and how many
+   * blocks it could build with (B many, b a few, - none).
+   */
+  function tacticLabel(key, verdict) {
+    const [threat, nearest, armed, health, cover, light, blocks] = key.split("|");
+    const match = /^([A-Z+]*?)(\d)$/.exec(threat || "NONE0");
+    const kinds = (match ? match[1] : threat || "NONE").split("+").filter(Boolean)
+      .map(k => t("threat." + k)).join(" + ") || t("threat.NONE");
+    const count = match && match[2] !== "0" ? " ×" + match[2] + (match[2] === "3" ? "+" : "") : "";
+    const near = nearest && nearest !== "NONE" ? " · " + t("distance." + nearest) : "";
+    const stock = blocks === "B" ? " · " + t("qualifier.blocks")
+      : blocks === "b" ? " · " + t("qualifier.blocks") + " (few)" : "";
+    return `<span class="focus">${kinds}${count}${near}</span>` +
+           `<span class="qualifier"> · ${t(armed === "A" ? "qualifier.armed" : "qualifier.unarmed")}` +
+           ` · ${t("health." + (health || "HIGH"))} · ${t("cover." + (cover || "SKY"))}` +
+           ` · ${t("light." + (light || "DAY"))}${stock}</span>` + verdict;
+  }
+
+  /**
    * The placement table is keyed by "<source>|<verb>|<flags>": what it is working on, what it is about to
    * do to it, and what is around it. All three matter, which is why all three are shown.
    */
@@ -1365,7 +1395,10 @@
         rows: data.waterRows || [], group: "swim", label: waterLabel, current: null, empty: "empty.water" }) +
       tableHtml({ title: "passage", sideHead: "head.passage", actions: data.passageActions || [],
         rows: data.passageRows || [], group: "passage", label: passageLabel, current: null,
-        empty: "empty.passage" });
+        empty: "empty.passage" }) +
+      tableHtml({ title: "tactics", sideHead: "head.tactics", actions: data.tacticActions || [],
+        rows: data.tacticRows || [], group: "tactic", label: tacticLabel, current: null,
+        empty: "empty.tactics" });
   }
 
   /** "45s" / "3m", so a line can say how long ago it was without a clock on the page. */

@@ -5,10 +5,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -23,6 +25,8 @@ import java.util.regex.Pattern;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.PlannerLog;
+import io.github.ivannavas.autocraftai.mob.ai.skill.Skill;
+import io.github.ivannavas.autocraftai.mob.ai.skill.Skills;
 import io.github.ivannavas.sprout.annotation.Agent;
 import io.github.ivannavas.sprout.anthropic.executor.AnthropicModelExecutor;
 import io.github.ivannavas.sprout.impl.InMemoryConversationStore;
@@ -78,6 +82,8 @@ public final class ClaudeMentor implements Mentor {
 
     private final AtomicReference<Rescue> answer = new AtomicReference<>();
     private final AtomicBoolean asking = new AtomicBoolean();
+    /** What was wrong with the last skill written, told back on the next asking so it is not repeated. */
+    private volatile String lastSkillProblem = "";
     private final AtomicLong silentUntil = new AtomicLong();
     private final AtomicLong lastAsked = new AtomicLong();
 
@@ -152,10 +158,15 @@ public final class ClaudeMentor implements Mentor {
                 : "\nYou already taught this once (" + before.summary()
                         + ") and it is still " + (asked.stalled() ? "getting nowhere" : "stuck")
                         + ". Teach a different way out" + (asked.stalled() ? ", or replan." : "."));
+        if (!lastSkillProblem.isEmpty() && asked.skillProblem().isEmpty()) {
+            prompt += "\nThe last skill you wrote was refused: " + lastSkillProblem
+                    + ". Fix it if you write one again.";
+        }
         PlannerLog.get().mentorAsked((asked.stalled() ? "stall: " : "unblock: ") + asked.summary(), prompt);
+        final String question = prompt;
         thread.execute(() -> {
             try {
-                teach(asked, prompt, before);
+                teach(asked, question, before);
             } finally {
                 asking.set(false);
             }
@@ -165,10 +176,39 @@ public final class ClaudeMentor implements Mentor {
     private void teach(MentorAsk asked, String prompt, Taught before) {
         try {
             String reply = agent.execute(CONVERSATION, prompt).response();
+            // A skill the mentor wrote, checked before anything is done with it. Its name is a move
+            // from now on, so lessons in the same reply may name it.
+            Skill skill = null;
+            String skillProblem = "";
+            Optional<JsonNode> written = object(reply).map(node -> node.path("skill"))
+                    .filter(JsonNode::isObject);
+            if (written.isPresent()) {
+                try {
+                    skill = Skill.parse(written.get(), Skills.taken());
+                } catch (IllegalArgumentException e) {
+                    skillProblem = e.getMessage();
+                    log.info("The mentor's skill was refused: {}", skillProblem);
+                }
+            }
+            lastSkillProblem = skillProblem;
+            List<String> named = new ArrayList<>(asked.actions());
+            List<String> namedPassage = new ArrayList<>(asked.passageMoves());
+            List<String> namedTactics = new ArrayList<>(asked.tacticMoves());
+            List<String> namedCrafts = new ArrayList<>(asked.craftMoves());
+            if (skill != null) {
+                switch (skill.layer()) {
+                    case GOAL -> named.add(skill.name());
+                    case PASSAGE -> namedPassage.add(skill.name());
+                    case TACTIC -> namedTactics.add(skill.name());
+                    case CRAFT -> namedCrafts.add(skill.name());
+                }
+            }
             Rescue rescue = new Rescue(asked.reason(), asked.pursuit(), asked.stuckState(),
-                    lessons(reply, "lessons", asked.actions()),
-                    asked.terrain(), lessons(reply, "passage", asked.passageMoves()),
-                    asked.craftKey(), lessons(reply, "craft", asked.craftMoves()),
+                    lessons(reply, "lessons", named),
+                    asked.terrain(), lessons(reply, "passage", namedPassage),
+                    asked.craftKey(), lessons(reply, "craft", namedCrafts),
+                    asked.tacticKey(), lessons(reply, "tactic", namedTactics),
+                    skill, skillProblem,
                     // Only a stall may be given up on. A pinned body is a block, and a block is
                     // answered with a way out, not with a different errand to be blocked on.
                     asked.stalled() ? replanIn(reply) : "");
@@ -235,6 +275,7 @@ public final class ClaudeMentor implements Mentor {
         return object(reply).map(node -> node.path("reason").asText("")).orElse("");
     }
 
+    /** Every name a new skill may not take: the moves of every table, and the skills already written. */
     /**
      * The mentor giving the objective up, as the sentence it gave, or empty when it did not.
      *
