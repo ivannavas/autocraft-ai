@@ -51,7 +51,10 @@ public final class WallOffGoal implements MobGoal {
 
     @Override
     public boolean canUse(MobBody body) {
-        return !done && PlaceBlockGoal.hotbarSlotWithBuildingBlock(body.player(), reserve) >= 0;
+        // Given up stays given up: start() keeps the count, so a wall that ran out its ticks is not
+        // offered the body again next tick and restarted forty times a second.
+        return !done && ticksRunning < GIVE_UP_TICKS
+                && PlaceBlockGoal.hotbarSlotWithBuildingBlock(body.player(), reserve) >= 0;
     }
 
     @Override

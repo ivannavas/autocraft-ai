@@ -65,7 +65,10 @@ public final class DaylightGoal implements MobGoal {
 
     @Override
     public boolean canUse(MobBody body) {
-        return !done && !out(body);
+        // A climb that has run out its ticks, or stalled, stays given up: start() keeps the counters, and
+        // offering it the body again next tick is what had it jumping, breaking the ceiling and placing
+        // a block forty times a second on the box without ever getting anywhere.
+        return !done && !out(body) && ticksRunning < GIVE_UP_TICKS && ticksStalled < STALLED_TICKS;
     }
 
     /** Out: the sky over the head and the feet up at the level of the ground around. */

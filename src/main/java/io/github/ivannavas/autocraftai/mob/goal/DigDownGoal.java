@@ -68,7 +68,8 @@ public final class DigDownGoal implements MobGoal {
 
     @Override
     public boolean canUse(MobBody body) {
-        return body.onGround() && !unsafe && diggable(body, under(body));
+        // As above: a shaft that ran out its ticks is not restarted every tick until the decision ends.
+        return body.onGround() && !unsafe && ticksRunning < GIVE_UP_TICKS && diggable(body, under(body));
     }
 
     @Override
