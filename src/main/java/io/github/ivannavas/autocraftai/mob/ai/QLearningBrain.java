@@ -2458,7 +2458,23 @@ public final class QLearningBrain {
             return false;
         }
         Resource own = progression.current().flatMap(Phase::scores).orElse(null);
-        return dropped == own || dropped == Resource.FOOD || progression.needs().containsKey(dropped);
+        if (dropped == own || dropped == Resource.FOOD) {
+            return true;
+        }
+        // The ore of a smelted objective is the objective's own drop: raw iron for iron.
+        if (own != null && own.ingredients().containsKey(dropped)) {
+            return true;
+        }
+        // A thing on the list is prized while the bag is short of it, not for ever. With four
+        // cobblestone on the list and fifty in the bag, every cobblestone that fell out of the wall
+        // being cleared to the ore was walked to by rule, and the ore was walked away from by the same
+        // rule, turn and turn about.
+        Integer need = progression.needs().get(dropped);
+        if (need == null) {
+            return false;
+        }
+        LocalPlayer player = Minecraft.getInstance().player;
+        return player != null && InventoryCensus.of(player.getInventory()).count(dropped) < need;
     }
 
     /** Leaves only the one move — and eating, when it was legal, for the reason given at the block rule. */
