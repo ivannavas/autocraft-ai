@@ -31,7 +31,7 @@ public interface Mentor {
      * not. Quoted back with the next question about the same pursuit, so an answer knows what has been
      * tried and how it went, rather than only what was said about this one state.
      */
-    default void judged(Rescue rescue, boolean worked, long decisions) {
+    default void judged(Rescue rescue, String verdict) {
     }
 
     /** Forgets which blocks it has taught, for a body that has just arrived in a fresh world. */

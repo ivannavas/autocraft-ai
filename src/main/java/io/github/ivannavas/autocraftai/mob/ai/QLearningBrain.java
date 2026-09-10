@@ -812,6 +812,36 @@ public final class QLearningBrain {
             rescue.tacticLessons().forEach(lesson ->
                     tactics.seed(rescue.tacticKey(), lesson.action(), lesson.value()));
         }
+        // The answer took its time, and the body kept moving. The rows above are taught whatever
+        // happened since: a lesson is about a situation, and the situation described is still the one
+        // it describes. A decision about the present is checked against the present. A replan for an
+        // objective that has already changed is thrown away, and a lesson that landed after the body
+        // had got free on its own did nothing and is not judged, so it earns no "worked".
+        long waited = Math.max(0L, (System.currentTimeMillis() - rescue.askedAt()) / 1000L);
+        // The situation names the objective the way the planner sees it, which is the phase's own
+        // wording, so that is what the objective in hand is compared as.
+        String objectiveNow = progression.current().map(Object::toString).orElse("");
+        boolean sameObjective = rescue.objective().isEmpty() || objectiveNow.equals(rescue.objective());
+        LocalPlayer body = Minecraft.getInstance().player;
+        Optional<Vec3> askedFrom = territory.positionAgo((int) Math.min(waited, Integer.MAX_VALUE));
+        boolean movedOn = body != null && askedFrom.isPresent()
+                && body.position().distanceTo(askedFrom.get()) >= RESCUE_MOVED;
+        boolean stillBlocked = rescue.stalled()
+                ? progression.stepsWithoutProgress() >= STALLED_BEFORE_MENTOR
+                : territory.pinned() && !movedOn;
+        if (!sameObjective || !stillBlocked) {
+            String why = !sameObjective
+                    ? "the objective had changed to " + (objectiveNow.isEmpty() ? "nothing" : objectiveNow)
+                    : rescue.stalled() ? "the objective had got nearer" : "the body had already moved on";
+            String late = "arrived " + waited + " s after the question, by which time " + why
+                    + "; the rows are taught, " + (rescue.asksToReplan() ? "the replan is dropped, " : "")
+                    + "nothing is judged";
+            log.info("Mentor lesson ({}) {}", rescue.summary(), late);
+            PlannerLog.get().mentorNoted(late + " (" + rescue.summary() + ")");
+            mentor.judged(rescue, late);
+            lastRescue = null;
+            return;
+        }
         if (rescue.asksToReplan()) {
             // The one lesson no table can hold: the objective itself is the problem. The plan goes and
             // the planner is asked again with the mentor's sentence in the question; there is nothing to
@@ -858,7 +888,7 @@ public final class QLearningBrain {
             log.info("Mentor lesson worked: {} after {} decisions ({})", what, since, lastRescue.summary());
             PlannerLog.get().mentorNoted("worked: " + what + " after " + since + " decisions ("
                     + lastRescue.summary() + ")");
-            mentor.judged(lastRescue, true, since);
+            mentor.judged(lastRescue, "worked: " + what + " after " + since + " decisions");
             lastRescue = null;
         } else if (since >= window) {
             String still = stall ? "no nearer" : "still pinned";
@@ -866,7 +896,7 @@ public final class QLearningBrain {
                     lastRescue.summary());
             PlannerLog.get().mentorNoted("did not work: " + still + " after " + since + " decisions ("
                     + lastRescue.summary() + ")");
-            mentor.judged(lastRescue, false, since);
+            mentor.judged(lastRescue, "did not work: " + still + " after " + since + " decisions");
             lastRescue = null;
         }
     }
@@ -2874,7 +2904,18 @@ public final class QLearningBrain {
 
     /** Throws away everything learned and writes the wipe out, so it is what survives to the next session. */
     public void clearLearning() {
+        // Whatever is running goes first: a skill goal in flight belongs to a skill about to be gone.
+        forget();
+        removeCraftSkill();
+        skillBackoff.clear();
         tables().forEach(table -> table.table.clear());
+        // The skills are learning too, and each live one is a column of its layer's table. Cleared
+        // together, and the tables put back to their built-in columns while they hold no rows.
+        Skills.get().clear();
+        crafting.rebuild(columnsFor(Skill.Layer.CRAFT));
+        passage.rebuild(columnsFor(Skill.Layer.PASSAGE));
+        tactics.rebuild(columnsFor(Skill.Layer.TACTIC));
+        suites.values().forEach(suite -> suite.goals.rebuild(columnsFor(Skill.Layer.GOAL)));
         // The folders opened this session are wiped above and written out empty below. The ones on disk
         // from earlier sessions are not open, so their files go instead.
         Path folders = directory.resolve(PURSUITS);
@@ -2893,6 +2934,9 @@ public final class QLearningBrain {
         }
         CraftLog.get().clear();
         PlannerLog.get().clear();
+        // A coach that remembers teaching a run that no longer exists would refuse to teach its first
+        // block again.
+        mentor.reset();
         forget();
         save();
     }
@@ -3014,6 +3058,17 @@ public final class QLearningBrain {
             this.table = new QTable(columns.size());
             this.everything = new boolean[columns.size()];
             Arrays.fill(this.everything, true);
+        }
+
+        /** The columns put back to the given set, for a table that has just been emptied. */
+        private void rebuild(List<String> names) {
+            columns.clear();
+            columns.addAll(names);
+            table.width(columns.size());
+            everything = new boolean[columns.size()];
+            Arrays.fill(everything, true);
+            pendingState = null;
+            pendingColumn = -1;
         }
 
         /** Another column, at nothing known in every row: a skill the mentor has just written. */

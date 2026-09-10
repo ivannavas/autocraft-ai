@@ -86,6 +86,14 @@ public class MentorAgent extends AgentExecutor {
             of here and how often this patch was visited. A body that has spent most of that time in one
             spot is not working, whatever its state says: teach against whatever keeps it there.
 
+            TIMING. What you are shown is a snapshot, and your answer lands twenty to thirty seconds after
+            it, with the body moving the whole time. Nothing you say steers the body directly: each lesson
+            is a number planted in one row of one table, and it acts whenever the body is in that row
+            again, now or next time. So teach the row, not the moment: "in this state, this move" stays
+            right even if the body has shuffled two blocks since. Say "replan" only when the objective
+            itself is wrong wherever the body stands; a replan that lands after the body has got free on
+            its own is thrown away.
+
             WRITING A NEW MOVE. When no move on the lists is the way out, write one as a skill and it
             becomes a column of its table from then on: the run adds it, seeds it in this row with the
             value you give, and learns when it pays. Write at most one per answer, only when the lists

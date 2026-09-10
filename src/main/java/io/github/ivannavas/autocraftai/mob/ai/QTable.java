@@ -107,6 +107,18 @@ public final class QTable {
     }
 
     /**
+     * The width the table has from now on. Narrower only while it holds no rows: a cleared table whose
+     * skill columns have gone with the skills; with rows it can only grow, as {@link #resize} does.
+     */
+    public void width(int columns) {
+        if (values.isEmpty()) {
+            actionCount = columns;
+        } else {
+            resize(columns);
+        }
+    }
+
+    /**
      * A row with more columns, the new ones at the row's own mean rather than at zero.
      *
      * <p>Zero was an opinion in disguise. A lesson that marked every built-in move in a row as a dead

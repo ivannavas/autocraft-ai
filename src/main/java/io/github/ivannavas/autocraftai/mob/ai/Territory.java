@@ -1,6 +1,8 @@
 package io.github.ivannavas.autocraftai.mob.ai;
 
 import java.util.ArrayDeque;
+import java.util.Optional;
+import java.util.Iterator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.Map;
@@ -96,6 +98,19 @@ public final class Territory {
     /** How many marks the last five minutes hold, so a fresh trail is not read as a full one. */
     public int recentMarks() {
         return recent.size();
+    }
+
+    /** Where the body was so many seconds ago, if the recent trail reaches back that far. */
+    public Optional<Vec3> positionAgo(int seconds) {
+        if (seconds < 0 || seconds >= recent.size()) {
+            return Optional.empty();
+        }
+        Iterator<Vec3> back = recent.descendingIterator();
+        Vec3 position = null;
+        for (int i = 0; i <= seconds && back.hasNext(); i++) {
+            position = back.next();
+        }
+        return Optional.ofNullable(position);
     }
 
     /** How many times the body has been in this patch lately. Zero is ground it has not covered. */

@@ -44,8 +44,10 @@ public record Rescue(MentorAsk.Reason reason, String pursuit, String state, List
                      String craftKey, List<Lesson> craftLessons,
                      String tacticKey, List<Lesson> tacticLessons,
                      String waterKey, List<Lesson> waterLessons,
-                     Skill skill, String skillProblem, String replan) {
+                     Skill skill, String skillProblem, String replan,
+                     String objective, long askedAt) {
     public Rescue {
+        objective = objective == null ? "" : objective;
         reason = reason == null ? MentorAsk.Reason.BLOCK : reason;
         lessons = List.copyOf(lessons);
         passageLessons = List.copyOf(passageLessons);

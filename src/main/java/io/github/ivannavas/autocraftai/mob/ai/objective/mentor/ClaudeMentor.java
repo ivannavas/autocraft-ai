@@ -219,14 +219,14 @@ public final class ClaudeMentor implements Mentor {
         final String question = prompt;
         thread.execute(() -> {
             try {
-                teach(asked, question, before);
+                teach(asked, question, before, now);
             } finally {
                 asking.set(false);
             }
         });
     }
 
-    private void teach(MentorAsk asked, String prompt, Taught before) {
+    private void teach(MentorAsk asked, String prompt, Taught before, long askedAt) {
         try {
             String reply = agent.execute(CONVERSATION, prompt).response();
             if (reply == null || reply.isBlank()) {
@@ -274,7 +274,8 @@ public final class ClaudeMentor implements Mentor {
                     skill, skillProblem,
                     // Only a stall may be given up on. A pinned body is a block, and a block is
                     // answered with a way out, not with a different errand to be blocked on.
-                    asked.stalled() ? replanIn(reply) : "");
+                    asked.stalled() ? replanIn(reply) : "",
+                    asked.situation().objective(), askedAt);
             if (rescue.isEmpty()) {
                 log.info("The mentor had nothing to add for {}: {}", asked.summary(), shorten(reply));
                 PlannerLog.get().mentorFailed("nothing taught", reply);
@@ -398,7 +399,7 @@ public final class ClaudeMentor implements Mentor {
     }
 
     @Override
-    public void judged(Rescue rescue, boolean worked, long decisions) {
+    public void judged(Rescue rescue, String verdict) {
         Deque<Given> record = given.get(rescue.pursuit());
         if (record == null) {
             return;
@@ -406,11 +407,7 @@ public final class ClaudeMentor implements Mentor {
         synchronized (record) {
             for (Given lesson : record) {
                 if (lesson.summary.equals(rescue.summary()) && lesson.verdict.equals("not judged yet")) {
-                    lesson.verdict = worked
-                            ? (rescue.stalled() ? "the objective got nearer" : "got free") + " within "
-                                    + decisions + " decisions"
-                            : (rescue.stalled() ? "no nearer" : "still pinned") + " after " + decisions
-                                    + " decisions";
+                    lesson.verdict = verdict;
                 }
             }
         }

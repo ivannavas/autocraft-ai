@@ -164,6 +164,20 @@ public final class Skills {
         }
     }
 
+    /**
+     * Throws every skill away, written and offered alike, and writes the empty file. The skills are
+     * learning as much as the tables are: the planner and the mentor wrote them, and their records say
+     * how they went. A reset that kept them kept half of what it said it had thrown away.
+     */
+    public void clear() {
+        int had = skills.size();
+        skills.clear();
+        records.clear();
+        offered.clear();
+        save();
+        log.info("Cleared the skills, forgetting {}", had);
+    }
+
     /** Told of every skill added from now on, so the tables can grow a column for it. */
     public void onAdded(Consumer<Skill> listener) {
         listeners.add(listener);
