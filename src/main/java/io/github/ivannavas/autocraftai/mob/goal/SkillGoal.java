@@ -709,6 +709,12 @@ public final class SkillGoal implements MobGoal {
 
     @Override
     public String name() {
-        return skill.name() + "(" + (step + 1) + "/" + skill.steps().size() + ")";
+        String where = skill.name() + "(" + (step + 1) + "/" + skill.steps().size() + ")";
+        if (waitFor != null) {
+            // Says what the body is waiting for and how long it has: a sealed hole waiting for day read
+            // as a tactic that never ends from outside.
+            return where + " waiting for '" + waitFor.text() + "' " + (stepTicks / 20) + "s";
+        }
+        return where;
     }
 }

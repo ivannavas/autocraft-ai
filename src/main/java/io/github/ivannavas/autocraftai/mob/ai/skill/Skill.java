@@ -132,7 +132,8 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
               numbers, words, and the readings: cover (SKY/PIT/ROOF), light (DAY/NIGHT/DARK), threat
               (the hostile kinds, e.g. SKELETON+ZOMBIE), hostiles (count), nearest (CLOSE/NEAR/FAR/NONE),
               armed, health (LOW/MID/HIGH), blocks (count in hand), candig, roomabove, stuck, y, surface,
-              depth (surface - y), sky, night, day, wet, hungry, food, pickaxe, sword, onground,
+              depth (surface - y), sky, night and day (the world's clock, above ground or below; light
+              is what the body sees), wet, hungry, food, pickaxe, sword, onground,
               menu (NONE/CRAFTING/FURNACE/CHEST/OTHER: what screen is open);
               has(x) how many of x are carried, short(x) how many of x the plan is still short of,
               near(x) whether a block of kind x is within eight blocks — x is a plan resource (LOG,

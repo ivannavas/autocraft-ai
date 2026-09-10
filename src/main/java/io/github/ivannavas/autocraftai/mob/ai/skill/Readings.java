@@ -108,8 +108,10 @@ public final class Readings {
             case "y" -> feet.getY();
             case "depth" -> around.surface() - feet.getY();
             case "sky" -> level.canSeeSky(feet.above());
-            case "night" -> around.light() == Surroundings.Light.NIGHT;
-            case "day" -> around.light() == Surroundings.Light.DAY;
+            // The world's clock, wherever the body is. The light reading is what the body sees, and a
+            // body sealed in a hole underground sees DARK all day: a wait for "day" there never ended.
+            case "night" -> level.isDarkOutside();
+            case "day" -> !level.isDarkOutside();
             case "wet" -> wet;
             case "hungry" -> Perception.isHungry(player);
             case "food" -> player.getFoodData().getFoodLevel();
