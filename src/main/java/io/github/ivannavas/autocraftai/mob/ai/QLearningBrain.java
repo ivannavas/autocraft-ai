@@ -308,6 +308,8 @@ public final class QLearningBrain {
      * the goal table is not offered a stroll.
      */
     private boolean headingIsFact;
+    /** Whether the heading points at a block the map showed, rather than at a kind of place. */
+    private boolean toldByBlock;
     /** Whether the move in flight is a journey the map pointed, which ends the moment it arrives. */
     private boolean followingTheMap;
     /** How many decisions after a lesson the body has to be free of the block for the lesson to count. */
@@ -1562,9 +1564,11 @@ public final class QLearningBrain {
                 && progression.wanted().isPresent()) {
             OptionalDouble seen = Perception.bearingToBlock(player, progression.wanted().get());
             if (seen.isPresent()) {
+                toldByBlock = true;
                 return seen;
             }
         }
+        toldByBlock = false;
         if (inTheWrongKindOfPlace(player)) {
             return Perception.bearingTo(player, pursuit.where().terrain());
         }
@@ -1593,6 +1597,12 @@ public final class QLearningBrain {
         }
         if (progression.wanted().isPresent() && perception.canSee(player, progression.wanted())) {
             return true;
+        }
+        if (toldByBlock) {
+            // Pointed at a block the map showed: only having it in the eyes' reach is arriving. Being
+            // in the right kind of place is not, or a journey to a tree in a savanna arrived every
+            // second it was in the savanna, and the body circled the tree for four minutes.
+            return false;
         }
         List<Terrain> terrain = pursuit.where().terrain();
         return !terrain.isEmpty() && "IN".equals(pursuit.where().terrainKey(Travel.biomeAt(player)));
@@ -3138,6 +3148,7 @@ public final class QLearningBrain {
         toldHeading = OptionalDouble.empty();
         headingIsFact = false;
         followingTheMap = false;
+        toldByBlock = false;
         shunned.clear();
         // A tally of the moment, not a record of the run: an episode that ends takes it with it rather
         // than charging the next one for swings it never made.

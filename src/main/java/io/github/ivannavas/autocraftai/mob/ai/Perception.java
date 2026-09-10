@@ -60,7 +60,12 @@ public final class Perception {
     private static final int HUNGRY_BELOW = 10;
     /** Box half-extents for the wanted-block scan. */
     private static final int BLOCK_SCAN_HORIZONTAL = 8;
-    private static final int BLOCK_SCAN_VERTICAL = 4;
+    /**
+     * Eight up and down, the height of a crown: the map points the body at the trunk under a canopy,
+     * and with four the eyes never reached the log the map had pointed at, so the journey to it
+     * "arrived" by being in the right biome every second, and the body circled the tree.
+     */
+    private static final int BLOCK_SCAN_VERTICAL = 8;
 
     public Sighting look(Minecraft client, LocalPlayer player, Optional<Predicate<BlockState>> wanted) {
         return look(client, player, wanted, item -> true, item -> true);
