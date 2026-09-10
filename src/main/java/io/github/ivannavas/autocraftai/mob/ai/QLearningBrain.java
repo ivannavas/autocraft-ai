@@ -276,6 +276,14 @@ public final class QLearningBrain {
     private long decisionsMade;
     /** The last lesson applied and when, until its outcome — free again, or still pinned — is known. */
     private Rescue lastRescue;
+    /**
+     * Until when the body stands still for the coach's answer, or 0. A question describes one spot and
+     * the answer takes twenty to thirty seconds; a body that kept moving met the answer somewhere else,
+     * and a third of the lessons were judged "arrived late". When the surroundings allow it — nothing
+     * hostile, dry, on the ground, not a night in the open — the body waits where it was asked about.
+     */
+    private long mentorHoldUntil;
+    private static final long MENTOR_HOLD_MILLIS = 45_000L;
     /** Where the body stood when the last lesson landed, for judging whether it actually got away. */
     private Vec3 rescuePosition;
     /** Decisions before a lesson is judged at all, and blocks the body must have moved for "worked". */
@@ -693,6 +701,17 @@ public final class QLearningBrain {
         tendTactics(player);
         // And the terrain, on the same footing: a wall does not wait for a decision either.
         tendPassage(player);
+        if (mentorHolding()) {
+            // Standing still for the coach. The water and the tactics are still tended above, so a
+            // hostile turning up still gets an answer; nothing else moves the body until the lessons
+            // land or the wait runs out.
+            engine.body().moveControl().stop();
+            return;
+        }
+        if (mentorHoldUntil != 0L) {
+            log.info("Held still for the coach; {}", mentor.pending() ? "the wait ran out" : "the answer is in");
+            mentorHoldUntil = 0L;
+        }
         // Booked before the hold is tested, because whether the move has anything to show for the second
         // just gone is exactly what decides whether it keeps the body for the next one.
         // A goal that has done what it was for is not stuck, and the move is over the moment it says so:
@@ -735,6 +754,27 @@ public final class QLearningBrain {
     private boolean displaced() {
         return busy(swimGoal) || busy(tacticGoal) || busy(craftGoal) || busy(craftSkill) || busy(passageGoal)
                 || crafting();
+    }
+
+    /** Whether the body is standing still for the coach's answer, and the answer is still on its way. */
+    private boolean mentorHolding() {
+        return mentorHoldUntil > System.currentTimeMillis() && mentor.pending();
+    }
+
+    /**
+     * Whether the body may stand still for the coach: dry, on the ground, not burning, breathing, no
+     * tactic or craft with the body, nothing hostile in range, and not a night under the open sky.
+     */
+    private boolean mayHoldStill(LocalPlayer player) {
+        if (wet != null || crafting() || tacticGoal != null || !player.onGround() || player.isOnFire()
+                || player.getAirSupply() < player.getMaxAirSupply()) {
+            return false;
+        }
+        Surroundings here = Surroundings.around(player, progression.reserved(), false);
+        if (here.count() > 0) {
+            return false;
+        }
+        return !(here.light() == Surroundings.Light.NIGHT && here.cover() == Surroundings.Cover.SKY);
     }
 
     /**
@@ -992,6 +1032,9 @@ public final class QLearningBrain {
      * which is the one fact that explained the longest block seen so far.
      */
     private String driver() {
+        if (mentorHolding()) {
+            return "nothing: the body is holding still for your answer";
+        }
         if (tacticGoal != null && engine.isRunning(tacticGoal)) {
             return tacticGoal.name() + " (a tactic: the surroundings layer has the body)";
         }
@@ -1018,6 +1061,9 @@ public final class QLearningBrain {
      * tactic sealed in a hole, a craft standing at a table, a passage move in a wall.
      */
     private String driverName() {
+        if (mentorHolding()) {
+            return "holding still (coach)";
+        }
         if (tacticGoal != null && engine.isRunning(tacticGoal)) {
             return tacticGoal.name() + " (tactic)";
         }
@@ -1230,11 +1276,13 @@ public final class QLearningBrain {
             List<String> craftMoves = legalNames(crafting.columns, legalCrafts);
             int y = player.getBlockY();
             boolean stuckUnderCover = stalled;
-            mentor.consider(() -> {
+            boolean holdable = mayHoldStill(player);
+            boolean asked = mentor.consider(() -> {
                 Obstruction ground = ground(player);
                 Surroundings around = Surroundings.around(player, progression.reserved(), stuckUnderCover);
                 List<String> passageMoves = legalNames(passage.columns, legalPassages(ground, player));
                 List<String> tacticMoves = legalNames(tactics.columns, legalTactics(around, player));
+                boolean mayHold = holdable;
                 Water wateriness = Water.around(player);
                 boolean hasBlocks = PlaceBlockGoal.hasBlockAnywhere(player, progression.reserved());
                 String waterKey = swimming(wateriness) ? wateriness.key() : "";
@@ -1243,9 +1291,23 @@ public final class QLearningBrain {
                 return new MentorAsk(reason, progression.blockSituation(player, obtained), folder, stuck,
                         moves, ground.key(), ground.words(), passageMoves, y, driver(), craftKey,
                         craftMoves, around.key(), around.words(), tacticMoves,
-                        waterKey, waterMoves, dwellWords(player),
+                        waterKey, waterMoves, dwellWords(player), mayHold,
                         Skills.get().catalogue(), "");
             });
+            if (asked && holdable) {
+                // The question went out about this very spot: stay on it. The claims the tables hold
+                // are dropped rather than settled again — the step just gone has been credited above —
+                // so the wait is charged to nobody.
+                mentorHoldUntil = System.currentTimeMillis() + MENTOR_HOLD_MILLIS;
+                uninstall();
+                removePassage();
+                active.tables().forEach(Table::forget);
+                crafting.forget();
+                engine.body().moveControl().stop();
+                log.info("Holding still for the coach, up to {} s, at {}", MENTOR_HOLD_MILLIS / 1000, stuck);
+                PlannerLog.get().mentorNoted("holding still for the answer");
+                return;
+            }
         }
 
         int goalIndex = active.goals.choose(observation.key(), legalGoals);

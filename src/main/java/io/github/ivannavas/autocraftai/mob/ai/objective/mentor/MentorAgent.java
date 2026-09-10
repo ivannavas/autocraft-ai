@@ -97,7 +97,9 @@ public class MentorAgent extends AgentExecutor {
             again, now or next time. So teach the row, not the moment: "in this state, this move" stays
             right even if the body has shuffled two blocks since. Say "replan" only when the objective
             itself is wrong wherever the body stands; a replan that lands after the body has got free on
-            its own is thrown away.
+            its own is thrown away. When the situation says the body is HOLDING STILL for your answer,
+            it is: nothing will have changed when your lessons land, so teach this exact spot, and the
+            move that gets it out of here is the one to make attractive.
 
             FORGETTING. The list of skills written so far says how each has done: used, finished, did
             nothing, failed, and why. There is no limit on how many there are, so it is you who keeps the

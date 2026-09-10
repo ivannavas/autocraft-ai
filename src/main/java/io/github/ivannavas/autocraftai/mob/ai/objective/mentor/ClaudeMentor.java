@@ -183,11 +183,11 @@ public final class ClaudeMentor implements Mentor {
     }
 
     @Override
-    public void consider(Supplier<MentorAsk> ask) {
+    public boolean consider(Supplier<MentorAsk> ask) {
         long now = System.currentTimeMillis();
         if (now < silentUntil.get() || now - lastAsked.get() < MIN_INTERVAL_MILLIS
                 || !asking.compareAndSet(false, true)) {
-            return;
+            return false;
         }
         MentorAsk asked = ask.get();
         // A state taught recently, or taught twice, is left to the lessons already planted.
@@ -196,14 +196,14 @@ public final class ClaudeMentor implements Mentor {
                 ? new Taught(earlier.at(), 0, earlier.summary()) : earlier;
         if (before != null && (before.times() >= MAX_TIMES || now - before.at() < RETEACH_AFTER_MILLIS)) {
             asking.set(false);
-            return;
+            return false;
         }
         if (now - perPursuitAt.getOrDefault(asked.pursuit(), 0L) > PURSUIT_WINDOW_MILLIS) {
             perPursuit.remove(asked.pursuit());
         }
         if (perPursuit.getOrDefault(asked.pursuit(), 0) >= MAX_PER_PURSUIT) {
             asking.set(false);
-            return;
+            return false;
         }
         perPursuit.merge(asked.pursuit(), 1, Integer::sum);
         perPursuitAt.put(asked.pursuit(), now);
@@ -225,6 +225,7 @@ public final class ClaudeMentor implements Mentor {
                 asking.set(false);
             }
         });
+        return true;
     }
 
     private void teach(MentorAsk asked, String prompt, Taught before, long askedAt) {

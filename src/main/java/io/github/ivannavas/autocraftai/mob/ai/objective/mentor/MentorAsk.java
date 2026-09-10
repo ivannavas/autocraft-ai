@@ -59,7 +59,7 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
                         List<String> passageMoves, int y, String driver, String craftKey,
                         List<String> craftMoves, String tacticKey, String tacticWords,
                         List<String> tacticMoves, String waterKey, List<String> waterMoves, String dwell,
-                        String skills, String skillProblem) {
+                        boolean holding, String skills, String skillProblem) {
 
     /** Why the mentor is being asked. */
     public enum Reason {
@@ -153,6 +153,10 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
         }
         if (!dwell.isEmpty()) {
             text.append("\nDwelling: ").append(dwell).append('.');
+        }
+        if (holding) {
+            text.append("\nThe body is HOLDING STILL for your answer, for up to 45 seconds: nothing about it")
+                    .append(" will have changed when your lessons land, so teach this spot as it stands.");
         }
         text.append("\nSkills written so far: ").append(skills.isEmpty() ? "none" : "\n" + skills);
         if (!skillProblem.isEmpty()) {

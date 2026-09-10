@@ -17,8 +17,10 @@ public interface Mentor {
     /**
      * Sets a request going, unless one is already in flight or the block was taught too recently to be
      * worth teaching again. Never blocks. The ask is built on the caller's thread.
+     *
+     * @return whether a question actually went out, so the caller may hold the body still for the answer
      */
-    void consider(Supplier<MentorAsk> ask);
+    boolean consider(Supplier<MentorAsk> ask);
 
     /** The lessons for the last block, if they have arrived. Handed over once. */
     Optional<Rescue> take();
@@ -45,7 +47,8 @@ public interface Mentor {
     static Mentor none() {
         return new Mentor() {
             @Override
-            public void consider(Supplier<MentorAsk> ask) {
+            public boolean consider(Supplier<MentorAsk> ask) {
+                return false;
             }
 
             @Override
