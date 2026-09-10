@@ -43,11 +43,28 @@ public final class QTable {
 
     private static final double LEARNING_RATE = 0.15;
     private static final double DISCOUNT = 0.90;
-    private static final double EPSILON_START = 0.30;
+    /**
+     * Exploration is per row, not per table. A table-wide rate that fell by a twentieth of a per cent a
+     * decision needed two thousand decisions to calm down, and every objective had a table of its own
+     * that started again at the top: hours of a body walking off at random from situations it had
+     * already seen twenty times. A row seen for the first time explores at the start rate and each
+     * visit takes a tenth off, so the twentieth visit is down at the floor, while a row never seen
+     * still gets its look around.
+     */
+    private static final double EPSILON_START = 0.15;
     private static final double EPSILON_MIN = 0.05;
-    private static final double EPSILON_DECAY = 0.9995;
+    private static final double ROW_DECAY = 0.90;
+    private static final String VISITS_PREFIX = "seen|";
 
     private final Map<String, double[]> values = new HashMap<>();
+    /** How often each row has been chosen from, which is what its exploration rate falls with. */
+    private final Map<String, Integer> visits = new HashMap<>();
+    /**
+     * A table this one starts its rows from and reports its learning to: the general goals table under
+     * every pursuit's own. A pursuit new to the run meets rows the others have seen hundreds of times —
+     * a resource block in reach, a drop on the ground — and used to start each at zero.
+     */
+    private QTable parent;
     private final Random random = new Random();
     private int actionCount;
     /**
@@ -78,6 +95,20 @@ public final class QTable {
         }
     }
 
+    /** The parent's row, with the parent's experience of it, or a fresh one when the parent has none. */
+    private double[] inherited(String state) {
+        if (parent != null && parent.values.containsKey(state)) {
+            double[] theirs = parent.values.get(state);
+            double[] row = Arrays.copyOf(theirs, actionCount);
+            if (theirs.length < actionCount) {
+                row = grown(Arrays.copyOf(theirs, theirs.length), actionCount);
+            }
+            visits.put(state, parent.visits.getOrDefault(state, 0));
+            return row;
+        }
+        return fresh();
+    }
+
     /** A row seen for the first time: zero, except where a column has a starting value of its own. */
     private double[] fresh() {
         double[] row = new double[actionCount];
@@ -91,6 +122,11 @@ public final class QTable {
 
     public int states() {
         return values.size();
+    }
+
+    /** The table whose rows this one starts from and learns into as well. */
+    public void inherit(QTable parent) {
+        this.parent = parent == this ? null : parent;
     }
 
     public double epsilon() {
@@ -112,9 +148,9 @@ public final class QTable {
                 .toList();
     }
 
-    /** Action values for a state, created at zero the first time the state is seen. */
+    /** Action values for a state, created the first time the state is seen: from the parent if it knows the row, else fresh. */
     public double[] valuesFor(String state) {
-        double[] row = values.computeIfAbsent(state, key -> fresh());
+        double[] row = values.computeIfAbsent(state, key -> inherited(key));
         if (row.length < actionCount) {
             row = grown(row, actionCount);
             values.put(state, row);
@@ -197,13 +233,18 @@ public final class QTable {
         }
 
         decisions++;
-        epsilon = Math.max(EPSILON_MIN, epsilon * EPSILON_DECAY);
+        // Reading the row first, so a row the parent knows arrives with the parent's visits.
+        double[] stateValues = valuesFor(state);
+        int seen = visits.merge(state, 1, Integer::sum);
+        if (parent != null) {
+            parent.visits.merge(state, 1, Integer::sum);
+        }
+        epsilon = Math.max(EPSILON_MIN, EPSILON_START * Math.pow(ROW_DECAY, seen - 1));
 
         if (random.nextDouble() < epsilon) {
             return legal.get(random.nextInt(legal.size()));
         }
 
-        double[] stateValues = valuesFor(state);
         List<Integer> best = new ArrayList<>(legal.size());
         double bestValue = Double.NEGATIVE_INFINITY;
         for (int action : legal) {
@@ -256,17 +297,28 @@ public final class QTable {
         if (action >= 0 && action < stateValues.length) {
             stateValues[action] = Math.max(-MOST_NUDGED, Math.min(MOST_NUDGED, stateValues[action] + delta));
         }
+        if (parent != null) {
+            parent.nudge(state, action, delta);
+        }
     }
 
     public void seed(String state, int action, double value) {
         if (action >= 0 && action < actionCount) {
             valuesFor(state)[action] = value;
         }
+        if (parent != null) {
+            parent.seed(state, action, value);
+        }
     }
 
     private void learn(String state, int action, double target) {
         double[] stateValues = valuesFor(state);
         stateValues[action] += LEARNING_RATE * (target - stateValues[action]);
+        if (parent != null) {
+            // The parent learns the same step: what walking up to a log earned is worth knowing
+            // whichever objective wanted the log.
+            parent.learn(state, action, target);
+        }
     }
 
     private double bestValue(String state, boolean[] allowed) {
@@ -299,6 +351,7 @@ public final class QTable {
         }
         try {
             Map<String, double[]> loaded = new HashMap<>();
+            Map<String, Integer> loadedVisits = new HashMap<>();
             double loadedEpsilon = EPSILON_START;
             long loadedDecisions = 0;
             List<String> saved = columns;
@@ -324,12 +377,20 @@ public final class QTable {
                     }
                     case EPSILON_KEY -> loadedEpsilon = Double.parseDouble(value);
                     case DECISIONS_KEY -> loadedDecisions = Long.parseLong(value);
-                    default -> loaded.put(key, parseRow(value, saved, columns));
+                    default -> {
+                        if (key.startsWith(VISITS_PREFIX)) {
+                            loadedVisits.put(key.substring(VISITS_PREFIX.length()), Integer.parseInt(value.trim()));
+                        } else {
+                            loaded.put(key, parseRow(value, saved, columns));
+                        }
+                    }
                 }
             }
 
             values.clear();
             values.putAll(loaded);
+            visits.clear();
+            visits.putAll(loadedVisits);
             epsilon = loadedEpsilon;
             decisions = loadedDecisions;
             log.info("Loaded q-table from {}: {} states, epsilon {}, {} decisions so far",
@@ -371,6 +432,9 @@ public final class QTable {
             values.entrySet().stream()
                     .sorted(Map.Entry.comparingByKey())
                     .forEach(entry -> lines.add(entry.getKey() + "=" + formatRow(entry.getValue())));
+            visits.entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .forEach(entry -> lines.add(VISITS_PREFIX + entry.getKey() + "=" + entry.getValue()));
 
             Path pending = path.resolveSibling(path.getFileName() + ".tmp");
             Files.write(pending, lines, StandardCharsets.UTF_8);
@@ -399,6 +463,7 @@ public final class QTable {
     public void clear() {
         int forgotten = values.size();
         values.clear();
+        visits.clear();
         epsilon = EPSILON_START;
         decisions = 0;
         log.info("Cleared the q-table, forgetting {} states", forgotten);

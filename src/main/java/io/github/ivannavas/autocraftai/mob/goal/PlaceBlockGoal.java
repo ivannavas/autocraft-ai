@@ -20,6 +20,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -307,6 +308,54 @@ public final class PlaceBlockGoal implements MobGoal {
     /** The same, never the crafting table: for towers, walls and caps, which a table is wasted on. */
     public static int hotbarSlotWithBuildingBlock(LocalPlayer player, Reserve reserve) {
         return slotWithBlock(player, reserve, false);
+    }
+
+    /**
+     * Whether there is a block to build with anywhere in the bag, hotbar or not. What makes a pillar
+     * legal: a body wading in a pit with dirt in its pack read as having nothing to stand on.
+     */
+    public static boolean hasBlockAnywhere(LocalPlayer player, Reserve reserve) {
+        return hotbarSlotWithBlock(player, reserve) >= 0 || bagSlotWithBlock(player, reserve) >= 0;
+    }
+
+    /**
+     * Makes sure a block to build with is in the hotbar, swapping one in from the bag into the selected
+     * slot when it is not — the click a player makes with a number key over an inventory slot.
+     *
+     * @return whether there is now a block in the hotbar
+     */
+    public static boolean bringBlockToHotbar(LocalPlayer player, Reserve reserve) {
+        if (hotbarSlotWithBlock(player, reserve) >= 0) {
+            return true;
+        }
+        int from = bagSlotWithBlock(player, reserve);
+        if (from < 0) {
+            return false;
+        }
+        Minecraft client = Minecraft.getInstance();
+        if (client.gameMode == null) {
+            return false;
+        }
+        int chosen = player.getInventory().getSelectedSlot();
+        client.gameMode.handleContainerInput(player.inventoryMenu.containerId, from, chosen,
+                ContainerInput.SWAP, player);
+        return true;
+    }
+
+    /** A main-inventory slot with a block the plan lets go of, as the inventory menu numbers it, or -1. */
+    private static int bagSlotWithBlock(LocalPlayer player, Reserve reserve) {
+        if (player == null) {
+            return -1;
+        }
+        Inventory inventory = player.getInventory();
+        InventoryCensus held = reserve.isEmpty() ? InventoryCensus.empty() : InventoryCensus.of(inventory);
+        for (int slot = Inventory.SELECTION_SIZE; slot < Inventory.INVENTORY_SIZE; slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            if (Resource.buildsWith(stack) && reserve.allowsPlacing(stack, held)) {
+                return slot;
+            }
+        }
+        return -1;
     }
 
     private static int slotWithBlock(LocalPlayer player, Reserve reserve, boolean mayUseTable) {

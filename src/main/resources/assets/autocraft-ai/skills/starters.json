@@ -29,7 +29,7 @@
       "layer": "TACTIC",
       "prior": 3,
       "when": "cover != SKY and stuck and blocks > 0",
-      "until": "sky",
+      "until": "cover == SKY",
       "repeat": true,
       "steps": [ {"break": [0, 2, 0]}, {"select": "block"}, {"place": "feet"} ],
       "reason": "starter: break the ceiling and stack up until the sky is back overhead"

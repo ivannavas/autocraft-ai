@@ -265,6 +265,9 @@ public final class QLearningBrain {
     private final Progression progression;
     /** Asked, and only on a real block, to teach the local policy the way out and keep it. */
     private final Mentor mentor;
+    /** The goals table every pursuit's own inherits from and learns into. */
+    private final Table general;
+    private static final String GENERAL = "GENERAL";
     /** How many decisions in a row the body has been pinned on the same pursuit. A block is asked about at the third. */
     private int pinnedStreak;
     /** The pursuit the streak was counted on: standing still waiting for the first plan is not being stuck on it. */
@@ -480,10 +483,15 @@ public final class QLearningBrain {
         }
         // The skills first: they are columns, and the tables have to open with them.
         Skills.get().load(directory);
+        // What every pursuit's goal table starts its rows from and learns into: the run's experience of
+        // situations, whichever objective it was after at the time.
+        this.general = new Table(columnsFor(Skill.Layer.GOAL),
+                directory.resolve(PURSUITS).resolve(GENERAL).resolve("goals.txt"));
         this.crafting = new Table(columnsFor(Skill.Layer.CRAFT), directory.resolve("crafting.txt"));
         this.water = new Table(names(Swim.values()), directory.resolve("water.txt"));
         this.passage = new Table(columnsFor(Skill.Layer.PASSAGE), directory.resolve("passage.txt"));
         this.tactics = new Table(columnsFor(Skill.Layer.TACTIC), directory.resolve("tactics.txt"));
+        general.load();
         crafting.load();
         water.load();
         passage.load();
@@ -493,7 +501,10 @@ public final class QLearningBrain {
         // somewhere to land.
         Skills.get().onAdded(skill -> {
             switch (skill.layer()) {
-                case GOAL -> suites.values().forEach(suite -> suite.goals.addColumn(skill.name()));
+                case GOAL -> {
+                    general.addColumn(skill.name());
+                    suites.values().forEach(suite -> suite.goals.addColumn(skill.name()));
+                }
                 case PASSAGE -> passage.addColumn(skill.name());
                 case TACTIC -> tactics.addColumn(skill.name());
                 case CRAFT -> crafting.addColumn(skill.name());
@@ -520,7 +531,7 @@ public final class QLearningBrain {
 
     /** Every table there is right now: the four shared ones and the four of each folder opened so far. */
     private Stream<Table> tables() {
-        return Stream.concat(Stream.of(crafting, water, passage, tactics),
+        return Stream.concat(Stream.of(general, crafting, water, passage, tactics),
                 suites.values().stream().flatMap(Suite::tables));
     }
 
@@ -574,7 +585,7 @@ public final class QLearningBrain {
     /** The folder for a pursuit, opened and read from disk the first time it is asked for. */
     private Suite suiteFor(Pursuit pursuit) {
         return suites.computeIfAbsent(pursuit.name(),
-                name -> new Suite(directory.resolve(PURSUITS).resolve(name)));
+                name -> new Suite(directory.resolve(PURSUITS).resolve(name), general));
     }
 
     /** Two lists as one, without either of them having to be growable. */
@@ -1179,9 +1190,9 @@ public final class QLearningBrain {
                 List<String> passageMoves = legalNames(passage.columns, legalPassages(ground, player));
                 List<String> tacticMoves = legalNames(tactics.columns, legalTactics(around, player));
                 Water wateriness = Water.around(player);
-                boolean hasBlocks = PlaceBlockGoal.hotbarSlotWithBlock(player, progression.reserved()) >= 0;
-                String waterKey = wateriness.present() ? wateriness.key() : "";
-                List<String> waterMoves = wateriness.present()
+                boolean hasBlocks = PlaceBlockGoal.hasBlockAnywhere(player, progression.reserved());
+                String waterKey = swimming(wateriness) ? wateriness.key() : "";
+                List<String> waterMoves = swimming(wateriness)
                         ? legalNames(water.columns, legalSwims(wateriness, hasBlocks)) : List.of();
                 return new MentorAsk(reason, progression.blockSituation(player, obtained), folder, stuck,
                         moves, ground.key(), ground.words(), passageMoves, y, driver(), craftKey,
@@ -1498,13 +1509,13 @@ public final class QLearningBrain {
      */
     private void tendWater(LocalPlayer player) {
         Water around = Water.around(player);
-        if (!around.present()) {
+        if (!swimming(around)) {
             if (wet != null) {
                 // Out. The last choice is settled against the second it bought, with no continuation:
                 // dry land is not a state this table has, and the question will not come round again
                 // until the next water does.
                 water.learnTerminal(score(stepSince(wet, player, 1, 0, 0, List.of(),
-                        placedThisStep, reclaimedThisStep)));
+                        placedThisStep, reclaimedThisStep)) + dwelling(player, 1));
                 water.forget();
                 wet = null;
                 removeSwim();
@@ -1512,12 +1523,15 @@ public final class QLearningBrain {
             return;
         }
         Reserve reserve = progression.reserved();
-        boolean hasBlocks = PlaceBlockGoal.hotbarSlotWithBlock(player, reserve) >= 0;
+        boolean hasBlocks = PlaceBlockGoal.hasBlockAnywhere(player, reserve);
         boolean[] legal = legalSwims(around, hasBlocks);
         String key = around.key();
         if (wet != null) {
+            // Paid like the other layers, dwelling included: the general score pays distance covered,
+            // and a body swimming circles in a pit pool was earning 1.9 a second for the shore it never
+            // reached.
             water.learn(key, score(stepSince(wet, player, 1, 0, 0, List.of(), placedThisStep,
-                    reclaimedThisStep)), 1, legal);
+                    reclaimedThisStep)) + dwelling(player, 1), 1, legal);
         }
         wet = Moment.of(player);
 
@@ -1530,6 +1544,16 @@ public final class QLearningBrain {
         }
         int column = water.choose(key, legal);
         installSwim(column < 0 ? Swim.CARRY_ON : Swim.values()[column], around, reserve);
+    }
+
+    /**
+     * Whether the water layer owns the body: swimming or under, not wading. Feet wet with the head in
+     * the air is slow ground, and the layers that get a body out of a pit — passage, tactics, their
+     * skills — were all switched off for it. The coach taught PILLAR and a way out of the pit twice
+     * to a body standing in a puddle, and neither lesson could reach a layer that never ran there.
+     */
+    private static boolean swimming(Water around) {
+        return around.present() && around.depth() != Water.Depth.WADING;
     }
 
     /** Whether the swim move in flight is running and still getting somewhere. */
@@ -1562,6 +1586,10 @@ public final class QLearningBrain {
         }
         removeSwim();
         swimChoice = choice;
+        if (choice == Swim.PILLAR) {
+            // The block may be in the bag rather than the hotbar; the placing that follows reads the hand.
+            PlaceBlockGoal.bringBlockToHotbar(Minecraft.getInstance().player, reserve);
+        }
         MobGoal goal = choice.create(around, reserve);
         if (goal != null) {
             swimGoal = goal;
@@ -2930,6 +2958,7 @@ public final class QLearningBrain {
         crafting.rebuild(columnsFor(Skill.Layer.CRAFT));
         passage.rebuild(columnsFor(Skill.Layer.PASSAGE));
         tactics.rebuild(columnsFor(Skill.Layer.TACTIC));
+        general.rebuild(columnsFor(Skill.Layer.GOAL));
         suites.values().forEach(suite -> suite.goals.rebuild(columnsFor(Skill.Layer.GOAL)));
         // The folders opened this session are wiped above and written out empty below. The ones on disk
         // from earlier sessions are not open, so their files go instead.
@@ -3018,13 +3047,14 @@ public final class QLearningBrain {
         private final Table placement;
         private final Table position;
 
-        private Suite(Path folder) {
+        private Suite(Path folder, Table general) {
             try {
                 Files.createDirectories(folder);
             } catch (IOException e) {
                 log.warn("Could not create {}: {}", folder, e.getMessage());
             }
             this.goals = new Table(columnsFor(Skill.Layer.GOAL), folder.resolve("goals.txt"));
+            this.goals.table.inherit(general.table);
             this.timing = new Table(names(Commitment.values()), folder.resolve("timing.txt"));
             this.placement = new Table(names(Spot.values()), folder.resolve("placement.txt"));
             this.position = new Table(names(Ground.values()), folder.resolve("position.txt"));
