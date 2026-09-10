@@ -22,6 +22,7 @@ import io.github.ivannavas.autocraftai.mob.MobBody;
 import io.github.ivannavas.autocraftai.mob.MobEngine;
 import io.github.ivannavas.autocraftai.mob.MobGoal;
 import io.github.ivannavas.autocraftai.mob.ai.objective.GeneralObjectives;
+import io.github.ivannavas.autocraftai.mob.ai.objective.Chronicle;
 import io.github.ivannavas.autocraftai.mob.ai.objective.InventoryCensus;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Objective;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Phase;
@@ -509,6 +510,7 @@ public final class QLearningBrain {
         this.passage = new Table(columnsFor(Skill.Layer.PASSAGE), directory.resolve("passage.txt"));
         this.tactics = new Table(columnsFor(Skill.Layer.TACTIC), directory.resolve("tactics.txt"));
         general.load();
+        Chronicle.get().load(directory);
         crafting.load();
         water.load();
         passage.load();
@@ -690,6 +692,12 @@ public final class QLearningBrain {
         tallyGains(player);
         // Where the body has been, noted once a step: the position table's whole state is this trail.
         territory.mark(player.position());
+        // And where its time goes, for the two agents that read the run as a whole.
+        Chronicle.get().sample(new Chronicle.Sample(wet != null,
+                lastSurroundings != null && lastSurroundings.cover() != Surroundings.Cover.SKY,
+                lastSurroundings != null && lastSurroundings.light() == Surroundings.Light.NIGHT
+                        && lastSurroundings.cover() == Surroundings.Cover.SKY,
+                sheltering(), mentorHolding(), crafting(), territory.pinned()));
         // Taken here for the same reason as the gains: the goals count it as it happens, and reading it
         // anywhere but once a step would either drop it or charge for it twice.
         wastedTicks += WastedEffort.get().drain();
@@ -987,6 +995,7 @@ public final class QLearningBrain {
             log.info("Mentor lesson ({}) {}", rescue.summary(), late);
             PlannerLog.get().mentorNoted(late + " (" + rescue.summary() + ")");
             mentor.judged(rescue, late);
+            Chronicle.get().lessonJudged(late);
             lastRescue = null;
             return;
         }
@@ -1008,6 +1017,7 @@ public final class QLearningBrain {
         rescuePosition = taughtAt == null ? null : taughtAt.position();
         log.info("Applied lessons ({}) to {} at {} / {}", rescue.summary(), rescue.pursuit(),
                 rescue.state(), rescue.terrain());
+        Chronicle.get().lessonTaught(rescue.pursuit(), rescue.summary());
     }
 
     /**
@@ -1037,6 +1047,7 @@ public final class QLearningBrain {
             PlannerLog.get().mentorNoted("worked: " + what + " after " + since + " decisions ("
                     + lastRescue.summary() + ")");
             mentor.judged(lastRescue, "worked: " + what + " after " + since + " decisions");
+            Chronicle.get().lessonJudged("worked: " + what + " after " + since + " decisions");
             lastRescue = null;
         } else if (since >= window) {
             String still = stall ? "no nearer" : "still pinned";
@@ -1045,6 +1056,7 @@ public final class QLearningBrain {
             PlannerLog.get().mentorNoted("did not work: " + still + " after " + since + " decisions ("
                     + lastRescue.summary() + ")");
             mentor.judged(lastRescue, "did not work: " + still + " after " + since + " decisions");
+            Chronicle.get().lessonJudged("did not work: " + still + " after " + since + " decisions");
             lastRescue = null;
         }
     }
@@ -1229,6 +1241,7 @@ public final class QLearningBrain {
         // What the move that just ended did, before anything replaces it. The planner reads these when an
         // objective drags on: a run of them is what a rut looks like from outside.
         DecisionLog.get().record(lastState, installedName(), step.steps(), reward);
+        Chronicle.get().move(installedName(), step.steps(), reward, cutShort());
 
         // Looking is also what settles which folder of tables this decision is made in.
         ActionContext context = surroundings(client, player);
@@ -3157,6 +3170,7 @@ public final class QLearningBrain {
         }
         CraftLog.get().clear();
         PlannerLog.get().clear();
+        Chronicle.get().clear();
         // A coach that remembers teaching a run that no longer exists would refuse to teach its first
         // block again.
         mentor.reset();

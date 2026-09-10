@@ -252,6 +252,10 @@ public record Situation(
             text.append('\n');
         }
         text.append("Player's language: ").append(language).append('\n');
+        String chronicle = io.github.ivannavas.autocraftai.mob.ai.objective.Chronicle.get().describe();
+        if (!chronicle.isEmpty()) {
+            text.append('\n').append(chronicle);
+        }
         String skills = Skills.get().catalogue();
         if (!skills.isEmpty()) {
             text.append("Skills the player already has (do not write these again):\n")

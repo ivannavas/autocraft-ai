@@ -358,6 +358,7 @@ public final class Skills {
         records.put(skill.name(), new Record());
         save();
         log.info("New skill {}: {}", skill.name(), skill.describe());
+        io.github.ivannavas.autocraftai.mob.ai.objective.Chronicle.get().skillWritten("a writer", skill.name());
         listeners.forEach(listener -> listener.accept(skill));
         return Optional.empty();
     }
@@ -402,6 +403,9 @@ public final class Skills {
         if (!record.retired && (neverOnce || rarely)) {
             record.retired = true;
             log.info("Retiring skill {}: {} of {} uses finished", name, record.completions, record.uses);
+            io.github.ivannavas.autocraftai.mob.ai.objective.Chronicle.get().skillRetired(name,
+                    record.completions + " of " + record.uses + " uses finished"
+                            + (record.problems.isEmpty() ? "" : "; last: " + record.problems.peekLast()));
         }
         save();
     }
@@ -429,6 +433,8 @@ public final class Skills {
             record.retired = true;
             log.info("Retiring skill {}: {} of {} uses finished, {} did nothing", name,
                     record.completions, record.uses, record.empty);
+            io.github.ivannavas.autocraftai.mob.ai.objective.Chronicle.get().skillRetired(name,
+                    record.completions + " of " + record.uses + " uses finished, " + record.empty + " did nothing");
         }
         save();
     }
@@ -443,6 +449,7 @@ public final class Skills {
         record.forgotten = why == null ? "" : why.strip();
         save();
         log.info("Forgot skill {}: {}", name, record.forgotten);
+        io.github.ivannavas.autocraftai.mob.ai.objective.Chronicle.get().skillForgotten(name, record.forgotten);
     }
 
     public Record record(String name) {

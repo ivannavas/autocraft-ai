@@ -144,6 +144,16 @@ public class ObjectiveAgent extends AgentExecutor {
             logs, sticks). The "still short of" line says so when that is the case; do not give such an
             objective up as hopeless, finish it.
 
+            THE RUN SO FAR, when the situation carries it, is this player's own record: how many
+            objectives it reached and how long they took, what keeps killing it and how often, where its
+            minutes go (underground, in water, at night in the open, under a tactic skill), which moves
+            it reaches for and how often they get cut short, how the coach's lessons went, and the last
+            events. Plan for this player as it is, not for an ideal one: if long objectives get given up,
+            set shorter ones; if it dies every ten minutes at night, food and shelter come before ore; if
+            it spends half its time in water, keep it away from water; if a kind of objective always
+            drags, write the skill it is missing or choose another way. Say in the reason what in the
+            record you are answering to.
+
             When the situation says REVIEW, the player already has an objective and has been at it for a
             while without finishing. Read the lines listed with it before you answer:
             - "Still short for it" is what the objective needs and the bag lacks. The same shortage after

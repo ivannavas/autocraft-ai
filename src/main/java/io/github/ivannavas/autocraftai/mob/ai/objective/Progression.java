@@ -399,6 +399,7 @@ public final class Progression {
         deaths++;
         lastDeath = cause == null ? "" : cause.strip();
         log.info("Death {}{}", deaths, lastDeath.isEmpty() ? "" : ": " + lastDeath);
+        Chronicle.get().died(lastDeath);
         restart();
     }
 
@@ -415,6 +416,7 @@ public final class Progression {
             return;
         }
         log.info("Giving up {} at the mentor's request: {}", current.name(), why);
+        Chronicle.get().objectiveAbandoned(current.name(), "the coach gave it up: " + why);
         mentorNote = why == null ? "" : why.strip();
         current = null;
         plan = null;
@@ -735,6 +737,7 @@ public final class Progression {
                 break;
             }
             log.info("Reached {}", current.name());
+            Chronicle.get().objectiveReached(current.name());
             achieved.add(current.name());
             onReached.accept(current.name());
             current = null;
@@ -922,8 +925,11 @@ public final class Progression {
         if (planned.isPresent()) {
             if (current != null) {
                 log.info("Planner swapped {} for {}", current.name(), planned.get().objective().name());
+                Chronicle.get().objectiveAbandoned(current.name(),
+                        "the planner swapped it for " + planned.get().objective().name());
             }
             current = planned.get().objective();
+            Chronicle.get().objectiveStarted(current.name(), current.toString());
             plan = planned.get();
             bounds = planned.get().bounds();
             needs = planned.get().needs();

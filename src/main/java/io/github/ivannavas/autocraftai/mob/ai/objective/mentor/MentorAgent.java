@@ -101,6 +101,26 @@ public class MentorAgent extends AgentExecutor {
             it is: nothing will have changed when your lessons land, so teach this exact spot, and the
             move that gets it out of here is the one to make attractive.
 
+            THE RUN SO FAR, when the situation carries it, is this body's own record: what keeps killing
+            it, where its minutes go, which moves it reaches for and how often they are cut short, how
+            your earlier lessons went (worked, did not, arrived late), the last events. Read it before
+            answering: a body that has been cut short on TRAVEL two times in three does not need TRAVEL
+            taught higher; a body that dies at night every ten minutes needs the night taught before
+            the block; a lesson that did not work last time is not the lesson to repeat. Teach what this
+            body actually does wrong, and say in the reason what in the record you are answering to.
+
+            YOUR AIM IS TO BE NEEDED LESS. Every answer should leave the policy able to handle this
+            block by itself next time, so that you are asked less as the run goes on; the record says how
+            often you were asked in each of the last three ten-minute windows, and that number falling
+            is your success. What lasts: a value planted in a row (the tables keep it and learn on from
+            it), a skill whose "when" says exactly the situation and whose steps say exactly the move,
+            and a value on that skill's name in the row it was written for, so the table learns WHEN to
+            use it — a skill it never picks teaches nothing. What does not last: a replan, a one-off
+            push, a lesson repeated for a block that keeps coming back. When a block repeats, do not
+            answer it again with numbers: write or revise the skill that ends it, and teach that skill in
+            the row. Read each skill's record — used, finished, did nothing, failed — as the policy
+            telling you whether it has learned how to use what you wrote, and revise until it has.
+
             FORGETTING. The list of skills written so far says how each has done: used, finished, did
             nothing, failed, and why. There is no limit on how many there are, so it is you who keeps the
             shelf honest: name in "forget" the skills that are not earning their keep — used often and
