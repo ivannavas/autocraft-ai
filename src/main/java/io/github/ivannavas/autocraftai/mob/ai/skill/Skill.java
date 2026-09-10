@@ -389,8 +389,9 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
             ObjectNode one = listed.addObject();
             String verb = step.verb().name().toLowerCase(Locale.ROOT);
             switch (step.verb()) {
-                case BREAK -> one.putArray(verb).add(step.at()[0]).add(step.at()[1]).add(step.at()[2]);
-                case PLACE, USE, WALK, LOOK -> {
+                // A break may name its block instead of pointing at it, like a walk or a look. Writing
+                // it as an offset regardless took the game down twice, the second the coach wrote one.
+                case BREAK, PLACE, USE, WALK, LOOK -> {
                     if (step.at() == null) {
                         one.put(verb, step.word());
                     } else {
@@ -398,7 +399,15 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
                     }
                 }
                 case JUMP, DIG, CLOSE -> one.put(verb, true);
-                case WAIT, FLEE, HOLD -> one.put(verb, step.amount());
+                // A wait is ticks, or the condition it waits for.
+                case WAIT -> {
+                    if (step.word().isEmpty()) {
+                        one.put(verb, step.amount());
+                    } else {
+                        one.put(verb, step.word());
+                    }
+                }
+                case FLEE, HOLD -> one.put(verb, step.amount());
                 case ATTACK, SELECT, TAKE, RECIPE, PUT -> one.put(verb, step.word());
             }
         }

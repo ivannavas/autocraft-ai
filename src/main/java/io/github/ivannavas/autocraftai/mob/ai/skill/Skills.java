@@ -128,7 +128,7 @@ public final class Skills {
         skills.clear();
         records.clear();
         if (!Files.isRegularFile(file)) {
-            starters();
+            starters(false);
             save();
             return;
         }
@@ -157,6 +157,12 @@ public final class Skills {
         } catch (IOException | RuntimeException e) {
             log.warn("Could not read {}; starting with no skills", file, e);
         }
+        // A starter missing from the file altogether was lost, not forgotten: a forgotten one is kept
+        // in the file as retired. Two of them went that way when a wait for a condition was written
+        // back as a wait for nought ticks and refused at the next load.
+        if (starters(true) > 0) {
+            save();
+        }
     }
 
     public void save() {
@@ -182,7 +188,8 @@ public final class Skills {
             Files.createDirectories(file.getParent());
             Files.writeString(file, JSON.writerWithDefaultPrettyPrinter().writeValueAsString(root),
                     StandardCharsets.UTF_8);
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
+            // Writing the shelf out is bookkeeping; a bug in it must not take the game down.
             log.warn("Could not write {}", file, e);
         }
     }
@@ -197,7 +204,7 @@ public final class Skills {
         skills.clear();
         records.clear();
         offered.clear();
-        starters();
+        starters(false);
         save();
         log.info("Cleared the skills, forgetting {}; the starter shelf is back", had);
     }
@@ -208,15 +215,20 @@ public final class Skills {
      * are ordinary skills from the moment they are loaded: tried where they apply, judged by their
      * record, revised or forgotten by the coach. Read from the mod's own resources, never from disk.
      */
-    private void starters() {
+    private int starters(boolean onlyMissing) {
+        int added = 0;
         try (java.io.InputStream in = Skills.class.getResourceAsStream(STARTERS)) {
             if (in == null) {
                 log.warn("No starter shelf at {}", STARTERS);
-                return;
+                return 0;
             }
             JsonNode root = JSON.readTree(new String(in.readAllBytes(), StandardCharsets.UTF_8));
-            int added = 0;
             for (JsonNode entry : root.path("skills")) {
+                String name = entry.path("name").asText("").strip().toUpperCase(java.util.Locale.ROOT);
+                if (onlyMissing && skills.containsKey(name)) {
+                    // Still there, whether ours or a writer's own under the same name: leave it.
+                    continue;
+                }
                 try {
                     Skill skill = Skill.parse(entry, Set.of());
                     skills.put(skill.name(), skill);
@@ -226,10 +238,11 @@ public final class Skills {
                     log.warn("Dropping a starter skill: {}", e.getMessage());
                 }
             }
-            log.info("Starter shelf: {} skill(s)", added);
+            log.info("Starter shelf: {} skill(s){}", added, onlyMissing ? " that were missing put back" : "");
         } catch (IOException | RuntimeException e) {
             log.warn("Could not read the starter shelf", e);
         }
+        return added;
     }
 
     /** Told of every skill added from now on, so the tables can grow a column for it. */
