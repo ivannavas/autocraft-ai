@@ -34,6 +34,12 @@ public record Bounds(int floor, int ceiling) {
      * would be worse at the game than one that occasionally falls.
      */
     private static final double MOST_PER_SECOND = 1.5;
+    /**
+     * Per block of distance closed towards the band. Above the per-block charge for standing outside it,
+     * so a body that spends a second climbing one block is better off than one that stands still at the
+     * wrong height, and well below what a resource pays, so the climb never becomes the point.
+     */
+    private static final double CLOSED_PER_BLOCK = 0.35;
 
     public Bounds {
         floor = Math.max(OPEN_FLOOR, Math.min(OPEN_CEILING, floor));
@@ -74,6 +80,22 @@ public record Bounds(int floor, int ceiling) {
         }
         double perSecond = Math.min(MOST_PER_SECOND, outside(y) * PER_BLOCK_PER_SECOND);
         return -perSecond * Math.max(1, seconds);
+    }
+
+    /**
+     * What a step that moved towards the band was worth: the blocks of distance it closed, priced a
+     * little above the second it cost.
+     *
+     * <p>Being outside the band was charged for and getting into it paid nothing, so a climb earned the
+     * body exactly the seconds it took, and the goal table learned what that means: on one savanna run
+     * REACH_BAND sat between -2 and -9 in every row of the food folder, chosen thirty-eight times, cut
+     * short seventeen, and never once worth it. The charge said "not here"; nothing said "this way".
+     */
+    public double closed(int before, int after) {
+        if (!bind()) {
+            return 0.0;
+        }
+        return CLOSED_PER_BLOCK * (outside(before) - outside(after));
     }
 
     /** The nearest height inside the band, which is where a body outside it should be heading. */

@@ -180,6 +180,9 @@ public final class Progression {
     private int stepsSinceProgress;
     /** How many times the objective has got nearer, ever: what says a lesson was followed by progress. */
     private long progressCount;
+    /** How near the band counts as progress, and what each block of that nearness is worth. */
+    private static final int BAND_PROGRESS_WITHIN = 32;
+    private static final double BAND_PROGRESS = 0.05;
     /** What one piece of a smelted objective's ore is worth as progress: half the ingot it becomes. */
     private static final double ORE_PROGRESS = 0.5;
     private static final int MOST_ORE_COUNTED = 64;
@@ -726,6 +729,12 @@ public final class Progression {
         total += arrived(context, y.isPresent() ? band.contains(y.getAsInt()) : !band.bind());
         if (y.isPresent()) {
             total += band.charge(y.getAsInt(), context.steps());
+            // And what the step did about it. Without this the band was all stick and no carrot: the
+            // plan said where the thing is and the only move that went there was the one that paid least.
+            if (context.positionBefore() != null && context.positionAfter() != null) {
+                total += band.closed((int) Math.floor(context.positionBefore().y),
+                        (int) Math.floor(context.positionAfter().y));
+            }
         }
         return total;
     }
@@ -818,6 +827,14 @@ public final class Progression {
             for (Resource ore : own.ingredients().keySet()) {
                 along += ORE_PROGRESS * Math.min(MOST_ORE_COUNTED, held.count(ore));
             }
+        }
+        // Getting to the height the plan named is progress on the objective, so a body climbing towards
+        // it is working rather than stalling, and the planner is not told it has been stuck for minutes
+        // while it climbs.
+        Bounds band = bounds();
+        if (band.bind() && context.positionAfter() != null) {
+            along += BAND_PROGRESS * Math.max(0,
+                    BAND_PROGRESS_WITHIN - band.outside((int) Math.floor(context.positionAfter().y)));
         }
         if (startedAt != null && context.positionAfter() != null && "GO".equals(current.shape())) {
             along += Math.floor(flat(startedAt, context.positionAfter()) / TRAVEL_PROGRESS_BLOCKS);
