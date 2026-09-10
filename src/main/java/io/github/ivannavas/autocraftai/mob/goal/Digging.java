@@ -101,4 +101,17 @@ final class Digging {
         BlockState state = body.level().getBlockState(pos);
         return !state.isAir() && state.getDestroySpeed(body.level(), pos) >= 0.0F;
     }
+
+    /**
+     * The block the body is actually standing on: the one under the feet, or the feet's own block when
+     * that is a slab or the like — a body on a bottom slab has its feet inside the slab's block, and a
+     * swing at the block "under" it goes through the slab and lands nothing.
+     */
+    static BlockPos standingOn(MobBody body) {
+        BlockPos feet = body.player().blockPosition();
+        if (!body.level().getBlockState(feet).getCollisionShape(body.level(), feet).isEmpty()) {
+            return feet;
+        }
+        return feet.below();
+    }
 }

@@ -206,6 +206,9 @@ public class ObjectiveAgent extends AgentExecutor {
             write becomes a column the player learns when to use, and is kept across objectives; the
             skills written so far are listed in the situation when there are any, so do not write one
             that exists. Write one only when the objective genuinely needs it, at most one per answer.
+            You may also forget skills, as "forget": [{"name": "<SKILL>", "why": "<one short sentence>"}]
+            beside the objective: any skill, at any time, the starter shelf included — one that is wrong
+            for this world, one that keeps failing or doing nothing, two that do the same thing.
             """ + Skill.LANGUAGE + """
             A CRAFT skill that makes one of the plan's resources should say so with "makes", and its
             "when" should say what it needs in the bag and nearby, e.g.

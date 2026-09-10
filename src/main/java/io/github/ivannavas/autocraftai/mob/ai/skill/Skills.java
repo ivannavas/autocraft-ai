@@ -54,11 +54,18 @@ public final class Skills {
     /** Below this share of uses completed, a judged skill is retired. */
     private static final double KEEP_ABOVE = 0.15;
     private static final String FILE = "skills.json";
+    private static final String STARTERS = "/assets/autocraft-ai/skills/starters.json";
 
     private static final Skills INSTANCE = new Skills();
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final ConcurrentLinkedQueue<Skill> offered = new ConcurrentLinkedQueue<>();
+    /** Skills the planner said to forget, with its reason, until the game thread takes them. */
+    private final ConcurrentLinkedQueue<Forget> forgetsOffered = new ConcurrentLinkedQueue<>();
+
+    /** One skill to forget and why. */
+    public record Forget(String name, String why) {
+    }
 
     /** How a skill has done: uses, completions, and whether it has been retired for not finishing. */
     public static final class Record {
@@ -121,6 +128,8 @@ public final class Skills {
         skills.clear();
         records.clear();
         if (!Files.isRegularFile(file)) {
+            starters();
+            save();
             return;
         }
         try {
@@ -188,8 +197,39 @@ public final class Skills {
         skills.clear();
         records.clear();
         offered.clear();
+        starters();
         save();
-        log.info("Cleared the skills, forgetting {}", had);
+        log.info("Cleared the skills, forgetting {}; the starter shelf is back", had);
+    }
+
+    /**
+     * The starter shelf: the strategies that used to be code — hole up, tower, wall off, daylight,
+     * fight, retreat — written in the skill language and shipped as examples of what it can say. They
+     * are ordinary skills from the moment they are loaded: tried where they apply, judged by their
+     * record, revised or forgotten by the coach. Read from the mod's own resources, never from disk.
+     */
+    private void starters() {
+        try (java.io.InputStream in = Skills.class.getResourceAsStream(STARTERS)) {
+            if (in == null) {
+                log.warn("No starter shelf at {}", STARTERS);
+                return;
+            }
+            JsonNode root = JSON.readTree(new String(in.readAllBytes(), StandardCharsets.UTF_8));
+            int added = 0;
+            for (JsonNode entry : root.path("skills")) {
+                try {
+                    Skill skill = Skill.parse(entry, Set.of());
+                    skills.put(skill.name(), skill);
+                    records.put(skill.name(), new Record());
+                    added++;
+                } catch (IllegalArgumentException e) {
+                    log.warn("Dropping a starter skill: {}", e.getMessage());
+                }
+            }
+            log.info("Starter shelf: {} skill(s)", added);
+        } catch (IOException | RuntimeException e) {
+            log.warn("Could not read the starter shelf", e);
+        }
     }
 
     /** Told of every skill added from now on, so the tables can grow a column for it. */
@@ -250,6 +290,21 @@ public final class Skills {
      */
     public void offer(Skill skill) {
         offered.add(skill);
+    }
+
+    /** The planner's word that a skill should go, from any thread; taken on the game thread. */
+    public void offerForget(String name, String why) {
+        forgetsOffered.add(new Forget(name, why));
+    }
+
+    /** The forgets offered since last asked. Game thread. */
+    public List<Forget> takeOfferedForgets() {
+        List<Forget> taken = new ArrayList<>();
+        Forget next;
+        while ((next = forgetsOffered.poll()) != null) {
+            taken.add(next);
+        }
+        return taken;
     }
 
     /** The skills offered since last asked, oldest first. Game thread. */

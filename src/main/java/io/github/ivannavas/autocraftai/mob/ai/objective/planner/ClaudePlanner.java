@@ -287,6 +287,19 @@ public final class ClaudePlanner implements ObjectivePlanner {
      * is logged with what was wrong and dropped; the objective beside it is taken all the same.
      */
     private void takeSkills(String reply) {
+        object(reply).map(node -> node.path("forget")).filter(JsonNode::isArray).ifPresent(listed -> {
+            Set<String> known = Skills.get().names();
+            for (JsonNode entry : listed) {
+                String name = (entry.isTextual() ? entry.asText() : entry.path("name").asText(""))
+                        .strip().toUpperCase(java.util.Locale.ROOT);
+                String why = entry.isTextual() ? "" : entry.path("why").asText("").strip();
+                if (known.contains(name)) {
+                    Skills.get().offerForget(name, why.isEmpty() ? "the planner forgot it" : why);
+                    log.info("The planner forgot a skill: {} ({})", name, why);
+                    PlannerLog.get().plannerNoted("forgot skill " + name + (why.isEmpty() ? "" : ": " + why));
+                }
+            }
+        });
         object(reply).map(node -> node.path("skills")).filter(JsonNode::isArray).ifPresent(listed -> {
             Set<String> taken = Skills.taken();
             for (JsonNode entry : listed) {

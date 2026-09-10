@@ -15,6 +15,7 @@ import io.github.ivannavas.autocraftai.mob.ai.Sighting;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Reserve;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Tool;
+import io.github.ivannavas.autocraftai.mob.ai.skill.Condition;
 import io.github.ivannavas.autocraftai.mob.ai.skill.Readings;
 import io.github.ivannavas.autocraftai.mob.ai.skill.Skill;
 import io.github.ivannavas.autocraftai.mob.ai.skill.Skills;
@@ -76,7 +77,11 @@ public final class SkillGoal implements MobGoal {
     private int step;
     private int stepTicks;
     private int totalTicks;
+    /** Ticks charged to the budget: all of them but those spent waiting for a condition on purpose. */
+    private int budgetTicks;
     private int sinceProgress;
+    /** What the current step waits for, when it is a wait for a condition. */
+    private Condition waitFor;
     private boolean done;
     private boolean failed;
     private String failure = "";
@@ -165,7 +170,16 @@ public final class SkillGoal implements MobGoal {
     @Override
     public void tick(MobBody body) {
         totalTicks++;
-        sinceProgress++;
+        Skill.Step what = skill.steps().get(step);
+        boolean waiting = waitFor != null;
+        if (waiting) {
+            // Waiting for the day sealed in a hole is the skill doing what it says, not stalling, and
+            // a night is longer than any budget: the minute is for the steps that do things.
+            sinceProgress = 0;
+        } else {
+            sinceProgress++;
+            budgetTicks++;
+        }
         if (totalTicks % UNTIL_EVERY == 0 && !"true".equals(skill.until().text())) {
             Readings now = readings.get();
             if (now != null && skill.until().test(now)) {
@@ -173,12 +187,12 @@ public final class SkillGoal implements MobGoal {
                 return;
             }
         }
-        if (totalTicks > Skill.BUDGET_TICKS) {
+        if (budgetTicks > Skill.BUDGET_TICKS) {
             fail(body, "ran out its budget");
             return;
         }
-        Skill.Step what = skill.steps().get(step);
-        int allowed = what.verb() == Skill.Verb.WAIT || what.verb() == Skill.Verb.HOLD
+        int allowed = waiting ? Skill.WAIT_FOR_TICKS
+                : what.verb() == Skill.Verb.WAIT || what.verb() == Skill.Verb.HOLD
                 ? Math.max(Skill.STEP_TICKS, what.amount() + 20) : Skill.STEP_TICKS;
         if (++stepTicks > allowed) {
             fail(body, "step " + (step + 1) + " (" + what.describe() + ") did not finish");
@@ -208,12 +222,20 @@ public final class SkillGoal implements MobGoal {
         facing = body.player().getDirection();
         Skill.Step next = skill.steps().get(step);
         target = next.at() == null ? null : at(body, next.at());
+        waitFor = next.verb() == Skill.Verb.WAIT && !next.word().isEmpty() ? Condition.parse(next.word()) : null;
         named = false;
         if (next.at() == null && (next.verb() == Skill.Verb.WALK || next.verb() == Skill.Verb.LOOK
                 || next.verb() == Skill.Verb.BREAK
                 || (next.verb() == Skill.Verb.USE && !"hand".equals(next.word())))) {
             Readings now = readings.get();
             target = now == null ? null : now.find(next.word()).orElse(null);
+            if (target == null && now != null
+                    && ("nearest".equals(next.word()) || "worst".equals(next.word()))) {
+                // A hostile rather than a block: where it stands right now.
+                LivingEntity hostile = "nearest".equals(next.word())
+                        ? now.around().nearestHostile() : now.around().worstToFight();
+                target = hostile == null ? null : hostile.blockPosition();
+            }
             named = true;
             if (target == null) {
                 fail(body, "no " + next.word() + " within reach");
@@ -259,7 +281,7 @@ public final class SkillGoal implements MobGoal {
             case WALK -> walk(body);
             case LOOK -> look(body);
             case JUMP -> jump(body);
-            case WAIT -> wait(body, what.amount());
+            case WAIT -> wait(body, what);
             case ATTACK -> attack(body, what.word());
             case FLEE -> flee(body, what.amount());
             case DIG -> dig(body);
@@ -365,9 +387,16 @@ public final class SkillGoal implements MobGoal {
         return !body.onGround() || stepTicks >= 12;
     }
 
-    private boolean wait(MobBody body, int ticks) {
+    private boolean wait(MobBody body, Skill.Step what) {
         body.moveControl().stop();
-        return stepTicks >= ticks;
+        if (waitFor != null) {
+            if (stepTicks % UNTIL_EVERY != 0) {
+                return false;
+            }
+            Readings now = readings.get();
+            return now != null && waitFor.test(now);
+        }
+        return stepTicks >= what.amount();
     }
 
     private boolean attack(MobBody body, String which) {
@@ -408,7 +437,10 @@ public final class SkillGoal implements MobGoal {
         }
         inner.tick(body);
         if (inner.stalledTicks() < 20) {
+            // Getting away is doing something: a retreat that moved was "did nothing" twice and
+            // forgotten by the coach for it before the night was out.
             sinceProgress = 0;
+            acted = true;
         }
         if (stepTicks >= ticks) {
             inner.stop(body);
@@ -422,7 +454,7 @@ public final class SkillGoal implements MobGoal {
         if (!body.onGround()) {
             return false;
         }
-        BlockPos under = HoleUpGoal.standingOn(body);
+        BlockPos under = Digging.standingOn(body);
         Level level = body.level();
         if (target == null) {
             target = under;

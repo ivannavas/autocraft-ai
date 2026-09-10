@@ -727,22 +727,19 @@ public final class QLearningBrain {
      * its own shelter to satisfy a rule about being stuck.
      */
     private boolean sheltering() {
-        return tacticGoal != null && engine.isRunning(tacticGoal)
-                && (tacticChoice == Tactic.HOLE_UP || tacticChoice == Tactic.TOWER);
+        // A tactic skill has the body on purpose — a shelter, a fight, a climb it wrote itself. The
+        // strategies this used to name are skills now, so the test is the layer, not the move.
+        return tacticGoal instanceof SkillGoal && engine.isRunning(tacticGoal);
     }
 
     /**
-     * Whether the running tactic is one to see through: a shelter, or a climb back to daylight that is
-     * still getting somewhere. The layer woke for DAYLIGHT because the body was stuck under a roof; the
-     * first block gained cleared "stuck", the surroundings read as quiet, and the climb was dropped ten
-     * seconds in with the body still underground and starving.
+     * Whether the running tactic is one to see through: a tactic skill that is still running and has
+     * neither finished nor given up. A skill's condition and steps are its own commitment; the moment
+     * that matters is that a shelter sealed for the night reads as quiet surroundings the second the
+     * cap goes on, and a layer that re-chose then would dig its own shelter open every second.
      */
     private boolean committed() {
-        if (sheltering()) {
-            return true;
-        }
-        return tacticGoal != null && engine.isRunning(tacticGoal) && tacticChoice == Tactic.DAYLIGHT
-                && !tacticGoal.isDone() && tacticGoal.stalledTicks() < STALL_TICKS;
+        return tacticGoal instanceof SkillGoal run && engine.isRunning(run) && !run.isDone() && !run.failed();
     }
 
     /**
@@ -751,6 +748,9 @@ public final class QLearningBrain {
      * in hand, and this is where the objective is being worked.
      */
     private void takeOfferedSkills(String stateKey, String craftKey, LocalPlayer player) {
+        for (Skills.Forget forget : Skills.get().takeOfferedForgets()) {
+            Skills.get().forget(forget.name(), forget.why());
+        }
         for (Skill skill : Skills.get().takeOffered()) {
             Optional<String> refused = Skills.get().add(skill);
             if (refused.isPresent()) {
@@ -1680,20 +1680,6 @@ public final class QLearningBrain {
      * pushing at something with somewhere to be. A body already being got through a wall by this layer
      * counts as stuck too, so the table keeps being asked — and keeps learning — until the way is open.
      */
-    /**
-     * Whether the plan itself wants the body lower than it is: a named height below, or a band whose
-     * ceiling is below. The plan's word, not the self-rescue's, which alternates up and down when the
-     * body is pinned and had DAYLIGHT off the table every other decision in a hole with no sky.
-     */
-    private boolean plannedDown(LocalPlayer player) {
-        int y = player.getBlockY();
-        Optional<Phase> current = progression.current();
-        if (current.isPresent() && current.get().height().isPresent()) {
-            return current.get().height().getAsInt() < y - 1;
-        }
-        return progression.bounds().ceiling() < y - 1;
-    }
-
     /** Blocks made in the direction wanted since a position: up, down, or across the ground. */
     private static double wayMade(Vec3 from, Vec3 to, Obstruction.Wanted wanted) {
         if (from == null || wanted == null) {
@@ -2071,14 +2057,6 @@ public final class QLearningBrain {
         // physically possible is on the table; what pays is for the tables, the exposure and the deaths
         // to settle, and for the coach and the planner to teach with skills whose conditions say
         // exactly when.
-        // Getting back to the sky is only a way out when the sky is where the plan wants the body. With
-        // iron at Y -10..50 and the surface at 64, a body stuck under a roof was offered DAYLIGHT every
-        // second and climbed away from its own objective; the mentor taught against it every time.
-        if (here.surface() > progression.bounds().ceiling() || plannedDown(player)) {
-            // Nor when the plan wants the body lower than it is: under a canopy the cover reads as a
-            // roof, and a body meant to be digging for stone was breaking leaves and stacking dirt.
-            allowed[Tactic.DAYLIGHT.ordinal()] = false;
-        }
         return allowed;
     }
 

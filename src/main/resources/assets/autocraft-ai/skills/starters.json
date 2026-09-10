@@ -1,0 +1,78 @@
+{
+  "skills": [
+    {
+      "name": "HOLE_UP",
+      "layer": "TACTIC",
+      "prior": 4,
+      "when": "night and candig and not sword",
+      "steps": [ {"dig": true}, {"dig": true}, {"select": "block"}, {"place": [0, 2, 0]}, {"wait": "day"} ],
+      "reason": "starter: dig two down, put the block that came out in hand, cap the hole, wait for day"
+    },
+    {
+      "name": "TOWER",
+      "layer": "TACTIC",
+      "prior": 3,
+      "when": "night and hostiles > 0 and blocks >= 3 and roomabove",
+      "steps": [ {"select": "block"}, {"place": "feet"}, {"place": "feet"}, {"place": "feet"}, {"wait": "day"} ],
+      "reason": "starter: three blocks under the feet and stay up there until day"
+    },
+    {
+      "name": "WALL_OFF",
+      "layer": "TACTIC",
+      "prior": 3,
+      "when": "hostiles > 0 and nearest != FAR and blocks >= 2",
+      "steps": [ {"select": "block"}, {"look": "nearest"}, {"place": [1, 0, 0]}, {"place": [1, 1, 0]} ],
+      "reason": "starter: two blocks between the body and the nearest hostile"
+    },
+    {
+      "name": "DAYLIGHT",
+      "layer": "TACTIC",
+      "prior": 3,
+      "when": "cover != SKY and stuck and blocks > 0",
+      "until": "sky",
+      "repeat": true,
+      "steps": [ {"break": [0, 2, 0]}, {"select": "block"}, {"place": "feet"} ],
+      "reason": "starter: break the ceiling and stack up until the sky is back overhead"
+    },
+    {
+      "name": "FIGHT",
+      "layer": "TACTIC",
+      "prior": 3,
+      "when": "hostiles > 0 and sword",
+      "until": "hostiles == 0",
+      "repeat": true,
+      "steps": [ {"attack": "worst"} ],
+      "reason": "starter: with a sword in hand, fight the most dangerous hostile first"
+    },
+    {
+      "name": "RETREAT",
+      "layer": "TACTIC",
+      "prior": 2,
+      "when": "hostiles > 0 and not sword",
+      "steps": [ {"flee": 100} ],
+      "reason": "starter: run from the nearest hostile for five seconds"
+    },
+    {
+      "name": "TABLE_STONE_PICKAXE",
+      "layer": "CRAFT",
+      "makes": "STONE_PICKAXE",
+      "prior": 4,
+      "when": "has(crafting_table) > 0 and has(COBBLESTONE) >= 3 and has(STICK) >= 2 and short(STONE_PICKAXE) > 0 and menu == NONE",
+      "steps": [ {"select": "crafting_table"}, {"place": [1, 0, 0]}, {"use": [1, 0, 0]},
+                 {"recipe": "STONE_PICKAXE"}, {"take": "result"}, {"close": true},
+                 {"select": "hand"}, {"break": [1, 0, 0]}, {"walk": [1, 0, 0]} ],
+      "reason": "starter: set the table down, craft the stone pickaxe on it, then pick the table up again"
+    },
+    {
+      "name": "FURNACE_IRON",
+      "layer": "CRAFT",
+      "makes": "IRON",
+      "prior": 4,
+      "when": "has(furnace) > 0 and has(RAW_IRON) > 0 and has(COAL) > 0 and pickaxe and menu == NONE",
+      "steps": [ {"select": "furnace"}, {"place": [1, 0, 0]}, {"use": [1, 0, 0]},
+                 {"put": "RAW_IRON"}, {"put": "COAL"}, {"wait": 600}, {"take": "output"}, {"close": true},
+                 {"select": "pickaxe"}, {"break": [1, 0, 0]}, {"walk": [1, 0, 0]} ],
+      "reason": "starter: set the furnace down, load it, wait, take the ingots, then pick the furnace up again"
+    }
+  ]
+}

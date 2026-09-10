@@ -63,23 +63,19 @@ public class MentorAgent extends AgentExecutor {
 
             TACTICS - what to do about the surroundings as a whole (the row is the surroundings key you
             are given: hostiles and how many, nearest, armed or not, health, cover, light, blocks):
-              CARRY_ON (the surroundings are not the problem), FIGHT (attack the most dangerous hostile
-              first - the skeleton before the zombie, never a creeper), RETREAT (run from the nearest),
-              TOWER (stack three blocks under its feet and stay up; needs three blocks and room above),
-              WALL_OFF (two blocks between it and the nearest hostile; needs two blocks), HOLE_UP (dig two
-              down and cap the hole with the dirt; the classic way through a night with nothing in hand),
-              DAYLIGHT (get back under the open sky: break the ceiling, stack up, cut steps into the pit
-              wall - for a body trapped under a roof or down a hole with an objective that lives on the
-              surface).
-              None of these is forced and none is forbidden by a rule: nothing stops the body eating in
-              front of a creeper or walking into the night unarmed except what its tables have learned
-              and what you teach. Surviving the night is yours to teach, and precisely: a lesson on
-              HOLE_UP or TOWER in the row given when that is the answer, and better still a TACTIC skill
-              whose condition says exactly when (night, no sword, hostiles near, blocks in hand, cover)
-              and whose steps say exactly what (dig two down and cap; or tower up; or wall off), so the
-              run learns when to shelter instead of being told to. A body in a cave with the objective
-              on the surface and no way it has found should DAYLIGHT; a body being chased in a corridor
-              with blocks in hand should WALL_OFF.
+              CARRY_ON (the surroundings are not the problem) and the TACTIC skills whose conditions
+              hold right now, listed as the tactics it may choose. Nothing about surviving is built in:
+              the run ships with a starter shelf of TACTIC skills — HOLE_UP (dig two down, cap, wait for
+              day), TOWER (three blocks under the feet, wait for day), WALL_OFF (face the nearest hostile
+              and put two blocks in front), DAYLIGHT (break the ceiling and stack up until the sky is
+              back), FIGHT (with a sword, the most dangerous first), RETREAT (run) — written in the skill
+              language as examples, and they are yours: teach them in the row given, revise one whose
+              condition or steps are wrong for what you see, forget one that keeps failing, write the
+              one that is missing (a body being chased in a corridor, a body trapped under a roof with
+              no blocks). Nothing is forced and nothing is forbidden by a rule: what the body does about
+              a night or a creeper is what its tables have learned and what you teach, and a skill whose
+              condition says exactly when and whose steps say exactly what is the most precise lesson
+              there is.
 
             WATER - when the situation says IN THE WATER, the body is swimming and that is the whole
             problem: nothing else it does matters until it is out. The water table's moves are CARRY_ON,
@@ -103,8 +99,9 @@ public class MentorAgent extends AgentExecutor {
             nothing, failed, and why. There is no limit on how many there are, so it is you who keeps the
             shelf honest: name in "forget" the skills that are not earning their keep — used often and
             rarely finished, finishing by doing nothing, written for a situation the run has left behind,
-            or two that do the same thing. A forgotten skill is retired; a revision with the same name
-            brings it back. Do not forget a skill for being new.
+            or two that do the same thing. Any skill may go, the starter shelf included; nothing is
+            protected, and the shelf is there to be replaced by better. A forgotten skill is retired; a
+            revision with the same name brings it back. Do not forget a skill for being new.
 
             WRITING A NEW MOVE. When no move on the lists is the way out, write one as a skill and it
             becomes a column of its table from then on: the run adds it, seeds it in this row with the

@@ -73,7 +73,8 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
 
         public Step {
             at = at == null ? null : at.clone();
-            word = word == null ? "" : word.toLowerCase(Locale.ROOT);
+            // A wait's word is a condition, and conditions name readings like SKY in their own case.
+            word = word == null ? "" : verb == Verb.WAIT ? word.strip() : word.toLowerCase(Locale.ROOT);
         }
 
         /** One line, for the overlay and the writer's memory. */
@@ -102,6 +103,8 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
     public static final int STEP_TICKS = 200;
     /** The most ticks a wait or a hold may ask for: smelting one item takes two hundred. */
     public static final int LONGEST_WAIT = 600;
+    /** The most a wait for a condition may last: a night, with room to spare. Outside the budget. */
+    public static final int WAIT_FOR_TICKS = 12000;
     /** The most a writer may seed a new skill with, so an invention is tried and not trusted. */
     public static final double MOST_PRIOR = 6.0;
 
@@ -147,7 +150,10 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
               (what is in hand when that is a block, else any building block);
               {"walk": [f,u,r]} or {"walk": "furnace"} (up to the nearest block of that kind within eight
               blocks: a plan resource or a block id); {"look": [f,u,r]} or {"look": "<block>"};
-              {"jump": true}, {"wait": ticks}; {"attack": "worst"} or "nearest"; {"flee": ticks};
+              {"jump": true}, {"wait": ticks} or {"wait": "<condition>"} (stand still until it holds —
+              "day", "hostiles == 0" — for up to ten minutes, outside the skill's own minute);
+              {"look": "nearest"} or {"look": "worst"} face the nearest or the most dangerous hostile, so
+              the next step's forward is towards it; {"attack": "worst"} or "nearest"; {"flee": ticks};
               {"select": "sword"|"pickaxe"|"axe"|"block"|"hand"|<item id or plan resource>} put it in hand;
               {"use": [f,u,r]} or {"use": "<block>"} right-click that block or the nearest of that kind
               (opens a table, furnace or chest; works a door, a lever, a bucket on water); {"use": "hand"}
@@ -166,6 +172,17 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
             steps at what is really there ({"break": "<block>"} rather than a guessed offset).
             There is no limit on how many skills there are; the coach forgets the ones not earning their
             keep, and a retired skill comes back if it is revised.
+            Nothing is built in that a skill could say instead: the run ships with a starter shelf of
+              skills written in this language as examples of what it can say — TACTIC: HOLE_UP, TOWER,
+              WALL_OFF, DAYLIGHT, FIGHT, RETREAT; CRAFT: TABLE_STONE_PICKAXE (set the table down, craft
+              on it, pick the table up again) and FURNACE_IRON (set the furnace down, load it, wait, take
+              the ingots, pick the furnace up again). They are ordinary skills, and so is every other:
+              you may forget ANY skill at ANY time, the starter shelf included, with
+              "forget": [{"name": "<SKILL>", "why": "<one short sentence>"}] — nothing is protected —
+              and revise any, and write better ones.
+            Menus are the skill's to work: select, place, use, recipe, take, put, close. A table or a
+              furnace a skill sets down should be picked up again when the skill is done with it: select
+              the hand (the pickaxe, for a furnace), break the block, and walk onto the drop.
             prior: -6 to 6, the value it starts with in every situation where it applies, until what it
               earns there replaces it: a high prior means "try me first wherever I apply".
             To fix a skill of yours that keeps failing — the list of skills says why the last runs failed —
@@ -256,13 +273,26 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
                     ? new Step(verb, null, word(argument, verb, Set.of("feet")), 0)
                     : new Step(verb, offset(argument, verb), "", 0);
             case JUMP, DIG, CLOSE -> new Step(verb, null, "", 0);
-            case WAIT, HOLD -> new Step(verb, null, "", ticks(argument, verb, LONGEST_WAIT));
+            case WAIT -> argument.isTextual()
+                    ? new Step(verb, null, waitCondition(argument), 0)
+                    : new Step(verb, null, "", ticks(argument, verb, LONGEST_WAIT));
+            case HOLD -> new Step(verb, null, "", ticks(argument, verb, LONGEST_WAIT));
             case FLEE -> new Step(verb, null, "", ticks(argument, verb, STEP_TICKS));
             case ATTACK -> new Step(verb, null, argument.isTextual()
                     ? word(argument, verb, Set.of("worst", "nearest")) : "worst", 0);
             case TAKE -> new Step(verb, null, word(argument, verb, Set.of("result", "output")), 0);
             case SELECT, RECIPE, PUT -> new Step(verb, null, anyWord(argument, verb), 0);
         };
+    }
+
+    /** The condition a wait waits for, checked here so a bad one is refused when the skill is written. */
+    private static String waitCondition(JsonNode argument) {
+        String text = argument.asText("").strip();
+        if (text.isEmpty()) {
+            throw new IllegalArgumentException("wait takes ticks or a condition to wait for");
+        }
+        Condition.parse(text);
+        return text;
     }
 
     private static int[] offset(JsonNode argument, Verb verb) {
