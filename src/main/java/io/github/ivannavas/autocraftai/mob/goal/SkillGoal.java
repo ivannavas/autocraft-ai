@@ -669,7 +669,8 @@ public final class SkillGoal implements MobGoal {
         Slot from = null;
         for (Slot slot : menu.slots) {
             if (slot.container == player.getInventory() && !slot.getItem().isEmpty()
-                    && Readings.isCalled(slot.getItem(), word)) {
+                    && (Readings.isCalled(slot.getItem(), word)
+                            || ("fuel".equals(word) && body.level().fuelValues().isFuel(slot.getItem())))) {
                 from = slot;
                 break;
             }

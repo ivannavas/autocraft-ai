@@ -24,6 +24,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
@@ -179,6 +180,9 @@ public final class Progression {
     private int stepsSinceProgress;
     /** How many times the objective has got nearer, ever: what says a lesson was followed by progress. */
     private long progressCount;
+    /** What one piece of a smelted objective's ore is worth as progress: half the ingot it becomes. */
+    private static final double ORE_PROGRESS = 0.5;
+    private static final int MOST_ORE_COUNTED = 64;
     /** The items on the shopping list the bag has already reached, so each is paid for once. */
     private final Set<Resource> readied = EnumSet.noneOf(Resource.class);
     /** Whether the objective in hand has already had its early review for a shortage it cannot make up. */
@@ -500,6 +504,24 @@ public final class Progression {
         Inventory inventory = player.getInventory();
         InventoryCensus held = effective(InventoryCensus.of(inventory), player);
         Resource own = current.scores().orElse(null);
+        if (own != null && own.needsFurnace()) {
+            // The ore is the objective's own progress, and the planner has to be told so in words: what
+            // is left is not mining but the furnace and something to burn in it.
+            int ore = 0;
+            List<String> ores = new ArrayList<>();
+            for (Resource ingredient : own.ingredients().keySet()) {
+                ore += held.count(ingredient);
+                ores.add(ingredient.name());
+            }
+            int fuel = fuelIn(player);
+            if (ore > 0) {
+                missing.add("nothing left to mine for it: " + ore + " x " + String.join("/", ores)
+                        + " in the bag smelt into " + own.name() + "; what is left is a furnace ("
+                        + (held.count(Resource.FURNACE) > 0 ? "in hand" : "none") + ") and fuel ("
+                        + (fuel > 0 ? fuel + " burnable items carried" : "none carried")
+                        + "; coal, charcoal, planks, logs and sticks all burn)");
+            }
+        }
         for (Map.Entry<Resource, Integer> need : needs.entrySet()) {
             if (need.getKey() != own && held.count(need.getKey()) < need.getValue()) {
                 missing.add((need.getValue() - held.count(need.getKey())) + " x " + need.getKey().name());
@@ -515,6 +537,19 @@ public final class Progression {
             }
         }
         return missing;
+    }
+
+    /** How many things a furnace would burn are in the bag: coal, charcoal, planks, logs, sticks. */
+    private static int fuelIn(LocalPlayer player) {
+        Inventory inventory = player.getInventory();
+        int total = 0;
+        for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            if (!stack.isEmpty() && player.level().fuelValues().isFuel(stack)) {
+                total += stack.getCount();
+            }
+        }
+        return total;
     }
 
     /** The tool a source is broken with: the planner's word, or the game's when the planner said hands. */
@@ -784,6 +819,14 @@ public final class Progression {
         for (Map.Entry<Resource, Integer> need : needs.entrySet()) {
             if (need.getKey() != own) {
                 along += Math.min(need.getValue(), held.count(need.getKey()));
+            }
+        }
+        // A smelted objective's ore is progress towards it, at half an ingot each so that smelting
+        // one is progress too. Seven raw iron in the bag read as eight minutes of "no progress" to
+        // the planner, which gave the objective up as hopeless with the ore already mined.
+        if (own != null && own.needsFurnace()) {
+            for (Resource ore : own.ingredients().keySet()) {
+                along += ORE_PROGRESS * Math.min(MOST_ORE_COUNTED, held.count(ore));
             }
         }
         if (startedAt != null && context.positionAfter() != null && "GO".equals(current.shape())) {

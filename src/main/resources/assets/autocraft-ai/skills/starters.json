@@ -68,9 +68,9 @@
       "layer": "CRAFT",
       "makes": "IRON",
       "prior": 4,
-      "when": "has(furnace) > 0 and has(RAW_IRON) > 0 and has(COAL) > 0 and pickaxe and menu == NONE",
+      "when": "has(furnace) > 0 and has(RAW_IRON) > 0 and fuel > 0 and pickaxe and menu == NONE",
       "steps": [ {"select": "furnace"}, {"place": [1, 0, 0]}, {"use": [1, 0, 0]},
-                 {"put": "RAW_IRON"}, {"put": "COAL"}, {"wait": 600}, {"take": "output"}, {"close": true},
+                 {"put": "RAW_IRON"}, {"put": "fuel"}, {"wait": 600}, {"take": "output"}, {"close": true},
                  {"select": "pickaxe"}, {"break": [1, 0, 0]}, {"walk": [1, 0, 0]} ],
       "reason": "starter: set the furnace down, load it, wait, take the ingots, then pick the furnace up again"
     }

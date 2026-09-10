@@ -133,7 +133,8 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
               (the hostile kinds, e.g. SKELETON+ZOMBIE), hostiles (count), nearest (CLOSE/NEAR/FAR/NONE),
               armed, health (LOW/MID/HIGH), blocks (count in hand), candig, roomabove, stuck, y, surface,
               depth (surface - y), sky, night and day (the world's clock, above ground or below; light
-              is what the body sees), wet, hungry, food, pickaxe, sword, onground,
+              is what the body sees), wet, hungry, food, fuel (how many things a furnace burns are
+              carried: coal, charcoal, planks, logs, sticks), pickaxe, sword, onground,
               menu (NONE/CRAFTING/FURNACE/CHEST/OTHER: what screen is open);
               has(x) how many of x are carried, short(x) how many of x the plan is still short of,
               near(x) whether a block of kind x is within eight blocks — x is a plan resource (LOG,
@@ -164,7 +165,8 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
               with a screen open: {"recipe": "<plan resource>"} lay that recipe out from the recipe book
               (in a crafting table, or the body's own 2x2 grid with no screen open); {"take": "result"}
               take what a grid made, or {"take": "output"} what a furnace made; {"put": "<item>"} shift
-              an item from the bag into the open furnace or chest (a furnace takes fuel and ore by itself);
+              an item from the bag into the open furnace or chest (a furnace takes fuel and ore by itself),
+              or {"put": "fuel"} whichever burnable thing is carried;
               {"close": true} close the screen.
             Each step has ten seconds (a wait or hold up to thirty) and the whole skill a minute; a step
             that does not finish fails the skill, and a skill that keeps failing is retired. A run in which

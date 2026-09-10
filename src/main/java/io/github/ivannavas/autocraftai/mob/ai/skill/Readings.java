@@ -115,6 +115,7 @@ public final class Readings {
             case "wet" -> wet;
             case "hungry" -> Perception.isHungry(player);
             case "food" -> player.getFoodData().getFoodLevel();
+            case "fuel" -> fuel();
             case "pickaxe" -> Tool.PICKAXE.hotbarSlot(player.getInventory()) >= 0;
             case "sword" -> Tool.SWORD.hotbarSlot(player.getInventory()) >= 0;
             case "onground" -> player.onGround();
@@ -138,6 +139,19 @@ public final class Readings {
     }
 
     /** How many of a thing the bag holds, by the plan's word for it or the game's. */
+    /** How many things a furnace would burn are carried: coal, charcoal, planks, logs, sticks. */
+    public int fuel() {
+        Inventory inventory = player.getInventory();
+        int total = 0;
+        for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            if (!stack.isEmpty() && level.fuelValues().isFuel(stack)) {
+                total += stack.getCount();
+            }
+        }
+        return total;
+    }
+
     public int count(String word) {
         Inventory inventory = player.getInventory();
         Resource resource = resource(word);

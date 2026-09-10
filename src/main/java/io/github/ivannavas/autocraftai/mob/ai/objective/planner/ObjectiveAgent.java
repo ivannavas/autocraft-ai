@@ -139,6 +139,11 @@ public class ObjectiveAgent extends AgentExecutor {
             - When the situation carries a note from the coach, it gave up on the last objective for the
               reason quoted. Take the reason seriously and do not set that objective again.
 
+            An objective that is smelted — IRON — counts its ore as progress: raw iron in the bag is the
+            mining done, and what is left is a furnace and anything that burns (coal, charcoal, planks,
+            logs, sticks). The "still short of" line says so when that is the case; do not give such an
+            objective up as hopeless, finish it.
+
             When the situation says REVIEW, the player already has an objective and has been at it for a
             while without finishing. Read the lines listed with it before you answer:
             - "Still short for it" is what the objective needs and the bag lacks. The same shortage after
@@ -213,8 +218,8 @@ public class ObjectiveAgent extends AgentExecutor {
             A CRAFT skill that makes one of the plan's resources should say so with "makes", and its
             "when" should say what it needs in the bag and nearby, e.g.
               {"name": "SMELT_IRON", "layer": "CRAFT", "makes": "IRON", "prior": 4,
-               "when": "has(RAW_IRON) > 0 and (has(COAL) > 0 or has(PLANKS) > 0) and near(furnace) and menu == NONE",
-               "steps": [{"walk": "furnace"}, {"use": "furnace"}, {"put": "RAW_IRON"}, {"put": "COAL"},
+               "when": "has(RAW_IRON) > 0 and fuel > 0 and near(furnace) and menu == NONE",
+               "steps": [{"walk": "furnace"}, {"use": "furnace"}, {"put": "RAW_IRON"}, {"put": "fuel"},
                          {"wait": 220}, {"take": "output"}, {"close": true}],
                "reason": "smelt raw iron in the furnace"}
 
