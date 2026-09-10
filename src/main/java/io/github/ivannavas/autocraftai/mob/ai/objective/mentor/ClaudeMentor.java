@@ -27,6 +27,7 @@ import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.ivannavas.autocraftai.mob.ai.objective.planner.Failure;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.PlannerLog;
 import io.github.ivannavas.autocraftai.mob.ai.skill.Skill;
 import io.github.ivannavas.autocraftai.mob.ai.skill.Skills;
@@ -230,7 +231,7 @@ public final class ClaudeMentor implements Mentor {
 
     private void teach(MentorAsk asked, String prompt, Taught before, long askedAt) {
         try {
-            String reply = agent.execute(CONVERSATION, prompt).response();
+            String reply = call(prompt);
             if (reply == null || reply.isBlank()) {
                 // No text block at all: the model spent its budget before writing, or refused. Told
                 // apart from a reply with nothing in it, because the fix is different.
@@ -300,10 +301,43 @@ public final class ClaudeMentor implements Mentor {
             PlannerLog.get().mentorTaught((rescue.asksToReplan() ? "gave up: " : "taught ")
                     + rescue.summary() + ": " + reasonIn(reply), reply);
         } catch (RuntimeException e) {
-            log.warn("Could not reach the mentor ({}); leaving the block to the policy", e.getMessage());
-            PlannerLog.get().mentorFailed(shorten(e.getMessage()), null);
+            String why = Failure.describe(e);
+            log.warn("Could not reach the mentor ({}); leaving the block to the policy", why);
+            PlannerLog.get().mentorFailed(shorten(why), null);
             rest();
         }
+    }
+
+    /** Tries again this many times, and waits this long the first time, doubling. */
+    private static final int TRIES = 3;
+    private static final long FIRST_WAIT_MILLIS = 3_000L;
+
+    /**
+     * One call, with a couple of quick retries for an overloaded API or a dropped connection. The body
+     * is standing still waiting for this answer; a minute's rest over three seconds of trouble is the
+     * whole hold wasted.
+     */
+    private String call(String prompt) {
+        RuntimeException last = null;
+        for (int attempt = 1; attempt <= TRIES; attempt++) {
+            try {
+                return agent.execute(CONVERSATION, prompt).response();
+            } catch (RuntimeException e) {
+                last = e;
+                if (attempt == TRIES || !Failure.worthRetrying(e)) {
+                    throw e;
+                }
+                long wait = FIRST_WAIT_MILLIS << (attempt - 1);
+                log.info("The mentor's call failed ({}); trying again in {} s", Failure.describe(e), wait / 1000);
+                try {
+                    Thread.sleep(wait);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
+        throw last;
     }
 
     /** One {@code {"action": X, "value": N}} as text, for a reply the JSON parser could not take whole. */

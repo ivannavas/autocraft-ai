@@ -217,6 +217,14 @@ public final class Progression {
     private Phase current;
     /** The plan the current objective came in, whole, for the overlay; null between orders. */
     private Plan plan;
+    /**
+     * The last orders the planner gave, kept so an unreachable planner does not leave the body aimless.
+     * A stale objective is worth more than none: the tables go on learning in a real folder instead of
+     * in UNPLANNED, and the body works towards something plausible until new orders arrive.
+     */
+    private Plan lastPlan;
+    /** Whether the last orders have already been taken up again during this spell of trouble. */
+    private boolean carriedOn;
     /** What the tables are working on, as of the last look: which folder, which source, and where it is. */
     private Pursuit active = Pursuit.PLANNING;
     /** The plan's own band, which stands in for any source that came without one of its own. */
@@ -637,6 +645,8 @@ public final class Progression {
     public void restart() {
         current = null;
         plan = null;
+        lastPlan = null;
+        carriedOn = false;
         active = idle();
         wasSomewhereUseful = false;
         bounds = Bounds.anywhere();
@@ -931,6 +941,8 @@ public final class Progression {
             current = planned.get().objective();
             Chronicle.get().objectiveStarted(current.name(), current.toString());
             plan = planned.get();
+            lastPlan = planned.get();
+            carriedOn = false;
             bounds = planned.get().bounds();
             needs = planned.get().needs();
             reserved = planned.get().reserved();
@@ -946,6 +958,25 @@ public final class Progression {
         // A supplier rather than a situation: reading the world costs an inventory walk and an entity
         // query, and there is no sense paying for either when the planner is going to ignore the question.
         planner.consider(() -> situation(context.player(), context.obtained(), ""));
+        // Nobody to ask and nothing to do: rather than wander unplanned for the minute the planner is
+        // resting, take up the last orders again. Once per spell of trouble, and never orders that are
+        // already finished.
+        if (!carriedOn && lastPlan != null && planner.trouble().isPresent()
+                && !lastPlan.objective().isComplete(context)) {
+            carriedOn = true;
+            current = lastPlan.objective();
+            plan = lastPlan;
+            bounds = lastPlan.bounds();
+            needs = lastPlan.needs();
+            reserved = lastPlan.reserved();
+            stepsOnCurrent = 0;
+            log.info("No planner ({}); carrying on with the last orders: {}",
+                    planner.trouble().orElse("?"), current.name());
+            Chronicle.get().objectiveStarted(current.name(),
+                    "the planner could not be reached; carrying on with the last orders");
+            refocus(context);
+            return taken(context);
+        }
         // Whether that put a question, owes one, or could do neither is what the idle pursuit reads.
         refocus(context);
         return 0.0;

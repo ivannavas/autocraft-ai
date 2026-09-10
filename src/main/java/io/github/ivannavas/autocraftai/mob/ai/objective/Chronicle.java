@@ -157,6 +157,11 @@ public final class Chronicle {
         while (samples.size() > RECENT_SECONDS) {
             samples.removeFirst();
         }
+        // The seconds lived are what the death rate is over; written out once a minute so a restart
+        // between events does not lose them.
+        if (secondsLived % 60 == 0) {
+            save();
+        }
     }
 
     /** Each move the goal table made, as it ended. Not written to disk either. */

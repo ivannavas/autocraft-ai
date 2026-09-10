@@ -231,10 +231,44 @@ public final class ClaudePlanner implements ObjectivePlanner {
         });
     }
 
+    /** Tries again this many times, and waits this long the first time, doubling. */
+    private static final int TRIES = 3;
+    private static final long FIRST_WAIT_MILLIS = 3_000L;
+
+    /**
+     * One call, with a couple of quick retries for the failures that are worth one.
+     *
+     * <p>An overloaded API and a dropped connection are a few seconds of trouble, and resting a whole
+     * minute for them left the body with no objective at all, wandering: three planner calls failed in
+     * twenty minutes and the run spent them in UNPLANNED.
+     */
+    private String call(long asked, String prompt) {
+        RuntimeException last = null;
+        for (int attempt = 1; attempt <= TRIES; attempt++) {
+            try {
+                return agent.execute(conversation(asked), prompt).response();
+            } catch (RuntimeException e) {
+                last = e;
+                if (attempt == TRIES || !Failure.worthRetrying(e)) {
+                    throw e;
+                }
+                long wait = FIRST_WAIT_MILLIS << (attempt - 1);
+                log.info("The planner's call failed ({}); trying again in {} s", Failure.describe(e), wait / 1000);
+                try {
+                    Thread.sleep(wait);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
+        throw last;
+    }
+
     private void ask(String signature, String prompt) {
         long asked = world.get();
         try {
-            String reply = agent.execute(conversation(asked), prompt).response();
+            String reply = call(asked, prompt);
             if (world.get() != asked) {
                 // The world this was about has been left. Whatever it says is about somewhere else.
                 log.info("Dropping a plan that arrived after its world was left");
@@ -274,11 +308,12 @@ public final class ClaudePlanner implements ObjectivePlanner {
             PlannerLog.get().failed("not an objective: " + said, shorten(reply));
             rest("not an objective: " + said);
         } catch (RuntimeException e) {
-            // The message can carry the API's own error body, which is worth seeing; the key is not in it.
-            log.warn("Could not reach the planner ({}); the run waits without an objective",
-                    e.getMessage());
-            PlannerLog.get().failed(shorten(e.getMessage()), null);
-            rest(shorten(e.getMessage()));
+            // The whole chain, because the client wraps everything in one generic sentence and the run's
+            // log could not tell a rate limit from a bad key. The key itself is never in it.
+            String why = Failure.describe(e);
+            log.warn("Could not reach the planner ({}); the run carries on with its last orders", why);
+            PlannerLog.get().failed(shorten(why), null);
+            rest(shorten(why));
         }
     }
 
