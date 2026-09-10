@@ -58,7 +58,8 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
                         List<String> actions, String terrain, String terrainWords,
                         List<String> passageMoves, int y, String driver, String craftKey,
                         List<String> craftMoves, String tacticKey, String tacticWords,
-                        List<String> tacticMoves, String skills, String skillProblem) {
+                        List<String> tacticMoves, String waterKey, List<String> waterMoves, String dwell,
+                        String skills, String skillProblem) {
 
     /** Why the mentor is being asked. */
     public enum Reason {
@@ -76,6 +77,9 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
         tacticKey = tacticKey == null ? "" : tacticKey;
         tacticWords = tacticWords == null ? "" : tacticWords;
         tacticMoves = tacticMoves == null ? List.of() : List.copyOf(tacticMoves);
+        waterKey = waterKey == null ? "" : waterKey;
+        waterMoves = waterMoves == null ? List.of() : List.copyOf(waterMoves);
+        dwell = dwell == null ? "" : dwell;
         skills = skills == null ? "" : skills;
         skillProblem = skillProblem == null ? "" : skillProblem;
     }
@@ -140,6 +144,15 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
         if (!tacticMoves.isEmpty()) {
             text.append("\nTactics it may choose (row ").append(tacticKey).append("): ")
                     .append(String.join(", ", tacticMoves));
+        }
+        if (!waterKey.isEmpty()) {
+            text.append("\nIN THE WATER (row ").append(waterKey)
+                    .append(" = how deep | how much air | where air is | where land is): the swim moves it")
+                    .append(" may make: ").append(String.join(", ", waterMoves))
+                    .append(". This is the block if it is: a body in the water is drowning, not stuck.");
+        }
+        if (!dwell.isEmpty()) {
+            text.append("\nDwelling: ").append(dwell).append('.');
         }
         text.append("\nSkills written so far: ").append(skills.isEmpty() ? "none" : "\n" + skills);
         if (!skillProblem.isEmpty()) {

@@ -76,6 +76,16 @@ public class MentorAgent extends AgentExecutor {
               the objective on the surface and no way it has found should DAYLIGHT; a body being chased in
               a corridor with blocks in hand should WALL_OFF.
 
+            WATER - when the situation says IN THE WATER, the body is swimming and that is the whole
+            problem: nothing else it does matters until it is out. The water table's moves are CARRY_ON,
+            SURFACE (get air), SHORE (swim for land) and PILLAR (stand on a block). Teach SHORE a large
+            positive value when land is near and SURFACE when air is low; teach CARRY_ON negative. The
+            body drowned a minute from a beach while being taught how to mine.
+
+            DWELLING - the situation says how much of the last five minutes was spent within six blocks
+            of here and how often this patch was visited. A body that has spent most of that time in one
+            spot is not working, whatever its state says: teach against whatever keeps it there.
+
             WRITING A NEW MOVE. When no move on the lists is the way out, write one as a skill and it
             becomes a column of its table from then on: the run adds it, seeds it in this row with the
             value you give, and learns when it pays. Write at most one per answer, only when the lists
@@ -115,6 +125,7 @@ public class MentorAgent extends AgentExecutor {
              "passage": [{"action": "<PASSAGE MOVE>", "value": <number>}, ...],
              "craft": [{"action": "<CRAFT CHOICE>", "value": <number>}, ...],
              "tactic": [{"action": "<TACTIC>", "value": <number>}, ...],
+             "water": [{"action": "<SWIM MOVE>", "value": <number>}, ...],
              "skill": <a skill object as above, or leave the field out>,
              "replan": "<empty, or one sentence in English saying why the objective should be given up>",
              "reason": "<one short sentence, in the player's language named in the situation>"}

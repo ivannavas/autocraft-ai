@@ -43,6 +43,7 @@ public record Rescue(MentorAsk.Reason reason, String pursuit, String state, List
                      String terrain, List<Lesson> passageLessons,
                      String craftKey, List<Lesson> craftLessons,
                      String tacticKey, List<Lesson> tacticLessons,
+                     String waterKey, List<Lesson> waterLessons,
                      Skill skill, String skillProblem, String replan) {
     public Rescue {
         reason = reason == null ? MentorAsk.Reason.BLOCK : reason;
@@ -51,13 +52,15 @@ public record Rescue(MentorAsk.Reason reason, String pursuit, String state, List
         craftLessons = List.copyOf(craftLessons);
         tacticKey = tacticKey == null ? "" : tacticKey;
         tacticLessons = tacticLessons == null ? List.of() : List.copyOf(tacticLessons);
+        waterKey = waterKey == null ? "" : waterKey;
+        waterLessons = waterLessons == null ? List.of() : List.copyOf(waterLessons);
         skillProblem = skillProblem == null ? "" : skillProblem.strip();
         replan = replan == null ? "" : replan.strip();
     }
 
     public boolean isEmpty() {
         return lessons.isEmpty() && passageLessons.isEmpty() && craftLessons.isEmpty()
-                && tacticLessons.isEmpty() && skill == null && replan.isEmpty();
+                && tacticLessons.isEmpty() && waterLessons.isEmpty() && skill == null && replan.isEmpty();
     }
 
     /** Whether this answers a stall rather than a block, which changes how its outcome is judged. */
@@ -80,6 +83,8 @@ public record Rescue(MentorAsk.Reason reason, String pursuit, String state, List
         craftLessons.forEach(l -> out.append(out.isEmpty() ? "" : ", ").append("craft ")
                 .append(l.action()).append('=').append(Math.round(l.value())));
         tacticLessons.forEach(l -> out.append(out.isEmpty() ? "" : ", ").append("tactic ")
+                .append(l.action()).append('=').append(Math.round(l.value())));
+        waterLessons.forEach(l -> out.append(out.isEmpty() ? "" : ", ").append("water ")
                 .append(l.action()).append('=').append(Math.round(l.value())));
         if (skill != null) {
             out.append(out.isEmpty() ? "" : ", ").append("skill ").append(skill.name());

@@ -4,7 +4,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -69,6 +71,13 @@ public final class ClaudeMentor implements Mentor {
     /** How many times one state may be taught. Two: the first answer and one that knows it failed. */
     private static final int MAX_TIMES = 2;
     /**
+     * After this long since a state was last taught, its count starts over. Two lessons and then silence
+     * for good was the rule, and a body pinned in the same corner for a quarter of an hour after its
+     * second lesson had a coach that had stopped listening: the lessons it got are quoted back, so the
+     * third answer knows both failed.
+     */
+    private static final long TAUGHT_WINDOW_MILLIS = 600_000L;
+    /**
      * How many questions one pursuit gets in all, whatever the states. A body circling an item it cannot
      * reach reads as pinned in a new sibling state every minute, and each is a fresh question; four
      * answers that all "worked" for a few decisions is the pattern of a block the mentor cannot see, and
@@ -99,6 +108,30 @@ public final class ClaudeMentor implements Mentor {
 
     /** Stuck states taught so far, by folder and state, so a state is taught at most twice and not soon. */
     private final Map<String, Taught> taught = new ConcurrentHashMap<>();
+
+    /** One lesson given on a pursuit and, once the run has judged it, how it went. */
+    private static final class Given {
+        final long at;
+        final String state;
+        final String summary;
+        volatile String verdict = "not judged yet";
+
+        Given(long at, String state, String summary) {
+            this.at = at;
+            this.state = state;
+            this.summary = summary;
+        }
+    }
+
+    /** How many lessons per pursuit are quoted back. */
+    private static final int HISTORY = 5;
+    /**
+     * The lessons given lately on each pursuit, oldest first. A body shuffling in a corner reads as a new
+     * sibling state every minute, each a fresh question, and the answers to four of them in two minutes
+     * taught DIG_DOWN 6, then -2, then -6: each one knew only what was said about its own state. The
+     * whole recent record, with how each lesson went, is what a coach would want before a fifth answer.
+     */
+    private final Map<String, Deque<Given>> given = new ConcurrentHashMap<>();
     /** Questions put per pursuit, for the overall cap. */
     private final Map<String, Integer> perPursuit = new ConcurrentHashMap<>();
     /** When each pursuit was last asked about, so a spent cap comes back after a while. */
@@ -157,7 +190,9 @@ public final class ClaudeMentor implements Mentor {
         }
         MentorAsk asked = ask.get();
         // A state taught recently, or taught twice, is left to the lessons already planted.
-        Taught before = taught.get(asked.key());
+        Taught earlier = taught.get(asked.key());
+        Taught before = earlier != null && now - earlier.at() > TAUGHT_WINDOW_MILLIS
+                ? new Taught(earlier.at(), 0, earlier.summary()) : earlier;
         if (before != null && (before.times() >= MAX_TIMES || now - before.at() < RETEACH_AFTER_MILLIS)) {
             asking.set(false);
             return;
@@ -172,9 +207,9 @@ public final class ClaudeMentor implements Mentor {
         perPursuit.merge(asked.pursuit(), 1, Integer::sum);
         perPursuitAt.put(asked.pursuit(), now);
         lastAsked.set(now);
-        String prompt = asked.describe() + (before == null ? ""
-                : "\nYou already taught this once (" + before.summary()
-                        + ") and it is still " + (asked.stalled() ? "getting nowhere" : "stuck")
+        String prompt = asked.describe() + history(asked.pursuit(), now) + (before == null ? ""
+                : "\nYou already taught this " + (before.times() == 0 ? "a while ago" : "once") + " ("
+                        + before.summary() + ") and it is still " + (asked.stalled() ? "getting nowhere" : "stuck")
                         + ". Teach a different way out" + (asked.stalled() ? ", or replan." : "."));
         if (!lastSkillProblem.isEmpty() && asked.skillProblem().isEmpty()) {
             prompt += "\nThe last skill you wrote was refused: " + lastSkillProblem
@@ -235,6 +270,7 @@ public final class ClaudeMentor implements Mentor {
                     asked.terrain(), lessons(reply, "passage", namedPassage),
                     asked.craftKey(), lessons(reply, "craft", namedCrafts),
                     asked.tacticKey(), lessons(reply, "tactic", namedTactics),
+                    asked.waterKey(), lessons(reply, "water", new ArrayList<>(asked.waterMoves())),
                     skill, skillProblem,
                     // Only a stall may be given up on. A pinned body is a block, and a block is
                     // answered with a way out, not with a different errand to be blocked on.
@@ -247,6 +283,13 @@ public final class ClaudeMentor implements Mentor {
             }
             taught.put(asked.key(), new Taught(System.currentTimeMillis(),
                     before == null ? 1 : before.times() + 1, rescue.summary()));
+            Deque<Given> record = given.computeIfAbsent(asked.pursuit(), k -> new ArrayDeque<>());
+            synchronized (record) {
+                record.addLast(new Given(System.currentTimeMillis(), asked.stuckState(), rescue.summary()));
+                while (record.size() > HISTORY) {
+                    record.removeFirst();
+                }
+            }
             answer.set(rescue);
             log.info("Mentor taught {} for {}", rescue.summary(), asked.summary());
             // Kept in the same record the planner writes to, but tagged as the mentor's, so the overlay
@@ -355,10 +398,55 @@ public final class ClaudeMentor implements Mentor {
     }
 
     @Override
+    public void judged(Rescue rescue, boolean worked, long decisions) {
+        Deque<Given> record = given.get(rescue.pursuit());
+        if (record == null) {
+            return;
+        }
+        synchronized (record) {
+            for (Given lesson : record) {
+                if (lesson.summary.equals(rescue.summary()) && lesson.verdict.equals("not judged yet")) {
+                    lesson.verdict = worked
+                            ? (rescue.stalled() ? "the objective got nearer" : "got free") + " within "
+                                    + decisions + " decisions"
+                            : (rescue.stalled() ? "no nearer" : "still pinned") + " after " + decisions
+                                    + " decisions";
+                }
+            }
+        }
+    }
+
+    /** The recent lessons on a pursuit and how they went, as a paragraph for the prompt, or nothing. */
+    private String history(String pursuit, long now) {
+        Deque<Given> record = given.get(pursuit);
+        if (record == null) {
+            return "";
+        }
+        StringBuilder text = new StringBuilder();
+        synchronized (record) {
+            for (Given lesson : record) {
+                if (now - lesson.at > TAUGHT_WINDOW_MILLIS) {
+                    continue;
+                }
+                text.append("\n  - ").append((now - lesson.at) / 1000).append(" s ago, at ").append(lesson.state)
+                        .append(": ").append(lesson.summary).append(" -> ").append(lesson.verdict);
+            }
+        }
+        if (text.isEmpty()) {
+            return "";
+        }
+        return "\nLessons already given on this pursuit lately, oldest first, and how each went:" + text
+                + "\nThe body is where it is after all of them. Read them before answering: an answer that"
+                + " only reverses the last one is a guess, and a move they all left alone is worth more"
+                + " than a fourth number on one they tried.";
+    }
+
+    @Override
     public void reset() {
         // A fresh world is a fresh policy: re-teaching a run's first block is cheap and lands the lessons
         // on tables that actually have the row.
         taught.clear();
+        given.clear();
         perPursuit.clear();
         perPursuitAt.clear();
         answer.set(null);

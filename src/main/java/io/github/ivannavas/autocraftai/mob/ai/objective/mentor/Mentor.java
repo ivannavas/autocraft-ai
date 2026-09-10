@@ -26,6 +26,14 @@ public interface Mentor {
     /** Whether an answer is still expected. */
     boolean pending();
 
+    /**
+     * How a lesson turned out, once the run has judged it: free (or nearer) after so many decisions, or
+     * not. Quoted back with the next question about the same pursuit, so an answer knows what has been
+     * tried and how it went, rather than only what was said about this one state.
+     */
+    default void judged(Rescue rescue, boolean worked, long decisions) {
+    }
+
     /** Forgets which blocks it has taught, for a body that has just arrived in a fresh world. */
     default void reset() {
     }

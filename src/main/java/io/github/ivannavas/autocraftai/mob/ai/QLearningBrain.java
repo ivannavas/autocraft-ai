@@ -195,6 +195,19 @@ public final class QLearningBrain {
      * where the deaths come from before a death has to teach it.
      */
     private static final double EXPOSED_COST = 0.15;
+
+    /**
+     * The cost of getting nowhere: per second, scaled by how much of the last five minutes was spent
+     * within six blocks of here and by how trodden the cell is. Charged only on steps that made no
+     * progress, so a body mining a vein pays nothing while the vein pays it. A signal, not a rule —
+     * it says "this corner has had a quarter of an hour" to tables that otherwise see every second
+     * there as a fresh situation.
+     */
+    private static final double DWELL_COST = 0.4;
+    private static final double REVISIT_COST = 0.2;
+    private static final int WELL_TRODDEN = 40;
+    /** Half the recent trail nearby is ordinary work at a face; only beyond that is it dwelling. */
+    private static final double DWELL_ALLOWED = 0.5;
     /**
      * How far past its commitment a goal that refuses interruption may run before it is cut short anyway.
      *
@@ -260,6 +273,11 @@ public final class QLearningBrain {
     private long decisionsMade;
     /** The last lesson applied and when, until its outcome — free again, or still pinned — is known. */
     private Rescue lastRescue;
+    /** Where the body stood when the last lesson landed, for judging whether it actually got away. */
+    private Vec3 rescuePosition;
+    /** Decisions before a lesson is judged at all, and blocks the body must have moved for "worked". */
+    private static final int RESCUE_JUDGED_AFTER = 3;
+    private static final double RESCUE_MOVED = 4.0;
     private long rescueDecision;
     /** How often the objective had got nearer when the last stall lesson landed, for judging it. */
     private long rescueProgress;
@@ -786,6 +804,9 @@ public final class QLearningBrain {
         rescue.passageLessons().forEach(lesson -> passage.seed(rescue.terrain(), lesson.action(), lesson.value()));
         // And the crafting table, for the block that is not terrain at all: a craft holding the body.
         rescue.craftLessons().forEach(lesson -> crafting.seed(rescue.craftKey(), lesson.action(), lesson.value()));
+        if (!rescue.waterKey().isEmpty()) {
+            rescue.waterLessons().forEach(lesson -> water.seed(rescue.waterKey(), lesson.action(), lesson.value()));
+        }
         // And the tactics table, for the block that is the surroundings: a night, a roof, a mob.
         if (!rescue.tacticKey().isEmpty()) {
             rescue.tacticLessons().forEach(lesson ->
@@ -805,6 +826,8 @@ public final class QLearningBrain {
         lastRescue = rescue;
         rescueDecision = decisionsMade;
         rescueProgress = progression.progressCount();
+        LocalPlayer taughtAt = Minecraft.getInstance().player;
+        rescuePosition = taughtAt == null ? null : taughtAt.position();
         log.info("Applied lessons ({}) to {} at {} / {}", rescue.summary(), rescue.pursuit(),
                 rescue.state(), rescue.terrain());
     }
@@ -821,13 +844,21 @@ public final class QLearningBrain {
         }
         long since = decisionsMade - rescueDecision;
         boolean stall = lastRescue.stalled();
-        boolean worked = stall ? progression.progressCount() > rescueProgress : !territory.pinned();
+        // "Free after one decision" was the commonest verdict and meant nothing: the body twitched
+        // and the pinned reading cleared. A block is only broken when the body has been unpinned for
+        // a few decisions and is standing somewhere else.
+        LocalPlayer judged = Minecraft.getInstance().player;
+        boolean away = rescuePosition == null || judged == null
+                || judged.position().distanceTo(rescuePosition) >= RESCUE_MOVED;
+        boolean worked = stall ? progression.progressCount() > rescueProgress
+                : since >= RESCUE_JUDGED_AFTER && !territory.pinned() && away;
         long window = stall ? STALL_RESCUE_WINDOW : RESCUE_WINDOW;
         String what = stall ? "the objective got nearer" : "free";
         if (worked) {
             log.info("Mentor lesson worked: {} after {} decisions ({})", what, since, lastRescue.summary());
             PlannerLog.get().mentorNoted("worked: " + what + " after " + since + " decisions ("
                     + lastRescue.summary() + ")");
+            mentor.judged(lastRescue, true, since);
             lastRescue = null;
         } else if (since >= window) {
             String still = stall ? "no nearer" : "still pinned";
@@ -835,6 +866,7 @@ public final class QLearningBrain {
                     lastRescue.summary());
             PlannerLog.get().mentorNoted("did not work: " + still + " after " + since + " decisions ("
                     + lastRescue.summary() + ")");
+            mentor.judged(lastRescue, false, since);
             lastRescue = null;
         }
     }
@@ -1006,7 +1038,9 @@ public final class QLearningBrain {
         // Score before looking: reaching a rung changes what the body is after, and the sighting that
         // follows should already be taken with the new rung's eyes.
         double climbed = progression.advanceIfComplete(step);
-        double reward = score(step) + climbed + exposure(step.steps());
+        double base = score(step);
+        double reward = base + climbed + exposure(step.steps())
+                + (base <= 0.0 ? dwelling(player, step.steps()) : 0.0);
 
         // What the move that just ended did, before anything replaces it. The planner reads these when an
         // objective drags on: a run of them is what a rut looks like from outside.
@@ -1056,6 +1090,14 @@ public final class QLearningBrain {
         settleRescue();
         applyLessons();
         takeOfferedSkills(observation.key(), craftKey, player);
+        // A skill just taken in is a column the masks above were built without. Choosing through a mask
+        // one short of its table indexed past the end and took the game down with the second lesson.
+        if (legalGoals.length != active.goals.columns.size()) {
+            legalGoals = legalGoals(context);
+        }
+        if (legalCrafts.length != crafting.columns.size()) {
+            legalCrafts = legalCrafts(context, held, player);
+        }
         // Not while a table craft or a smelt has the body and is getting on with it: standing at a table
         // is work, not a block, and a craft whose walk has stalled lets go on its own within seconds.
         //
@@ -1083,9 +1125,15 @@ public final class QLearningBrain {
                 Surroundings around = Surroundings.around(player, progression.reserved(), stuckUnderCover);
                 List<String> passageMoves = legalNames(passage.columns, legalPassages(ground, player));
                 List<String> tacticMoves = legalNames(tactics.columns, legalTactics(around, player));
+                Water wateriness = Water.around(player);
+                boolean hasBlocks = PlaceBlockGoal.hotbarSlotWithBlock(player, progression.reserved()) >= 0;
+                String waterKey = wateriness.present() ? wateriness.key() : "";
+                List<String> waterMoves = wateriness.present()
+                        ? legalNames(water.columns, legalSwims(wateriness, hasBlocks)) : List.of();
                 return new MentorAsk(reason, progression.blockSituation(player, obtained), folder, stuck,
                         moves, ground.key(), ground.words(), passageMoves, y, driver(), craftKey,
                         craftMoves, around.key(), around.words(), tacticMoves,
+                        waterKey, waterMoves, dwellWords(player),
                         Skills.get().catalogue(), "");
             });
         }
@@ -1123,7 +1171,7 @@ public final class QLearningBrain {
         // move as a whole has wasted, and pulling it would throw away the block it is halfway through.
         if (cutShort() && !engine.isCommitted(installedGoal)) {
             stalls++;
-            log.debug("Cutting {} short: {} seconds spent going nowhere", installedAction, stalledSteps);
+            log.debug("Cutting {} short: {} seconds spent going nowhere", installedName(), stalledSteps);
             uninstall();
         } else if (doneNow) {
             // Finished, so the same choice again is a new one of the same thing, not the old one idling.
@@ -1420,8 +1468,21 @@ public final class QLearningBrain {
         }
         wet = Moment.of(player);
 
+        if (holdsSwim()) {
+            // A swim under way and getting somewhere keeps the body. Re-chosen every second, SHORE and
+            // SURFACE took turns, each restart threw away the last one's heading, and the body drowned
+            // a minute from the beach with two coaches watching.
+            water.hold(key, swimChoice.ordinal());
+            return;
+        }
         int column = water.choose(key, legal);
         installSwim(column < 0 ? Swim.CARRY_ON : Swim.values()[column], around, reserve);
+    }
+
+    /** Whether the swim move in flight is running and still getting somewhere. */
+    private boolean holdsSwim() {
+        return swimGoal != null && swimChoice != null && swimChoice != Swim.CARRY_ON
+                && engine.isRunning(swimGoal) && !swimGoal.isDone() && swimGoal.stalledTicks() < STALL_TICKS;
     }
 
     /** Doing nothing always works; the rest need somewhere to swim to or something to stand on. */
@@ -1650,8 +1711,12 @@ public final class QLearningBrain {
             case TOWARD -> stuckSought == null ? 0.0
                     : stuckBetween - Obstruction.occluders(player, stuckSought).size();
         };
+        // A passage move that made no way pays for the corner too: a body that jumps and breaks the
+        // block above in the same spot for a quarter of an hour is otherwise settled a second at a time,
+        // and each second looks like nothing much.
         return score(stepSince(stuckSince, player, 1, 0, 0, List.of(), placedThisStep, reclaimedThisStep))
-                + PASSAGE_PROGRESS_WEIGHT * progress;
+                + PASSAGE_PROGRESS_WEIGHT * progress
+                + (progress <= 0.0 ? dwelling(player, 1) : 0.0);
     }
 
     private static double flat(Vec3 from, Vec3 to) {
@@ -1824,6 +1889,25 @@ public final class QLearningBrain {
             return 0.0;
         }
         return -EXPOSED_COST * Math.max(1, steps);
+    }
+
+    /** The dwelling cost over some seconds; nothing while sheltering or standing at a table on purpose. */
+    private double dwelling(LocalPlayer player, int steps) {
+        if (sheltering() || crafting() || territory.recentMarks() < 60) {
+            return 0.0;
+        }
+        double excess = Math.max(0.0, territory.dwell(player.position()) - DWELL_ALLOWED) / (1.0 - DWELL_ALLOWED);
+        double trodden = Math.min(1.0, territory.visitsAt(player.position()) / (double) WELL_TRODDEN);
+        return -(DWELL_COST * excess + REVISIT_COST * trodden) * Math.max(1, steps);
+    }
+
+    /** The dwelling, in words, for the mentor. */
+    private String dwellWords(LocalPlayer player) {
+        int percent = (int) Math.round(territory.dwell(player.position()) * 100);
+        int seconds = territory.recentMarks();
+        String span = seconds >= 120 ? (seconds / 60) + " minutes" : seconds + " seconds";
+        return percent + "% of the last " + span + " spent within six blocks of here; this patch of ground"
+                + " has had " + territory.visitsAt(player.position()) + " seconds of its time lately";
     }
 
     /** Keeps a choice for tracing a death back. Called by every table as it chooses. */

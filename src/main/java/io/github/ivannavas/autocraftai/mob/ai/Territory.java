@@ -48,6 +48,10 @@ public final class Territory {
     private final Map<Long, Integer> visits = new HashMap<>();
     private final Deque<Long> order = new ArrayDeque<>();
     private final Deque<Vec3> trail = new ArrayDeque<>();
+    /** The last five minutes of positions, one a second, for how much of it was spent right here. */
+    private static final int RECENT = 300;
+    private static final double DWELL_WITHIN = 6.0;
+    private final Deque<Vec3> recent = new ArrayDeque<>();
 
     /** Notes where the body is now. Called once a step, from the game thread. */
     public void mark(Vec3 position) {
@@ -62,6 +66,36 @@ public final class Territory {
         while (trail.size() > TRAIL) {
             trail.removeFirst();
         }
+        recent.addLast(position);
+        while (recent.size() > RECENT) {
+            recent.removeFirst();
+        }
+    }
+
+    /**
+     * How much of the last five minutes was spent within a few blocks of here: 0 when it has been
+     * moving on, 1 when it never left. The signal behind the dwelling cost — a body that circles a
+     * corner for a quarter of an hour looks, to every table, like a body doing a dozen different
+     * things; this is the one number that says it is doing nothing.
+     */
+    public double dwell(Vec3 here) {
+        if (recent.isEmpty()) {
+            return 0.0;
+        }
+        long near = 0;
+        for (Vec3 position : recent) {
+            // In three dimensions on purpose: a shaft straight down or a tower straight up never leaves
+            // the flat circle, and both are the body going somewhere.
+            if (position.distanceTo(here) < DWELL_WITHIN) {
+                near++;
+            }
+        }
+        return (double) near / recent.size();
+    }
+
+    /** How many marks the last five minutes hold, so a fresh trail is not read as a full one. */
+    public int recentMarks() {
+        return recent.size();
     }
 
     /** How many times the body has been in this patch lately. Zero is ground it has not covered. */
@@ -170,6 +204,7 @@ public final class Territory {
         visits.clear();
         order.clear();
         trail.clear();
+        recent.clear();
     }
 
     /** How the trail reads, in a word, for the state key. */

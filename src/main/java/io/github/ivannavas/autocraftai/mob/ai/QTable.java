@@ -136,8 +136,10 @@ public final class QTable {
      */
     public int choose(String state, boolean[] allowed) {
         List<Integer> legal = new ArrayList<>(actionCount);
+        // A mask shorter than the table was built before a column was added; the columns it does not
+        // know about are simply not on offer this time.
         for (int action = 0; action < actionCount; action++) {
-            if (allowed[action]) {
+            if (action < allowed.length && allowed[action]) {
                 legal.add(action);
             }
         }
@@ -222,7 +224,7 @@ public final class QTable {
         double[] stateValues = valuesFor(state);
         double best = Double.NEGATIVE_INFINITY;
         for (int action = 0; action < actionCount; action++) {
-            if (allowed[action]) {
+            if (action < allowed.length && allowed[action]) {
                 best = Math.max(best, stateValues[action]);
             }
         }
