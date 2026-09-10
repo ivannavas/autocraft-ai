@@ -128,7 +128,7 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
                 .append(" B carrying blocks, H hungry)")
                 .append("\nThe ground where it stands: ").append(terrainWords)
                 .append("\n  (terrain key: ").append(terrain).append(" = wanted | ahead | overhead | tags: B blocks,")
-                .append(" T ahead breakable, D can dig)");
+                .append(" T ahead breakable with a tool it carries, t only by hand (slow, no drop), D can dig)");
         if (!tacticKey.isEmpty()) {
             text.append("\nThe surroundings as a whole: ").append(tacticWords)
                     .append("\n  (surroundings key: ").append(tacticKey)

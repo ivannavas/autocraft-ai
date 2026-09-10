@@ -32,8 +32,12 @@ import net.minecraft.world.phys.Vec3;
  * @param ahead          what is in its way in the direction it is facing
  * @param above          whether there is room over its head to jump or to stack a block
  * @param hasBlocks      whether it is carrying something it could put down
- * @param aheadBreakable whether what is ahead could be broken with what it has, in reasonable time
+ * @param aheadBreakable whether what is ahead could be broken at all — bedrock cannot; stone can, by hand
+ *                       if it comes to that
  * @param ceilingBreakable the same for what is overhead
+ * @param aheadByHand    whether breaking what is ahead would be slow: nothing in the bag is the tool for
+ *                       it, so the hand does it at a block every several seconds and gets no drop
+ * @param ceilingByHand  the same for what is overhead
  * @param canDig         whether the block under its feet could be broken without opening a drop
  * @param canStack       whether a block could go where its feet are: not while it stands in a slab, a
  *                       carpet or anything else a placed block will not push aside
@@ -47,7 +51,8 @@ import net.minecraft.world.phys.Vec3;
  * @param sought         the block it is trying to get at, when that is what it wants, else null
  */
 public record Obstruction(Wanted wanted, Ahead ahead, Above above, boolean hasBlocks,
-                          boolean aheadBreakable, boolean ceilingBreakable, boolean canDig,
+                          boolean aheadBreakable, boolean ceilingBreakable,
+                          boolean aheadByHand, boolean ceilingByHand, boolean canDig,
                           boolean canStack, List<BlockPos> aheadBlocks, List<BlockPos> ceilingBlocks,
                           BlockPos under, double facing, int side, Vec3 target, BlockPos sought) {
 
@@ -157,6 +162,8 @@ public record Obstruction(Wanted wanted, Ahead ahead, Above above, boolean hasBl
         return new Obstruction(wanted, ahead, ceiling.isEmpty() ? Above.OPEN : Above.CEILING, hasBlocks,
                 !wall.isEmpty() && wall.stream().allMatch(pos -> breakable(player, pos)),
                 !ceiling.isEmpty() && ceiling.stream().allMatch(pos -> breakable(player, pos)),
+                wall.stream().anyMatch(pos -> byHand(player, pos)),
+                ceiling.stream().anyMatch(pos -> byHand(player, pos)),
                 Perception.canDigDown(player), canStack(level, feet), wall, ceiling,
                 feet.below().immutable(),
                 Math.toRadians(player.getYRot()), ThreadLocalRandom.current().nextBoolean() ? 1 : -1,
@@ -204,6 +211,8 @@ public record Obstruction(Wanted wanted, Ahead ahead, Above above, boolean hasBl
                 hasBlocks,
                 !between.isEmpty() && between.stream().allMatch(pos -> breakable(player, pos)),
                 !ceiling.isEmpty() && ceiling.stream().allMatch(pos -> breakable(player, pos)),
+                between.stream().anyMatch(pos -> byHand(player, pos)),
+                ceiling.stream().anyMatch(pos -> byHand(player, pos)),
                 Perception.canDigDown(player), canStack(level, player.blockPosition()), between, ceiling,
                 player.blockPosition().below().immutable(),
                 Math.toRadians(player.getYRot()), ThreadLocalRandom.current().nextBoolean() ? 1 : -1,
@@ -251,8 +260,8 @@ public record Obstruction(Wanted wanted, Ahead ahead, Above above, boolean hasBl
 
     /**
      * The state key, in a fixed order so a table written today still reads tomorrow. Three letters may
-     * follow: {@code B} carrying blocks, {@code T} the way ahead can be broken with what is in hand,
-     * {@code D} the ground under the feet can be dug.
+     * follow: {@code B} carrying blocks, {@code T} the way ahead can be broken with a tool it carries
+     * ({@code t}: only by hand, slowly), {@code D} the ground under the feet can be dug.
      */
     /**
      * The same reading in plain words, for the mentor, which is shown the block rather than the table and
@@ -269,20 +278,32 @@ public record Obstruction(Wanted wanted, Ahead ahead, Above above, boolean hasBl
         out.append("; ahead: ").append(switch (ahead) {
             case NONE -> "clear";
             case STEP -> "a one-block step (its legs take that on their own)";
-            case WALL -> "a wall two or more blocks high"
-                    + (aheadBreakable ? " it could break with what it holds" : " it cannot break with what it holds");
+            case WALL -> "a wall two or more blocks high" + breaking(aheadBreakable, aheadByHand);
             case GAP -> "a drop long enough to hurt";
             case LEAVES -> "leaves between it and the block it is after";
             case SOFT -> "soft blocks (dirt, wood, sand) between it and the block it is after";
             case HARD -> "hard blocks (stone, ore) between it and the block it is after"
-                    + (aheadBreakable ? ", breakable with its tool" : ", which its tool cannot break");
+                    + breaking(aheadBreakable, aheadByHand);
         });
         out.append("; overhead: ").append(above == Above.OPEN ? "open, it can jump and stack"
-                : "a ceiling within two blocks" + (ceilingBreakable ? " it could break" : " it cannot break with what it holds"));
+                : "a ceiling within two blocks" + breaking(ceilingBreakable, ceilingByHand));
         out.append(hasBlocks ? "; carrying blocks it could put down" : "; nothing to put down");
         out.append(canDig ? "; the block underfoot could be dug out without opening a drop"
                 : "; digging straight down here is not safe or not possible");
         return out.toString();
+    }
+
+    /**
+     * Whether, and how readily, the body could break something. Told plainly because the coach was told
+     * "cannot break with what it holds" of a stone wall round a body with no pickaxe, believed it, and
+     * spent its lessons looking for dirt to punch instead of the wall.
+     */
+    private static String breaking(boolean breakable, boolean byHand) {
+        if (!breakable) {
+            return " it cannot break at all";
+        }
+        return byHand ? " it could break by hand, slowly — several seconds a block, and no drop from it"
+                : " it could break with a tool it carries";
     }
 
     public String key() {
@@ -291,7 +312,10 @@ public record Obstruction(Wanted wanted, Ahead ahead, Above above, boolean hasBl
             tags.append('B');
         }
         if (aheadBreakable) {
-            tags.append('T');
+            // Two letters for the two prices: a wall that comes down in a second with the pickaxe and one
+            // that takes the hand ten are different questions, and a table that could not tell them apart
+            // learned the tool's answer for the hand.
+            tags.append(aheadByHand ? 't' : 'T');
         }
         if (canDig) {
             tags.append('D');
@@ -340,13 +364,26 @@ public record Obstruction(Wanted wanted, Ahead ahead, Above above, boolean hasBl
      * stone punched bare-handed takes the better part of ten seconds a block and a passage that takes a
      * minute is not a passage. Dirt, wood, sand and their like need no tool and always count.
      */
+    /**
+     * Whether the block could come apart at all. Bedrock cannot; everything else can, and the hand does
+     * it when nothing better is carried.
+     *
+     * <p>It used to ask for the tool as well, and that made a body with no pickaxe a body the terrain
+     * layer could do nothing for: shut in stone, the only moves it was offered were a stroll to the
+     * left and a stroll to the right, and it took them by turns for an hour. Breaking stone by hand is
+     * slow and drops nothing, and whether the seconds are worth it is the table's lesson to learn from
+     * the seconds — which is what {@link io.github.ivannavas.autocraftai.mob.goal.BreakGoal} was written
+     * for in the first place. The price is in the key, so the lesson learned with a pickaxe in the bag
+     * is not the one taught to the hand.
+     */
     private static boolean breakable(LocalPlayer player, BlockPos pos) {
         Level level = player.level();
-        BlockState state = level.getBlockState(pos);
-        if (state.getDestroySpeed(level, pos) < 0.0F) {
-            return false;
-        }
+        return level.getBlockState(pos).getDestroySpeed(level, pos) >= 0.0F;
+    }
+
+    /** Whether nothing in the hotbar is the tool for this block, so breaking it means the hand's slow way. */
+    private static boolean byHand(LocalPlayer player, BlockPos pos) {
         // Anything in the hotbar, not only what is in the hand: the goal that breaks it will pick the tool.
-        return Tool.canHarvest(player.getInventory(), state);
+        return !Tool.canHarvest(player.getInventory(), player.level().getBlockState(pos));
     }
 }

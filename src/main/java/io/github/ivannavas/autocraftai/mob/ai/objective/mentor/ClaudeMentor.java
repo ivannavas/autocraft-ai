@@ -67,6 +67,14 @@ public final class ClaudeMentor implements Mentor {
      */
     private static final int TIMEOUT_SECONDS = 120;
     private static final String CONVERSATION = "unblock";
+    /**
+     * Every question its own conversation, cleared once answered — see the planner for why. Here it was
+     * worse: one call read four hundred thousand tokens of earlier blocks to answer one, and a question
+     * buried that deep gets a worse answer as well as a dearer one. What the coach should remember of its
+     * own lessons is in the ask already, with the verdict on each.
+     */
+    private static final InMemoryConversationStore STORE = new InMemoryConversationStore();
+    private static final AtomicLong CALLS = new AtomicLong();
     private static final long RETRY_AFTER_MILLIS = 60_000L;
     /**
      * The least time between any two questions, whatever the block. One block reads as several sibling
@@ -167,7 +175,7 @@ public final class ClaudeMentor implements Mentor {
         MentorAgent agent = new MentorAgent();
         agent.configure(AgentData.fromAnnotation(brief,
                 new AnthropicModelExecutor(key, MODEL, MAX_TOKENS, TIMEOUT_SECONDS, API_URL),
-                new InMemoryConversationStore(), null, Map.of()));
+                STORE, null, Map.of()));
         log.info("Blocks will be coached by {}", MODEL);
         return new ClaudeMentor(agent);
     }
@@ -325,10 +333,12 @@ public final class ClaudeMentor implements Mentor {
      * whole hold wasted.
      */
     private String call(String prompt) {
+        String id = CONVERSATION + '-' + CALLS.incrementAndGet();
         RuntimeException last = null;
         for (int attempt = 1; attempt <= TRIES; attempt++) {
+            STORE.clear(id);
             try {
-                io.github.ivannavas.sprout.model.AgentResult result = agent.execute(CONVERSATION, prompt);
+                io.github.ivannavas.sprout.model.AgentResult result = agent.execute(id, prompt);
                 ClaudePlanner.note(result.totalUsage(), "mentor", MAX_TOKENS);
                 return result.response();
             } catch (RuntimeException e) {
@@ -344,6 +354,8 @@ public final class ClaudeMentor implements Mentor {
                     Thread.currentThread().interrupt();
                     throw e;
                 }
+            } finally {
+                STORE.clear(id);
             }
         }
         throw last;

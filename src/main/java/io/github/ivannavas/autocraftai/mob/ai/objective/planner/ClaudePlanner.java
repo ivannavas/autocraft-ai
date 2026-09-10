@@ -104,6 +104,17 @@ public final class ClaudePlanner implements ObjectivePlanner {
     private static final int TIMEOUT_SECONDS = 120;
     /** One transcript per world, so the planner remembers what it has already asked for in this one. */
     private static final String CONVERSATION = "run";
+    /**
+     * Every question is its own conversation, cleared as soon as it is answered.
+     *
+     * <p>One conversation per world was the design, and it grew: every call carried every earlier
+     * question and answer, and by the ninetieth the planner was reading two hundred thousand tokens of
+     * its own past to answer a four-thousand-token question. Ninety-nine per cent of the bill was the
+     * transcript. What continuity is worth keeping is in the situation itself now — the run's chronicle
+     * says what was set, reached, given up and why — and the brief, which is the part that caches.
+     */
+    private static final InMemoryConversationStore STORE = new InMemoryConversationStore();
+    private static final AtomicLong CALLS = new AtomicLong();
     /** How long to leave a failing planner alone before asking it again. */
     private static final long RETRY_AFTER_MILLIS = 60_000L;
     /**
@@ -192,7 +203,7 @@ public final class ClaudePlanner implements ObjectivePlanner {
         agent.configure(AgentData.fromAnnotation(
                 brief,
                 new AnthropicModelExecutor(key, MODEL, MAX_TOKENS, TIMEOUT_SECONDS, API_URL),
-                new InMemoryConversationStore(),
+                STORE,
                 null,
                 Map.of()));
         log.info("Objectives will be planned by {}", MODEL);
@@ -249,6 +260,9 @@ public final class ClaudePlanner implements ObjectivePlanner {
         String signature = asked.signature();
         if (signature.equals(cachedSignature.get()) && now - cachedAt.get() < CACHE_TTL_MILLIS
                 && cachedPlan.get() != null) {
+            // An answer from memory is still an answer, and paced like one: without this the gate
+            // above never re-armed after the last real question, and memory answered every step.
+            lastAsked.set(now);
             answer.set(cachedPlan.get());
             asking.set(false);
             PlannerLog.get().kept("from memory (same situation)", signature);
@@ -278,11 +292,14 @@ public final class ClaudePlanner implements ObjectivePlanner {
      * twenty minutes and the run spent them in UNPLANNED.
      */
     private String call(long asked, String prompt) {
+        String id = conversation(asked) + '-' + CALLS.incrementAndGet();
         RuntimeException last = null;
         for (int attempt = 1; attempt <= TRIES; attempt++) {
+            // Cleared before each try as well as after the last: a failed attempt may have left the
+            // question in the transcript, and the retry would have asked it twice.
+            STORE.clear(id);
             try {
-                io.github.ivannavas.sprout.model.AgentResult result =
-                        agent.execute(conversation(asked), prompt);
+                io.github.ivannavas.sprout.model.AgentResult result = agent.execute(id, prompt);
                 note(result.totalUsage(), "planner", MAX_TOKENS);
                 return result.response();
             } catch (RuntimeException e) {
@@ -298,6 +315,8 @@ public final class ClaudePlanner implements ObjectivePlanner {
                     Thread.currentThread().interrupt();
                     throw e;
                 }
+            } finally {
+                STORE.clear(id);
             }
         }
         throw last;

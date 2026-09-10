@@ -192,6 +192,9 @@ public final class Progression {
     private boolean reviewedShort;
     /** Whether the planner has been asked about this objective because the body is starving. */
     private boolean reviewedStarving;
+    /** When the planner was last asked about starving, whichever objective it was on. */
+    private long starvingAskedAt;
+    private static final long STARVING_AGAIN_MILLIS = 300_000L;
 
     /**
      * Told the name of each objective the moment it is reached. No-op until something wants it.
@@ -900,7 +903,11 @@ public final class Progression {
                 && shortOfWhatItCannotMake(context);
         // Starving is not a slow objective either: it is the one thing that ends the run whatever the
         // objective was. Asked at once, once, unless the objective is already food.
+        // And not more often than every few minutes whatever the objective does: each answer to a
+        // starving review that changed the objective re-armed the guard below, and the planner was
+        // asked again thirty seconds later, and again, three heights in ninety seconds.
         boolean starving = !reviewedStarving && context.player() != null
+                && System.currentTimeMillis() - starvingAskedAt > STARVING_AGAIN_MILLIS
                 && context.player().getFoodData().getFoodLevel() <= Situation.STARVING_AT
                 && Resource.FOOD.countIn(context.player().getInventory()) == 0
                 && current.scores().orElse(null) != Resource.FOOD;
@@ -916,6 +923,7 @@ public final class Progression {
         }
         if (starving) {
             reviewedStarving = true;
+            starvingAskedAt = System.currentTimeMillis();
             log.info("Starving on {}; asking the planner for the way to food", current.name());
         } else if (shortEarly) {
             reviewedShort = true;
@@ -952,6 +960,22 @@ public final class Progression {
         // the objective in hand and came back with a different one, and that is meant to take effect.
         Optional<Plan> planned = planner.take();
         if (planned.isPresent()) {
+            if (current != null && current.name().equals(planned.get().objective().name())) {
+                // The same objective again: a review answered "carry on", or the planner's own memory
+                // served the plan it had already given. Its bounds and its list are taken; its clock
+                // is not touched. Adopting it afresh reset the progress record and the once-per-objective
+                // review guards, and a starving body was handed the same objective once a second for an
+                // hour — forty-three "abandonments" in the record that were nothing of the kind, and an
+                // objective that never got to be ten seconds old.
+                plan = planned.get();
+                lastPlan = planned.get();
+                bounds = planned.get().bounds();
+                needs = planned.get().needs();
+                reserved = planned.get().reserved();
+                mentorNote = "";
+                refocus(context);
+                return 0.0;
+            }
             if (current != null) {
                 log.info("Planner swapped {} for {}", current.name(), planned.get().objective().name());
                 Chronicle.get().objectiveAbandoned(current.name(),

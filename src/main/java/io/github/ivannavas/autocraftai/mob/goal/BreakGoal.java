@@ -42,8 +42,12 @@ public final class BreakGoal implements MobGoal {
 
     private static final Set<MobControl> CONTROLS = EnumSet.of(MobControl.MOVE, MobControl.LOOK);
 
-    /** A list that has not come apart in this long is not going to from here. */
-    private static final int GIVE_UP_TICKS = 300;
+    /**
+     * A list that has not come apart in this long is not going to from here. Forty seconds: two blocks of
+     * deepslate take the bare hand thirty, and at fifteen the goal gave up on a stone wall it was three
+     * blows from opening.
+     */
+    private static final int GIVE_UP_TICKS = 800;
     /** Aimed and getting nowhere for this long: the block will not take the blows, whatever the reason. */
     private static final int STALLED_TICKS = 60;
 
@@ -52,6 +56,7 @@ public final class BreakGoal implements MobGoal {
     private int ticksRunning;
     private int ticksStalled;
     private boolean blocked;
+    private boolean breaking;
     private BlockPos equippedFor;
 
     /** @param targets what to break, in the order to break it; positions already air are skipped */
@@ -80,6 +85,15 @@ public final class BreakGoal implements MobGoal {
         return ticksStalled;
     }
 
+    /**
+     * Whether a block is coming apart under the blows right now. The passage layer keeps its hands off
+     * the choice while this holds: re-chosen every stuck second, a slow break was traded for a stroll
+     * three blows from the end, and the game forgets the cracks the moment the blows stop.
+     */
+    public boolean breaking() {
+        return breaking && !blocked;
+    }
+
     @Override
     public void tick(MobBody body) {
         ticksRunning++;
@@ -96,16 +110,19 @@ public final class BreakGoal implements MobGoal {
         BlockHitResult hit = aimedAt(body, target);
         if (hit == null || !strike(body, hit)) {
             // Still turning, something in the way, or a blow the game would not take.
+            breaking = false;
             if (++ticksStalled >= STALLED_TICKS) {
                 blocked = true;
             }
             return;
         }
         ticksStalled = 0;
+        breaking = true;
     }
 
     @Override
     public void stop(MobBody body) {
+        breaking = false;
         body.moveControl().stop();
         gameMode().ifPresent(MultiPlayerGameMode::stopDestroyBlock);
     }

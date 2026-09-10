@@ -49,6 +49,7 @@ import io.github.ivannavas.autocraftai.mob.goal.CraftGoal;
 import io.github.ivannavas.autocraftai.mob.goal.CraftingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.MineSightingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.PlaceBlockGoal;
+import io.github.ivannavas.autocraftai.mob.goal.BreakGoal;
 import io.github.ivannavas.autocraftai.mob.goal.SkillGoal;
 import io.github.ivannavas.autocraftai.mob.goal.SmeltGoal;
 import io.github.ivannavas.autocraftai.mob.goal.TravelGoal;
@@ -336,8 +337,15 @@ public final class QLearningBrain {
      * next thing rather than reporting the same log in the canopy for the rest of the objective.
      */
     private static final long SHUN_MILLIS = 90_000L;
-    /** How long a craft that gave up stays off the table, so the same trek is not started straight back. */
+    /**
+     * How long a craft that gave up stays off the table, so the same trek is not started straight back.
+     * Doubled for every give-up in a row on the same thing, up to {@link #CRAFT_BACKOFF_MOST_MILLIS}: a
+     * furnace was tried once a minute for three and a half hours by a body shut in a shaft it could not
+     * put a table down in — two hundred tries, each one taking the body off the plan for the seconds it
+     * took to find that out again.
+     */
     private static final long CRAFT_BACKOFF_MILLIS = 60_000L;
+    private static final long CRAFT_BACKOFF_MOST_MILLIS = 600_000L;
     /**
      * How long a skill of any layer is left alone after a run that failed or did nothing. A skill whose
      * steps all found air finishes in a second, and a layer woken by its condition chose it again the
@@ -347,6 +355,8 @@ public final class QLearningBrain {
     private static final long SKILL_BACKOFF_MILLIS = 60_000L;
     /** Crafts that gave up recently, and until when they are not to be tried again. */
     private final Map<Resource, Long> craftBackoff = new EnumMap<>(Resource.class);
+    /** How many times in a row each craft has given up, cleared the first time it gets made. */
+    private final Map<Resource, Integer> craftGiveUps = new EnumMap<>(Resource.class);
     /** When each craft skill may be tried again after failing, by name: its failure is its own, not its product's. */
     private final Map<String, Long> skillBackoff = new HashMap<>();
     /** When the craft skill in flight was handed to the engine, for giving up on one that never starts. */
@@ -1832,7 +1842,9 @@ public final class QLearningBrain {
         if (stuckSince == null) {
             passageHeldAt = now;
             passageHeldFrom = player.position();
-        } else if (now - passageHeldAt >= PASSAGE_PATIENCE_MILLIS) {
+        } else if (now - passageHeldAt >= PASSAGE_PATIENCE_MILLIS && !holdsPassageBreak()) {
+            // A block coming apart at the twentieth second is way being made, however the position
+            // reads; the break goal's own give-up bounds how long that can be said.
             if (wayMade(passageHeldFrom, player.position(), here.wanted()) < PASSAGE_WAY_MADE) {
                 log.debug("Passage layer standing aside: {} s on {} and no way made",
                         (now - passageHeldAt) / 1000, key);
@@ -1851,16 +1863,25 @@ public final class QLearningBrain {
         stuckSought = here.sought();
         stuckBetween = here.aheadBlocks().size();
 
-        if (holdsPassageSkill()) {
+        if (holdsPassageSkill() || holdsPassageBreak()) {
             // A skill is a list of steps, and the built-in passage moves are one swing each. Re-chosen
             // every stuck second like those, a six-step skill was cut at step five, started again, cut
             // at step four: twenty-one uses in four minutes and never a tree. A skill under way and
             // still getting somewhere keeps the body, as a tactic does.
+            //
+            // And a break with the block cracking under it, for the same reason now that the hand may
+            // do the breaking: stone takes it eight seconds a block, the table is asked every one of
+            // them, and each answer that was not "break" threw the cracks away.
             passage.hold(key, passageColumn);
             return;
         }
         int column = passage.choose(key, legal);
         installPassage(column, here);
+    }
+
+    /** Whether a built-in passage break is running with a block coming apart under it. */
+    private boolean holdsPassageBreak() {
+        return passageGoal instanceof BreakGoal run && engine.isRunning(run) && run.breaking();
     }
 
     /** Whether a passage skill is running, not finished, and not stalled. */
@@ -2650,7 +2671,7 @@ public final class QLearningBrain {
             } else if (craftBackoff.getOrDefault(made, 0L) > now) {
                 // It gave up on this a moment ago; the same walk to the same table would give up the same way.
                 allowed[i] = false;
-                reason = "it gave up on that craft less than a minute ago";
+                reason = "it gave up on that craft a little while ago";
             } else if (needs.containsKey(made) && held.count(made) >= needs.get(made)) {
                 // The list already has enough of it. A second wooden pickaxe was crafted at a table forty
                 // blocks away because "PICKAXE=1" stayed on the list after the first one was in the bag.
@@ -2961,10 +2982,17 @@ public final class QLearningBrain {
         CraftChoice choice = CraftChoice.values()[column];
         if (craftGoal != null && craftGoal.gaveUp()) {
             // It ran and let go without finishing. Putting it straight back is how a sword craft held the
-            // body in a shaft for seven minutes; it sits out a while and the plan's own work gets the body.
-            log.info("Gave up crafting {}; not trying again for a minute", craftGoal.target());
-            craftBackoff.put(craftGoal.target(), System.currentTimeMillis() + CRAFT_BACKOFF_MILLIS);
+            // body in a shaft for seven minutes; it sits out a while and the plan's own work gets the body,
+            // and longer each time it gives up on the same thing again.
+            int streak = craftGiveUps.merge(craftGoal.target(), 1, Integer::sum);
+            long wait = Math.min(CRAFT_BACKOFF_MOST_MILLIS, CRAFT_BACKOFF_MILLIS << Math.min(streak - 1, 4));
+            log.info("Gave up crafting {} ({} in a row); not trying again for {} s",
+                    craftGoal.target(), streak, wait / 1000);
+            craftBackoff.put(craftGoal.target(), System.currentTimeMillis() + wait);
             removeCraft();
+        } else if (craftGoal != null && craftGoal.isFinished()) {
+            // Made: the run of give-ups on it, if there was one, is over.
+            craftGiveUps.remove(craftGoal.target());
         }
         if (craftGoal != null && choice.makesSomething() && craftGoal.target() == choice.resource()
                 && !craftGoal.isFinished()) {
