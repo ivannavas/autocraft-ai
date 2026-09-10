@@ -59,10 +59,27 @@ public final class Clips {
         this.settings = settings;
     }
 
-    /** How many clips this run has written. Reported by the status endpoint. */
+    /**
+     * How many clips are on disk. Reported by the status endpoint.
+     *
+     * <p>What this session happened to write was the old answer, and it was wrong in both directions:
+     * zero after a restart with a folder full of clips, and unchanged after a wipe or a prune had taken
+     * them away. Counted from the directory, and remembered for a moment because the panel asks about
+     * once a second and the answer only changes when a clip is written.
+     */
     public int count() {
-        return saved.get();
+        long now = System.currentTimeMillis();
+        if (now - countedAt > COUNT_FOR_MILLIS) {
+            counted = list().size();
+            countedAt = now;
+        }
+        return counted;
     }
+
+    /** How long a count of the directory stands before it is taken again. */
+    private static final long COUNT_FOR_MILLIS = 2_000L;
+    private volatile int counted;
+    private volatile long countedAt;
 
     /** Where the clips are, or empty when OBS was left to record wherever it already did. */
     public Path directory() {
@@ -169,7 +186,10 @@ public final class Clips {
      * behind it instead of racing it and leaving the last clip of the old run behind.
      */
     public void clear() {
-        worker.execute(this::empty);
+        worker.execute(() -> {
+            empty();
+            countedAt = 0L;
+        });
     }
 
     private void empty() {
@@ -205,6 +225,7 @@ public final class Clips {
             }
             Path clip = rename(Path.of(written), objective);
             saved.incrementAndGet();
+            countedAt = 0L;
             log.info("Clip of '{}' saved to {}", objective, clip);
             prune(clip.getParent());
         } catch (Obs.ObsException e) {

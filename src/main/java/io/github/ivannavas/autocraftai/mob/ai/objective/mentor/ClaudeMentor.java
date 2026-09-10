@@ -58,8 +58,14 @@ public final class ClaudeMentor implements Mentor {
      * all — the whole budget gone on thinking — which came through as an empty reply, logged as "nothing
      * to add". A lesson with a skill in it is under 600 tokens of text; the rest is headroom.
      */
-    private static final int MAX_TOKENS = 2000;
-    private static final int TIMEOUT_SECONDS = 30;
+    private static final int MAX_TOKENS = 6_000;
+    /**
+     * Long enough for a model that thinks. Thirty seconds was the client's default and it was under
+     * what these calls take: the run logged a dozen "Anthropic chat request failed" an hour, every one
+     * of them a timeout on an answer that was still being written — billed, thrown away, and asked
+     * again, while the body wandered without orders.
+     */
+    private static final int TIMEOUT_SECONDS = 120;
     private static final String CONVERSATION = "unblock";
     private static final long RETRY_AFTER_MILLIS = 60_000L;
     /**
@@ -323,7 +329,7 @@ public final class ClaudeMentor implements Mentor {
         for (int attempt = 1; attempt <= TRIES; attempt++) {
             try {
                 io.github.ivannavas.sprout.model.AgentResult result = agent.execute(CONVERSATION, prompt);
-                ClaudePlanner.note(result.totalUsage(), "mentor");
+                ClaudePlanner.note(result.totalUsage(), "mentor", MAX_TOKENS);
                 return result.response();
             } catch (RuntimeException e) {
                 last = e;

@@ -55,7 +55,12 @@ public class AutocraftAiClient implements ClientModInitializer {
         brain.onDeath(clips::died);
         // And the clips of a run go when its world does: /world/new deletes the saves, and a recording of
         // a world that no longer exists is only clutter in the panel.
-        newWorld.onWiped(clips::clear);
+        newWorld.onWiped(() -> {
+            clips.clear();
+            // And the record of the run goes with it. Kept, it told the planner about deaths and
+            // objectives from a world nobody can reach, and asked it to plan around them.
+            io.github.ivannavas.autocraftai.mob.ai.objective.Chronicle.get().clear();
+        });
 
         // The overlay reads a copy the brain hands over after each decision, never the live table. The
         // endpoints go on the same port: the panel that drives the run also embeds the page.

@@ -88,9 +88,20 @@ public final class ClaudePlanner implements ObjectivePlanner {
      */
     private static final String MODEL = "claude-sonnet-5";
     private static final String API_URL = "https://api.anthropic.com/v1/messages";
-    /** Room for the thinking as well as the answer; see {@code ClaudeMentor#MAX_TOKENS}. */
-    private static final int MAX_TOKENS = 2500;
-    private static final int TIMEOUT_SECONDS = 30;
+    /**
+     * Room for the thinking and the answer both, with the answer being the longer of the two now: an
+     * objective, the follow-ups queued behind it, a skill, a forget list. At 2500 the reply came back
+     * cut off in the middle of its own JSON — "planner call: 2 in, 2500 out" in the log, and the run
+     * read it as "not an objective" — or with no text at all when the thinking used the lot.
+     */
+    private static final int MAX_TOKENS = 12_000;
+    /**
+     * Long enough for a model that thinks. Thirty seconds was the client's default and it was under
+     * what these calls take: the run logged a dozen "Anthropic chat request failed" an hour, every one
+     * of them a timeout on an answer that was still being written — billed, thrown away, and asked
+     * again, while the body wandered without orders.
+     */
+    private static final int TIMEOUT_SECONDS = 120;
     /** One transcript per world, so the planner remembers what it has already asked for in this one. */
     private static final String CONVERSATION = "run";
     /** How long to leave a failing planner alone before asking it again. */
@@ -262,7 +273,7 @@ public final class ClaudePlanner implements ObjectivePlanner {
             try {
                 io.github.ivannavas.sprout.model.AgentResult result =
                         agent.execute(conversation(asked), prompt);
-                note(result.totalUsage(), "planner");
+                note(result.totalUsage(), "planner", MAX_TOKENS);
                 return result.response();
             } catch (RuntimeException e) {
                 last = e;
@@ -439,9 +450,14 @@ public final class ClaudePlanner implements ObjectivePlanner {
      * put when the rest is over, from the situation then.
      */
     /** Books what a call cost, so the run can see its own bill rather than guess at it. */
-    public static void note(io.github.ivannavas.sprout.model.TokenUsage usage, String who) {
+    public static void note(io.github.ivannavas.sprout.model.TokenUsage usage, String who, int cap) {
         if (usage == null) {
             return;
+        }
+        if (usage.outputTokens() >= cap) {
+            // The answer stopped because it ran out of room, not because it was finished. Whatever came
+            // back is half an answer, and saying so beats letting the parser call it malformed.
+            log.warn("The {}'s answer was cut off at its {}-token ceiling; it is incomplete", who, cap);
         }
         log.info("{} call: {} in, {} out, {} cache read, {} cache write", who, usage.inputTokens(),
                 usage.outputTokens(), usage.cacheReadTokens(), usage.cacheWriteTokens());
