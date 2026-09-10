@@ -324,6 +324,13 @@ public final class QLearningBrain {
     private static final long SHUN_MILLIS = 90_000L;
     /** How long a craft that gave up stays off the table, so the same trek is not started straight back. */
     private static final long CRAFT_BACKOFF_MILLIS = 60_000L;
+    /**
+     * How long a skill of any layer is left alone after a run that failed or did nothing. A skill whose
+     * steps all found air finishes in a second, and a layer woken by its condition chose it again the
+     * next second, and the next: twenty-one uses in four minutes, none of them a tree. The minute is
+     * for the situation to change, and for the tables to weigh what the run earned.
+     */
+    private static final long SKILL_BACKOFF_MILLIS = 60_000L;
     /** Crafts that gave up recently, and until when they are not to be tried again. */
     private final Map<Resource, Long> craftBackoff = new EnumMap<>(Resource.class);
     /** When each craft skill may be tried again after failing, by name: its failure is its own, not its product's. */
@@ -540,14 +547,26 @@ public final class QLearningBrain {
      * Counts a skill goal's outcome, for the skill's record, when it is taken out. Done or failed is
      * counted; a goal taken out mid-way was interrupted, which says nothing about the skill.
      */
-    private static void settleSkill(MobGoal goal) {
+    private void settleSkill(MobGoal goal) {
         if (goal instanceof SkillGoal run) {
-            if (run.isDone()) {
-                log.info("Skill {} finished", run.skill().name());
-                Skills.get().completed(run.skill().name());
+            String name = run.skill().name();
+            if (run.isDone() && run.acted()) {
+                log.info("Skill {} finished", name);
+                Skills.get().completed(name);
+            } else if (run.isDone()) {
+                log.info("Skill {} ran its steps and did nothing", name);
+                Skills.get().idle(name,
+                        "ran every step and did nothing: the breaks found air, nothing was placed, taken or hit");
+                skillBackoff.put(name, System.currentTimeMillis() + SKILL_BACKOFF_MILLIS);
             } else if (run.failed()) {
-                log.info("Skill {} failed: {}", run.skill().name(), run.failure());
-                Skills.get().failed(run.skill().name(), run.failure());
+                log.info("Skill {} failed: {}", name, run.failure());
+                Skills.get().failed(name, run.failure());
+                skillBackoff.put(name, System.currentTimeMillis() + SKILL_BACKOFF_MILLIS);
+            } else if (!run.acted()) {
+                // Cut short before it did anything — a higher layer had the body, or it stood still.
+                // Its record is not touched, but its prior would have it chosen again next decision,
+                // and a skill picked ten times in half a minute under a zombie never once ran.
+                skillBackoff.put(name, System.currentTimeMillis() + SKILL_BACKOFF_MILLIS);
             }
         }
     }
@@ -795,6 +814,10 @@ public final class QLearningBrain {
                 }
             }
         }
+        rescue.forgets().forEach((name, why) -> {
+            Skills.get().forget(name, why.isEmpty() ? "the coach forgot it" : why);
+            PlannerLog.get().mentorNoted("forgot skill " + name + (why.isEmpty() ? "" : ": " + why));
+        });
         Suite suite = suites.get(rescue.pursuit());
         if (suite != null) {
             rescue.lessons().forEach(lesson -> suite.goals.seed(rescue.state(), lesson.action(), lesson.value()));
@@ -1267,10 +1290,10 @@ public final class QLearningBrain {
             }
         }
         List<Skill> skills = skillsOf(Skill.Layer.CRAFT);
-        for (int i = 0; i < skills.size(); i++) {
-            int column = CraftChoice.values().length + i;
-            if (column < legalCrafts.length && legalCrafts[column]
-                    && Readings.resource(skills.get(i).makes()) == after) {
+        for (Skill skill : skills) {
+            int column = crafting.columns.indexOf(skill.name());
+            if (column >= 0 && column < legalCrafts.length && legalCrafts[column]
+                    && Readings.resource(skill.makes()) == after) {
                 ways.add(column);
             }
         }
@@ -1578,6 +1601,13 @@ public final class QLearningBrain {
             }
         }
         Obstruction here = obstruction(player);
+        boolean woken = false;
+        if (here == null && passageAllowed(player) && anySkillApplies(Skill.Layer.PASSAGE, player)) {
+            // Not stuck, but a passage skill says the ground here is its business — a bush to clear, an
+            // ore in reach. The layer wakes for it and reads the ground as it would if it were stuck.
+            here = ground(player);
+            woken = true;
+        }
         if (here == null) {
             if (stuckSince != null) {
                 passage.learnTerminal(passageReward(player));
@@ -1588,6 +1618,12 @@ public final class QLearningBrain {
             return;
         }
         boolean[] legal = legalPassages(here, player);
+        if (woken) {
+            // Woken by a skill, not by a wall: the built-in ways past terrain stay out of it.
+            for (int i = 0; i < Passage.values().length && i < legal.length; i++) {
+                legal[i] = i == Passage.CARRY_ON.ordinal();
+            }
+        }
         String key = here.key();
         if (stuckSince != null) {
             passage.learn(key, passageReward(player), 1, legal);
@@ -1619,8 +1655,22 @@ public final class QLearningBrain {
         stuckSought = here.sought();
         stuckBetween = here.aheadBlocks().size();
 
+        if (holdsPassageSkill()) {
+            // A skill is a list of steps, and the built-in passage moves are one swing each. Re-chosen
+            // every stuck second like those, a six-step skill was cut at step five, started again, cut
+            // at step four: twenty-one uses in four minutes and never a tree. A skill under way and
+            // still getting somewhere keeps the body, as a tactic does.
+            passage.hold(key, passageColumn);
+            return;
+        }
         int column = passage.choose(key, legal);
         installPassage(column, here);
+    }
+
+    /** Whether a passage skill is running, not finished, and not stalled. */
+    private boolean holdsPassageSkill() {
+        return passageGoal instanceof SkillGoal run && engine.isRunning(run) && !run.isDone() && !run.failed()
+                && run.stalledTicks() < STALL_TICKS;
     }
 
     /**
@@ -1657,16 +1707,7 @@ public final class QLearningBrain {
     }
 
     private Obstruction obstruction(LocalPlayer player) {
-        // Standing aside after running out of patience: see tendPassage.
-        if (System.currentTimeMillis() < passageCooldownUntil) {
-            return null;
-        }
-        // A tactic that has the body keeps it, stalled or not: a tower being refused is not a wall in
-        // the way, and a passage move that dug out the block the tower had just laid was the loop the
-        // body sat in for a night.
-        if (wet != null || installedGoal == null || busy(swimGoal) || busy(craftGoal) || crafting()
-                || (tacticGoal != null && engine.isRunning(tacticGoal))
-                || engine.isCommitted(installedGoal)) {
+        if (!passageAllowed(player)) {
             return null;
         }
         MobBody body = engine.body();
@@ -1696,6 +1737,20 @@ public final class QLearningBrain {
         // and the first desert run stood like that for five minutes. Going round, back, down or up is
         // what this table is for.
         return here.matters() || !engine.isRunning(installedGoal) ? here : null;
+    }
+
+    /** Whether the passage layer may have the body at all, whatever the ground says. */
+    private boolean passageAllowed(LocalPlayer player) {
+        // Standing aside after running out of patience: see tendPassage.
+        if (System.currentTimeMillis() < passageCooldownUntil) {
+            return false;
+        }
+        // A tactic that has the body keeps it, stalled or not: a tower being refused is not a wall in
+        // the way, and a passage move that dug out the block the tower had just laid was the loop the
+        // body sat in for a night.
+        return !(wet != null || installedGoal == null || busy(swimGoal) || busy(craftGoal) || crafting()
+                || (tacticGoal != null && engine.isRunning(tacticGoal))
+                || engine.isCommitted(installedGoal));
     }
 
     /**
@@ -1767,12 +1822,11 @@ public final class QLearningBrain {
         // tower up to the sky, written for a body trapped underground, was legal under a tree with the
         // stone the plan wanted fourteen blocks below.
         List<Skill> skills = skillsOf(Skill.Layer.PASSAGE);
-        for (int i = 0; i < skills.size(); i++) {
-            int column = options.length + i;
-            if (column >= allowed.length || !allowed[column]) {
+        for (Skill skill : skills) {
+            int column = passage.columns.indexOf(skill.name());
+            if (column < 0 || column >= allowed.length || !allowed[column]) {
                 continue;
             }
-            Skill skill = skills.get(i);
             boolean wantsDown = here.wanted() == Obstruction.Wanted.DOWN;
             boolean wantsUp = here.wanted() == Obstruction.Wanted.UP
                     || here.wanted() == Obstruction.Wanted.TOWARD;
@@ -1847,7 +1901,10 @@ public final class QLearningBrain {
         // A shelter is not undone by working: the second the cap goes on, the surroundings read as a
         // roof with nothing hostile in range and stopped calling for anything — and the hole-up was
         // dropped, the goal underneath broke back out, and the night was spent digging the same hole.
-        if (!here.demanding() && !committed()) {
+        // A tactic skill whose condition holds is the surroundings calling for a decision too: a skill
+        // written to clear the bushes that killed the body was dead in daylight, because nothing about
+        // a berry patch at noon looked demanding to this layer.
+        if (!here.demanding() && !committed() && !anySkillApplies(Skill.Layer.TACTIC, player)) {
             settleTactics(player, here);
             return;
         }
@@ -2008,20 +2065,12 @@ public final class QLearningBrain {
             allowed[i] = options[i].isApplicable(here);
         }
         legalSkills(Skill.Layer.TACTIC, allowed, player);
-        // Shelter is for something: hostiles in range, or a night in the open, or a night with nothing to
-        // fight with. A body that is armed, underground and alone woke this layer only because its
-        // objective had stopped getting anywhere, and answered by sealing itself in a hole for two
-        // minutes — decisions ticking, nothing moving — which is the opposite of the way out.
-        // A hostile that is far off in daylight is not a reason either: a creeper on the horizon had the
-        // body sealed in for two minutes with the pickaxe half made.
-        boolean night = here.light() == Surroundings.Light.NIGHT;
-        boolean threatened = (here.count() > 0 && (night || here.nearest() != Perception.Distance.FAR))
-                || (night && (here.cover() == Surroundings.Cover.SKY || !here.armed()));
-        if (!threatened) {
-            allowed[Tactic.HOLE_UP.ordinal()] = false;
-            allowed[Tactic.TOWER.ordinal()] = false;
-            allowed[Tactic.WALL_OFF.ordinal()] = false;
-        }
+        // No rule here says when to shelter and when not to. There was one — shelters only when
+        // threatened, and at night unarmed with something in range nothing but a shelter or a retreat —
+        // and it was the run being told how to survive the night rather than learning it. What is
+        // physically possible is on the table; what pays is for the tables, the exposure and the deaths
+        // to settle, and for the coach and the planner to teach with skills whose conditions say
+        // exactly when.
         // Getting back to the sky is only a way out when the sky is where the plan wants the body. With
         // iron at Y -10..50 and the surface at 64, a body stuck under a roof was offered DAYLIGHT every
         // second and climbed away from its own objective; the mentor taught against it every time.
@@ -2029,17 +2078,6 @@ public final class QLearningBrain {
             // Nor when the plan wants the body lower than it is: under a canopy the cover reads as a
             // roof, and a body meant to be digging for stone was breaking leaves and stacking dirt.
             allowed[Tactic.DAYLIGHT.ordinal()] = false;
-        }
-        if (here.light() == Surroundings.Light.NIGHT && !here.armed() && here.count() > 0) {
-            allowed[Tactic.CARRY_ON.ordinal()] = false;
-            allowed[Tactic.FIGHT.ordinal()] = false;
-            boolean any = false;
-            for (boolean legal : allowed) {
-                any |= legal;
-            }
-            if (!any) {
-                allowed[Tactic.RETREAT.ordinal()] = true;
-            }
         }
         return allowed;
     }
@@ -2244,7 +2282,9 @@ public final class QLearningBrain {
             allowed[i] = actions[i].isApplicable(context);
         }
         legalSkills(Skill.Layer.GOAL, allowed, Minecraft.getInstance().player);
-        underThreat(context, allowed);
+        // A hostile in view used to bar approaching, watching, mining, eating and, unarmed, everything
+        // but fleeing or building. Gone: what to do with a zombie behind you is learned — from the
+        // exposure, from the death traced back to the choices before it, and from the coach — not told.
         if (fetchesWhatItSees(context) && allowed[GoalAction.MINE.ordinal()]) {
             // The plan named the blocks its resource comes off and the eyes have found one. There is
             // nothing left in the question, so there is nothing left to choose between: everything but
@@ -2363,44 +2403,6 @@ public final class QLearningBrain {
     }
 
     /**
-     * What a body with something hostile in view may not do, as rules rather than lessons.
-     *
-     * <p>The threat folder is learned from scratch and explores at thirty per cent while it does, and the
-     * first night of the first run was six deaths in a row spent finding out that walking up to a
-     * creeper, standing to watch a skeleton, punching it and stopping for a snack are all bad ideas.
-     * Nothing about those is worth a death to learn: the reward for each is the same every time and the
-     * body does not get to keep what it learned across the death. So with a hostile in view there is no
-     * approaching, watching, mining, digging or eating; fists only go up against something that is not
-     * hostile, or with a sword in the hotbar; and a body on low health does not fight at all.
-     */
-    private void underThreat(ActionContext context, boolean[] allowed) {
-        if (context.sighting().kind() != FocusKind.HOSTILE) {
-            return;
-        }
-        for (GoalAction barred : List.of(GoalAction.APPROACH, GoalAction.WATCH, GoalAction.MINE,
-                GoalAction.DIG_DOWN, GoalAction.EAT, GoalAction.REACH_BAND)) {
-            allowed[barred.ordinal()] = false;
-        }
-        boolean armed = Tool.SWORD.hotbarSlot(Minecraft.getInstance().player.getInventory()) >= 0;
-        boolean hurt = Perception.healthOf(Minecraft.getInstance().player) == Perception.Health.LOW;
-        if (!armed || hurt) {
-            // Unarmed, or too hurt to trade blows: get away from it or get above it, and nothing else.
-            // Wandering and travelling with a zombie behind you are a chase in a random direction, and
-            // the second trial's first night ended that way in a frozen river. What is left to learn is
-            // whether to run or to build, which is a real question and a survivable one.
-            allowed[GoalAction.ATTACK.ordinal()] = false;
-            allowed[GoalAction.WANDER.ordinal()] = false;
-            allowed[GoalAction.TRAVEL.ordinal()] = false;
-        }
-        if (!allowed[GoalAction.FLEE.ordinal()] && !allowed[GoalAction.PLACE.ordinal()]
-                && !allowed[GoalAction.ATTACK.ordinal()]) {
-            // Nothing left at all — the hostile is not something that can be fled from in the goal's
-            // terms, or the mask has eaten everything. Running is always possible in principle.
-            allowed[GoalAction.FLEE.ordinal()] = true;
-        }
-    }
-
-    /**
      * Whether the rule applies right now, which is nearly the same question as {@link
      * ActionContext#mineOnSight()} and differs in one case that matters.
      *
@@ -2499,13 +2501,13 @@ public final class QLearningBrain {
         // not when what it makes is already had, or it gave up on it a moment ago.
         legalSkills(Skill.Layer.CRAFT, allowed, player);
         List<Skill> craftSkills = skillsOf(Skill.Layer.CRAFT);
-        for (int i = 0; i < craftSkills.size(); i++) {
-            int column = choices.length + i;
-            if (column >= allowed.length || !allowed[column]) {
+        for (Skill craftSkill : craftSkills) {
+            int column = crafting.columns.indexOf(craftSkill.name());
+            if (column < 0 || column >= allowed.length || !allowed[column]) {
                 continue;
             }
-            Resource made = Readings.resource(craftSkills.get(i).makes());
-            if (skillBackoff.getOrDefault(craftSkills.get(i).name(), 0L) > now
+            Resource made = Readings.resource(craftSkill.makes());
+            if (skillBackoff.getOrDefault(craftSkill.name(), 0L) > now
                     || (made != null && needs.containsKey(made) && held.count(made) >= needs.get(made))) {
                 allowed[column] = false;
             }
@@ -2642,17 +2644,51 @@ public final class QLearningBrain {
         return installedSkill == null ? null : installedSkill.name();
     }
 
-    /** The skill behind a column past the built-in moves of a layer, or null when there is none. */
-    private static Skill skillAt(Skill.Layer layer, int column) {
-        int builtIn = switch (layer) {
-            case GOAL -> GoalAction.values().length;
-            case PASSAGE -> Passage.values().length;
-            case TACTIC -> Tactic.values().length;
-            case CRAFT -> CraftChoice.values().length;
+    /**
+     * The skill behind a column of a layer's table, or null when the column is a built-in move, a skill
+     * that has moved to another layer, or nothing at all. By name, never by position: a table keeps the
+     * column of a skill that retired, and counting live skills along the columns put the wrong skill
+     * behind every column after it.
+     */
+    private Skill skillAt(Skill.Layer layer, int column) {
+        List<String> columns = columnsOf(layer);
+        if (column < 0 || column >= columns.size()) {
+            return null;
+        }
+        return Skills.get().named(columns.get(column)).filter(skill -> skill.layer() == layer).orElse(null);
+    }
+
+    /** The column names of a layer's table, the goal layer's being the active folder's. */
+    private List<String> columnsOf(Skill.Layer layer) {
+        return switch (layer) {
+            case GOAL -> active == null ? List.of() : active.goals.columns;
+            case PASSAGE -> passage.columns;
+            case TACTIC -> tactics.columns;
+            case CRAFT -> crafting.columns;
         };
+    }
+
+    /** Whether any live skill of a layer would run right now: what wakes a layer otherwise asleep. */
+    private boolean anySkillApplies(Skill.Layer layer, LocalPlayer player) {
         List<Skill> skills = skillsOf(layer);
-        int index = column - builtIn;
-        return index >= 0 && index < skills.size() ? skills.get(index) : null;
+        if (skills.isEmpty()) {
+            return false;
+        }
+        Readings readings = readings(player);
+        long now = System.currentTimeMillis();
+        for (Skill skill : skills) {
+            if (skillBackoff.getOrDefault(skill.name(), 0L) > now) {
+                continue;
+            }
+            try {
+                if (skill.when().test(readings)) {
+                    return true;
+                }
+            } catch (RuntimeException e) {
+                // A condition that cannot be read never applies.
+            }
+        }
+        return false;
     }
 
     /**
@@ -2664,14 +2700,15 @@ public final class QLearningBrain {
         if (skills.isEmpty()) {
             return;
         }
-        int builtIn = allowed.length - skills.size();
+        List<String> columns = columnsOf(layer);
         Readings readings = readings(player);
-        for (int i = 0; i < skills.size(); i++) {
-            int column = builtIn + i;
+        long now = System.currentTimeMillis();
+        for (Skill skill : skills) {
+            int column = columns.indexOf(skill.name());
             if (column >= 0 && column < allowed.length) {
                 boolean applies;
                 try {
-                    applies = skills.get(i).when().test(readings);
+                    applies = skill.when().test(readings) && skillBackoff.getOrDefault(skill.name(), 0L) <= now;
                 } catch (RuntimeException e) {
                     applies = false;
                 }
@@ -3058,6 +3095,19 @@ public final class QLearningBrain {
             this.table = new QTable(columns.size());
             this.everything = new boolean[columns.size()];
             Arrays.fill(this.everything, true);
+            prime();
+        }
+
+        /**
+         * Gives every skill column its writer's prior as the value it starts at in rows that have not
+         * learned it. The prior used to land in one row — the one the skill was written in — and the
+         * skill sat at the row mean everywhere else, tried only by chance.
+         */
+        private void prime() {
+            for (int column = 0; column < columns.size(); column++) {
+                int at = column;
+                Skills.get().named(columns.get(column)).ifPresent(skill -> table.initial(at, skill.prior()));
+            }
         }
 
         /** The columns put back to the given set, for a table that has just been emptied. */
@@ -3069,17 +3119,19 @@ public final class QLearningBrain {
             Arrays.fill(everything, true);
             pendingState = null;
             pendingColumn = -1;
+            prime();
         }
 
         /** Another column, at nothing known in every row: a skill the mentor has just written. */
         private void addColumn(String name) {
-            if (columns.contains(name)) {
-                return;
+            if (!columns.contains(name)) {
+                columns.add(name);
+                table.resize(columns.size());
+                everything = new boolean[columns.size()];
+                Arrays.fill(everything, true);
             }
-            columns.add(name);
-            table.resize(columns.size());
-            everything = new boolean[columns.size()];
-            Arrays.fill(everything, true);
+            // Told again for a revision, whose prior may have changed.
+            prime();
         }
 
         private void load() {

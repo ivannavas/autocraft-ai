@@ -8,6 +8,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -275,7 +276,7 @@ public final class ClaudeMentor implements Mentor {
                     // Only a stall may be given up on. A pinned body is a block, and a block is
                     // answered with a way out, not with a different errand to be blocked on.
                     asked.stalled() ? replanIn(reply) : "",
-                    asked.situation().objective(), askedAt);
+                    asked.situation().objective(), askedAt, forgetsIn(reply));
             if (rescue.isEmpty()) {
                 log.info("The mentor had nothing to add for {}: {}", asked.summary(), shorten(reply));
                 PlannerLog.get().mentorFailed("nothing taught", reply);
@@ -353,6 +354,28 @@ public final class ClaudeMentor implements Mentor {
      * <p>A model asked for a string sometimes answers with {@code true}, and that is still the objective
      * being given up; it is carried as a sentence the planner can read, so a bare yes becomes one.
      */
+    /**
+     * The skills the coach says to forget, each with its reason: objects with a name and a why, or bare
+     * names, kept when such a skill exists.
+     */
+    private Map<String, String> forgetsIn(String reply) {
+        Map<String, String> forgets = new LinkedHashMap<>();
+        Optional<JsonNode> listed = object(reply).map(node -> node.path("forget")).filter(JsonNode::isArray);
+        if (listed.isEmpty()) {
+            return forgets;
+        }
+        Set<String> known = Skills.get().names();
+        for (JsonNode entry : listed.get()) {
+            String name = (entry.isTextual() ? entry.asText() : entry.path("name").asText(""))
+                    .strip().toUpperCase(Locale.ROOT);
+            String why = entry.isTextual() ? "" : entry.path("why").asText("").strip();
+            if (known.contains(name)) {
+                forgets.putIfAbsent(name, why);
+            }
+        }
+        return forgets;
+    }
+
     private String replanIn(String reply) {
         return object(reply).map(node -> node.path("replan")).map(node -> {
             if (node.isBoolean()) {

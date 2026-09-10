@@ -71,10 +71,15 @@ public class MentorAgent extends AgentExecutor {
               DAYLIGHT (get back under the open sky: break the ceiling, stack up, cut steps into the pit
               wall - for a body trapped under a roof or down a hole with an objective that lives on the
               surface).
-              Teach these when the block is really about survival or about being trapped: a body with no
-              sword and a skeleton on it at night should HOLE_UP or TOWER, not fight; a body in a cave with
-              the objective on the surface and no way it has found should DAYLIGHT; a body being chased in
-              a corridor with blocks in hand should WALL_OFF.
+              None of these is forced and none is forbidden by a rule: nothing stops the body eating in
+              front of a creeper or walking into the night unarmed except what its tables have learned
+              and what you teach. Surviving the night is yours to teach, and precisely: a lesson on
+              HOLE_UP or TOWER in the row given when that is the answer, and better still a TACTIC skill
+              whose condition says exactly when (night, no sword, hostiles near, blocks in hand, cover)
+              and whose steps say exactly what (dig two down and cap; or tower up; or wall off), so the
+              run learns when to shelter instead of being told to. A body in a cave with the objective
+              on the surface and no way it has found should DAYLIGHT; a body being chased in a corridor
+              with blocks in hand should WALL_OFF.
 
             WATER - when the situation says IN THE WATER, the body is swimming and that is the whole
             problem: nothing else it does matters until it is out. The water table's moves are CARRY_ON,
@@ -93,6 +98,13 @@ public class MentorAgent extends AgentExecutor {
             right even if the body has shuffled two blocks since. Say "replan" only when the objective
             itself is wrong wherever the body stands; a replan that lands after the body has got free on
             its own is thrown away.
+
+            FORGETTING. The list of skills written so far says how each has done: used, finished, did
+            nothing, failed, and why. There is no limit on how many there are, so it is you who keeps the
+            shelf honest: name in "forget" the skills that are not earning their keep — used often and
+            rarely finished, finishing by doing nothing, written for a situation the run has left behind,
+            or two that do the same thing. A forgotten skill is retired; a revision with the same name
+            brings it back. Do not forget a skill for being new.
 
             WRITING A NEW MOVE. When no move on the lists is the way out, write one as a skill and it
             becomes a column of its table from then on: the run adds it, seeds it in this row with the
@@ -135,6 +147,7 @@ public class MentorAgent extends AgentExecutor {
              "tactic": [{"action": "<TACTIC>", "value": <number>}, ...],
              "water": [{"action": "<SWIM MOVE>", "value": <number>}, ...],
              "skill": <a skill object as above, or leave the field out>,
+             "forget": [{"name": "<SKILL NAME>", "why": "<one short sentence>"}, ...],
              "replan": "<empty, or one sentence in English saying why the objective should be given up>",
              "reason": "<one short sentence, in the player's language named in the situation>"}
             Any list may be empty, and "replan" is empty unless the objective is the problem. Give a large

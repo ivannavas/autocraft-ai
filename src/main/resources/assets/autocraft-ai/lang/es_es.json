@@ -330,6 +330,8 @@
   "overlay.autocraft-ai.skills.retired": "retirada",
   "overlay.autocraft-ai.skills.live": "activa",
   "overlay.autocraft-ai.skills.problems": "Últimos fallos",
+  "overlay.autocraft-ai.skills.empty": "Sin efecto",
+  "overlay.autocraft-ai.skills.forgotten": "olvidada por el mentor",
   "overlay.autocraft-ai.empty.skills": "nadie ha escrito ninguna skill todavía",
   "overlay.autocraft-ai.logs.level": "nivel",
   "overlay.autocraft-ai.logs.filter": "filtrar…",

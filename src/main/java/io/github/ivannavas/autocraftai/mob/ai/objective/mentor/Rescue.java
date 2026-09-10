@@ -1,6 +1,9 @@
 package io.github.ivannavas.autocraftai.mob.ai.objective.mentor;
 
 import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.Collections;
 
 import io.github.ivannavas.autocraftai.mob.ai.skill.Skill;
 
@@ -45,9 +48,10 @@ public record Rescue(MentorAsk.Reason reason, String pursuit, String state, List
                      String tacticKey, List<Lesson> tacticLessons,
                      String waterKey, List<Lesson> waterLessons,
                      Skill skill, String skillProblem, String replan,
-                     String objective, long askedAt) {
+                     String objective, long askedAt, Map<String, String> forgets) {
     public Rescue {
         objective = objective == null ? "" : objective;
+        forgets = forgets == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(forgets));
         reason = reason == null ? MentorAsk.Reason.BLOCK : reason;
         lessons = List.copyOf(lessons);
         passageLessons = List.copyOf(passageLessons);
@@ -62,7 +66,8 @@ public record Rescue(MentorAsk.Reason reason, String pursuit, String state, List
 
     public boolean isEmpty() {
         return lessons.isEmpty() && passageLessons.isEmpty() && craftLessons.isEmpty()
-                && tacticLessons.isEmpty() && waterLessons.isEmpty() && skill == null && replan.isEmpty();
+                && tacticLessons.isEmpty() && waterLessons.isEmpty() && skill == null && replan.isEmpty()
+                && forgets.isEmpty();
     }
 
     /** Whether this answers a stall rather than a block, which changes how its outcome is judged. */
@@ -93,6 +98,9 @@ public record Rescue(MentorAsk.Reason reason, String pursuit, String state, List
         }
         if (!skillProblem.isEmpty()) {
             out.append(out.isEmpty() ? "" : ", ").append("skill refused: ").append(skillProblem);
+        }
+        for (String name : forgets.keySet()) {
+            out.append(out.isEmpty() ? "" : ", ").append("forget ").append(name);
         }
         if (asksToReplan()) {
             out.append(out.isEmpty() ? "" : ", ").append("replan: ").append(replan);

@@ -330,6 +330,8 @@
   "overlay.autocraft-ai.skills.retired": "retired",
   "overlay.autocraft-ai.skills.live": "live",
   "overlay.autocraft-ai.skills.problems": "Last failures",
+  "overlay.autocraft-ai.skills.empty": "Did nothing",
+  "overlay.autocraft-ai.skills.forgotten": "forgotten by the coach",
   "overlay.autocraft-ai.empty.skills": "nobody has written a skill yet",
   "overlay.autocraft-ai.logs.level": "level",
   "overlay.autocraft-ai.logs.filter": "filter…",

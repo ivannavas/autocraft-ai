@@ -85,6 +85,10 @@ public final class SkillGoal implements MobGoal {
     private BlockPos target;
     /** Whether the target is a block found by its kind rather than an offset, so it is stood beside. */
     private boolean named;
+    /** Whether any step so far changed the world: struck a block, placed one, moved an item, hit a mob. */
+    private boolean acted;
+    /** How close the eyes must be to a named block before swinging at it. */
+    private static final double REACH = 4.0;
     private MobGoal inner;
     private LivingEntity quarry;
     private boolean clicked;
@@ -136,6 +140,11 @@ public final class SkillGoal implements MobGoal {
     @Override
     public boolean isDone() {
         return done;
+    }
+
+    /** Whether the run did anything at all, as opposed to finishing through steps that found nothing. */
+    public boolean acted() {
+        return acted;
     }
 
     @Override
@@ -201,6 +210,7 @@ public final class SkillGoal implements MobGoal {
         target = next.at() == null ? null : at(body, next.at());
         named = false;
         if (next.at() == null && (next.verb() == Skill.Verb.WALK || next.verb() == Skill.Verb.LOOK
+                || next.verb() == Skill.Verb.BREAK
                 || (next.verb() == Skill.Verb.USE && !"hand".equals(next.word())))) {
             Readings now = readings.get();
             target = now == null ? null : now.find(next.word()).orElse(null);
@@ -273,12 +283,20 @@ public final class SkillGoal implements MobGoal {
             fail(body, "cannot break " + level.getBlockState(target).getBlock().getName().getString());
             return false;
         }
+        Vec3 centre = Vec3.atCenterOf(target);
+        if (named && body.player().getEyePosition().distanceTo(centre) > REACH) {
+            // A block named rather than pointed at may be across the clearing: walk up to it first.
+            body.lookControl().lookAt(centre);
+            body.moveControl().moveTo(Vec3.atBottomCenterOf(target), 1.0F);
+            return false;
+        }
         body.moveControl().stop();
         if (stepTicks == 1) {
             Digging.equip(body, target);
         }
         if (Digging.strike(body, target)) {
             sinceProgress = 0;
+            acted = true;
         }
         return false;
     }
@@ -310,6 +328,7 @@ public final class SkillGoal implements MobGoal {
                 return false;
             }
             sinceProgress = 0;
+            acted = true;
             return true;
         }
         if (!inner.canContinueToUse(body)) {
@@ -366,11 +385,13 @@ public final class SkillGoal implements MobGoal {
             inner.stop(body);
             inner = null;
             sinceProgress = 0;
+            acted = true;
             return true;
         }
         inner.tick(body);
         if (inner.stalledTicks() < 20) {
             sinceProgress = 0;
+            acted = true;
         }
         return false;
     }
@@ -421,6 +442,7 @@ public final class SkillGoal implements MobGoal {
         }
         if (Digging.strike(body, target)) {
             sinceProgress = 0;
+            acted = true;
         }
         return false;
     }
@@ -500,6 +522,7 @@ public final class SkillGoal implements MobGoal {
             InteractionResult result = gameMode().map(mode -> mode.useItem(player, InteractionHand.MAIN_HAND))
                     .orElse(InteractionResult.PASS);
             clicked = true;
+            acted = true;
             return result.consumesAction() || stepTicks > CLICK_EVERY * 3;
         }
         Vec3 centre = Vec3.atCenterOf(target);
@@ -559,6 +582,7 @@ public final class SkillGoal implements MobGoal {
                 return false;
             }
             gameMode().ifPresent(mode -> mode.handlePlaceRecipe(menu.containerId, found.get(), false));
+            acted = true;
         }
         return false;
     }
@@ -589,6 +613,7 @@ public final class SkillGoal implements MobGoal {
             gameMode().ifPresent(mode -> mode.handleContainerInput(target.containerId, index, 0,
                     ContainerInput.QUICK_MOVE, player));
             clicked = true;
+            acted = true;
         }
         return false;
     }
@@ -617,6 +642,7 @@ public final class SkillGoal implements MobGoal {
             gameMode().ifPresent(mode -> mode.handleContainerInput(menu.containerId, index, 0,
                     ContainerInput.QUICK_MOVE, player));
             clicked = true;
+            acted = true;
             sinceProgress = 0;
         }
         return false;

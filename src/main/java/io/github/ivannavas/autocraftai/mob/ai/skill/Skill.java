@@ -120,7 +120,9 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
             name: 2 to 24 upper-case letters, digits or underscores, and not a move that exists.
             layer: GOAL (a move chosen at decisions and held, like WANDER or MINE), PASSAGE (a way past
               terrain, asked every stuck second, like BREAK_AHEAD), TACTIC (a way through the
-              surroundings, asked every second they call for it, like TOWER), CRAFT (something to make or
+              surroundings, asked every second they call for it, like TOWER) — a PASSAGE or TACTIC skill
+              also wakes its layer whenever its own "when" holds, so it runs wherever it applies, not
+              only when the body is stuck or threatened —, CRAFT (something to make or
               do with what is carried, chosen alongside the move, like PLANKS; give it "makes": "<RESOURCE>"
               when it makes one of the plan's resources, so the run stops using it when there is enough).
             when: whether it applies, in this language: and, or, not, brackets, == != < <= > >=,
@@ -139,7 +141,8 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
               the one over the head.
             until: when it is finished; leave it out for a one-shot list of steps.
             steps (at most 12), each one verb:
-              {"break": [f,u,r]} break that block; {"dig": true} the block underfoot, only where safe;
+              {"break": [f,u,r]} break that block, or {"break": "<block>"} walk up to the nearest block
+              of that kind within eight and break it; {"dig": true} the block underfoot, only where safe;
               {"place": [f,u,r]} put a block there, or {"place": "feet"} jump and drop one under the feet
               (what is in hand when that is a block, else any building block);
               {"walk": [f,u,r]} or {"walk": "furnace"} (up to the nearest block of that kind within eight
@@ -157,8 +160,14 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
               an item from the bag into the open furnace or chest (a furnace takes fuel and ore by itself);
               {"close": true} close the screen.
             Each step has ten seconds (a wait or hold up to thirty) and the whole skill a minute; a step
-            that does not finish fails the skill, and a skill that keeps failing is retired.
-            prior: -6 to 6, the value it starts with in the row it was written for.
+            that does not finish fails the skill, and a skill that keeps failing is retired. A run in which
+            no step did anything — every break found air, nothing was placed, taken or hit — counts as
+            "did nothing", not as finished, and a skill that only ever does nothing is retired too: aim
+            steps at what is really there ({"break": "<block>"} rather than a guessed offset).
+            There is no limit on how many skills there are; the coach forgets the ones not earning their
+            keep, and a retired skill comes back if it is revised.
+            prior: -6 to 6, the value it starts with in every situation where it applies, until what it
+              earns there replaces it: a high prior means "try me first wherever I apply".
             To fix a skill of yours that keeps failing — the list of skills says why the last runs failed —
               write it again with the same name and "revise": true: its steps are replaced and its record
               starts over. Prefer revising a failing skill to writing a similar new one.
@@ -240,8 +249,7 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
             throw new IllegalArgumentException("no verb called '" + key + "'");
         }
         return switch (verb) {
-            case BREAK -> new Step(verb, offset(argument, verb), "", 0);
-            case WALK, LOOK, USE -> argument.isTextual()
+            case BREAK, WALK, LOOK, USE -> argument.isTextual()
                     ? new Step(verb, null, anyWord(argument, verb), 0)
                     : new Step(verb, offset(argument, verb), "", 0);
             case PLACE -> argument.isTextual()

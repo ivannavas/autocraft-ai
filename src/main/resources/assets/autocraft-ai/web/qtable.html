@@ -927,7 +927,8 @@
       "skills.done": "Finished", "skills.failed": "Failed", "skills.makes": "Makes",
       "skills.when": "When", "skills.until": "Until", "skills.steps": "Steps", "skills.reason": "Reason",
       "skills.prior": "Prior", "skills.retired": "retired", "skills.live": "live",
-      "skills.problems": "Last failures",
+      "skills.problems": "Last failures", "skills.empty": "Did nothing",
+      "skills.forgotten": "forgotten by the coach",
       "empty.skills": "nobody has written a skill yet",
       "logs.level": "level", "logs.filter": "filter…", "logs.pause": "pause", "logs.resume": "resume",
       "logs.clear": "clear", "logs.follow": "follow the tail", "logs.mod": "mod only",
@@ -1585,7 +1586,7 @@
   }).join(" → ");
 
   const skillTag = skill => skill.retired
-    ? `<span class="tag retired">${t("skills.retired")}</span>`
+    ? `<span class="tag retired" title="${escape(skill.forgotten || "")}">${t(skill.forgotten ? "skills.forgotten" : "skills.retired")}</span>`
     : `<span class="tag live">${t("skills.live")}</span>`;
 
   function renderSkills() {
@@ -1597,7 +1598,7 @@
     }
     box.innerHTML = `<table class="list"><thead><tr>` +
       `<th>${t("skills.name")}</th><th>${t("skills.layer")}</th><th>${t("skills.state")}</th>` +
-      `<th>${t("skills.uses")}</th><th>${t("skills.done")}</th><th>${t("skills.failed")}</th>` +
+      `<th>${t("skills.uses")}</th><th>${t("skills.done")}</th><th>${t("skills.empty")}</th><th>${t("skills.failed")}</th>` +
       `<th>${t("skills.makes")}</th><th>${t("skills.prior")}</th><th>${t("skills.when")}</th>` +
       `<th>${t("skills.until")}</th><th>${t("skills.steps")}</th><th>${t("skills.reason")}</th>` +
       `<th>${t("skills.problems")}</th></tr></thead><tbody>` +
@@ -1606,7 +1607,7 @@
         `<td><span class="tag">${escape(String(skill.layer || "").toLowerCase())}</span></td>` +
         `<td>${skillTag(skill)}</td>` +
         `<td class="num">${count(skill.uses)}</td><td class="num">${count(skill.completions)}</td>` +
-        `<td class="num">${count(skill.failures)}</td>` +
+        `<td class="num">${count(skill.empty)}</td><td class="num">${count(skill.failures)}</td>` +
         `<td>${skill.makes ? escape(word("resource", skill.makes)) : "—"}</td>` +
         `<td class="num">${skill.prior ?? "—"}</td>` +
         `<td><code>${escape(skill.when || "")}</code></td>` +
@@ -1618,7 +1619,7 @@
     el("ov-skills").innerHTML = skills.map(skill =>
       `<div class="mini-row"><span class="txt"><b>${escape(skill.name)}</b> ` +
       `<span class="tag">${escape(String(skill.layer || "").toLowerCase())}</span> ${skillTag(skill)}</span>` +
-      `<span class="talk-ago">${count(skill.uses)} · ${count(skill.completions)} ✓ · ${count(skill.failures)} ✗</span></div>`
+      `<span class="talk-ago">${count(skill.uses)} · ${count(skill.completions)} ✓ · ${count(skill.empty)} ∅ · ${count(skill.failures)} ✗</span></div>`
     ).join("");
   }
 

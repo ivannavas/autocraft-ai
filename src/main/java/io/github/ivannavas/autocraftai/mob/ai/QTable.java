@@ -50,12 +50,43 @@ public final class QTable {
     private final Map<String, double[]> values = new HashMap<>();
     private final Random random = new Random();
     private int actionCount;
+    /**
+     * What each column starts at in a row that has not learned it yet: NaN for the row's own mean, else
+     * the value given — a skill's prior, so a skill is tried first wherever it applies and what it
+     * earns there replaces the guess.
+     */
+    private double[] initial;
 
     private double epsilon = EPSILON_START;
     private long decisions;
 
     public QTable(int actionCount) {
         this.actionCount = actionCount;
+        this.initial = unset(actionCount);
+    }
+
+    private static double[] unset(int columns) {
+        double[] values = new double[columns];
+        Arrays.fill(values, Double.NaN);
+        return values;
+    }
+
+    /** The value a column starts at in every row that has not learned it yet. */
+    public void initial(int column, double value) {
+        if (column >= 0 && column < actionCount) {
+            initial[column] = value;
+        }
+    }
+
+    /** A row seen for the first time: zero, except where a column has a starting value of its own. */
+    private double[] fresh() {
+        double[] row = new double[actionCount];
+        for (int column = 0; column < actionCount; column++) {
+            if (!Double.isNaN(initial[column])) {
+                row[column] = initial[column];
+            }
+        }
+        return row;
     }
 
     public int states() {
@@ -83,7 +114,7 @@ public final class QTable {
 
     /** Action values for a state, created at zero the first time the state is seen. */
     public double[] valuesFor(String state) {
-        double[] row = values.computeIfAbsent(state, key -> new double[actionCount]);
+        double[] row = values.computeIfAbsent(state, key -> fresh());
         if (row.length < actionCount) {
             row = grown(row, actionCount);
             values.put(state, row);
@@ -103,6 +134,8 @@ public final class QTable {
             return;
         }
         actionCount = columns;
+        initial = Arrays.copyOf(initial, columns);
+        Arrays.fill(initial, Math.min(initial.length, columns), columns, Double.NaN);
         values.replaceAll((state, row) -> grown(row, columns));
     }
 
@@ -113,6 +146,7 @@ public final class QTable {
     public void width(int columns) {
         if (values.isEmpty()) {
             actionCount = columns;
+            initial = unset(columns);
         } else {
             resize(columns);
         }
@@ -127,15 +161,18 @@ public final class QTable {
      * in rows they were never written for. At the mean, a new column is tried where its writer seeded
      * it and elsewhere only when exploration picks it, which is what "untried" should mean.
      */
-    private static double[] grown(double[] row, int columns) {
+    private double[] grown(double[] row, int columns) {
         double[] wider = Arrays.copyOf(row, columns);
+        double mean = 0.0;
         if (row.length > 0) {
-            double mean = 0.0;
             for (double value : row) {
                 mean += value;
             }
             mean /= row.length;
-            Arrays.fill(wider, row.length, columns, mean);
+        }
+        for (int column = row.length; column < columns; column++) {
+            double starts = column < initial.length ? initial[column] : Double.NaN;
+            wider[column] = Double.isNaN(starts) ? mean : starts;
         }
         return wider;
     }

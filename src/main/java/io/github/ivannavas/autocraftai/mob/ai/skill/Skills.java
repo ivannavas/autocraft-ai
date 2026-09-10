@@ -45,8 +45,6 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public final class Skills {
 
-    /** The most skills a table may have live at once. */
-    public static final int MOST_LIVE = 6;
     /** Uses before a skill's record is judged at all. */
     private static final int JUDGED_AFTER = 20;
     /** A skill that has never once finished is judged much sooner: every try is a minute of daylight. */
@@ -68,6 +66,10 @@ public final class Skills {
         private int completions;
         private int failures;
         private boolean retired;
+        /** Runs that finished with no step having done anything: every break found air, nothing moved. */
+        private int empty;
+        /** Why the coach forgot it, when it did; empty for a skill retired by its own record. */
+        private String forgotten = "";
         private String rejection = "";
         /** Why the last few runs failed, for the writer to read before writing the next one. */
         private final java.util.ArrayDeque<String> problems = new java.util.ArrayDeque<>();
@@ -86,6 +88,14 @@ public final class Skills {
 
         public int failures() {
             return failures;
+        }
+
+        public int empty() {
+            return empty;
+        }
+
+        public String forgotten() {
+            return forgotten;
         }
 
         public List<String> problems() {
@@ -123,6 +133,8 @@ public final class Skills {
                     record.completions = entry.path("completions").asInt(0);
                     record.failures = entry.path("failures").asInt(0);
                     record.retired = entry.path("retired").asBoolean(false);
+                    record.empty = entry.path("empty").asInt(0);
+                    record.forgotten = entry.path("forgotten").asText("");
                     for (JsonNode problem : entry.path("problems")) {
                         record.problems.addLast(problem.asText(""));
                     }
@@ -152,6 +164,8 @@ public final class Skills {
                 node.put("completions", record.completions);
                 node.put("failures", record.failures);
                 node.put("retired", record.retired);
+                node.put("empty", record.empty);
+                node.put("forgotten", record.forgotten);
                 ArrayNode problems = node.putArray("problems");
                 record.problems.forEach(problems::add);
                 listed.add(node);
@@ -256,22 +270,22 @@ public final class Skills {
     public Optional<String> add(Skill skill) {
         Skill before = skills.get(skill.name());
         if (before != null) {
-            // A revision: the writer read why it kept failing and wrote it again. The column stays,
-            // the steps change, and the record starts over so the new version is judged on its own.
-            if (before.layer() != skill.layer()) {
-                return Optional.of("a skill keeps its layer when revised: " + skill.name() + " is "
-                        + before.layer().name().toLowerCase());
-            }
+            // A revision: the writer read why it kept failing and wrote it again. The steps change and
+            // the record starts over so the new version is judged on its own. A revision may move to
+            // another layer: the old column stays in the old table, dead, and the new table grows one.
+            // The listeners are told either way, so the new prior reaches the tables.
+            boolean moved = before.layer() != skill.layer();
             skills.put(skill.name(), skill);
             records.put(skill.name(), new Record());
             save();
-            log.info("Skill {} revised: {}", skill.name(), skill.describe());
+            log.info("Skill {} revised{}: {}", skill.name(),
+                    moved ? " and moved to the " + skill.layer().name().toLowerCase() + " layer" : "",
+                    skill.describe());
+            listeners.forEach(listener -> listener.accept(skill));
             return Optional.empty();
         }
-        if (live(skill.layer()).size() >= MOST_LIVE) {
-            return Optional.of("the " + skill.layer().name().toLowerCase() + " table already has "
-                    + MOST_LIVE + " live skills; retire one by not using it before writing another");
-        }
+        // No cap on how many there are. The coach reads the list and forgets the ones not earning
+        // their keep; a run learns more from a shelf of tried moves than from six kept on purpose.
         skills.put(skill.name(), skill);
         records.put(skill.name(), new Record());
         save();
@@ -324,6 +338,45 @@ public final class Skills {
         save();
     }
 
+    /**
+     * Counted when a skill's goal ran every step and none of them did anything: the breaks found air,
+     * nothing was placed, taken or hit. Not a completion — the skill did not do what it says — and a
+     * skill that only ever does nothing is retired the way one that never finishes is.
+     */
+    public void idle(String name, String why) {
+        Record record = records.get(name);
+        if (record == null) {
+            return;
+        }
+        record.empty++;
+        if (why != null && !why.isBlank()) {
+            record.problems.addLast(why.strip());
+            while (record.problems.size() > PROBLEMS_KEPT) {
+                record.problems.pollFirst();
+            }
+        }
+        boolean neverOnce = record.uses >= JUDGED_EARLY && record.completions == 0;
+        boolean rarely = record.uses >= JUDGED_AFTER && record.completions < record.uses * KEEP_ABOVE;
+        if (!record.retired && (neverOnce || rarely)) {
+            record.retired = true;
+            log.info("Retiring skill {}: {} of {} uses finished, {} did nothing", name,
+                    record.completions, record.uses, record.empty);
+        }
+        save();
+    }
+
+    /** The coach's call: the skill is retired, and its record says the coach did it and why. */
+    public void forget(String name, String why) {
+        Record record = records.get(name);
+        if (record == null || record.retired) {
+            return;
+        }
+        record.retired = true;
+        record.forgotten = why == null ? "" : why.strip();
+        save();
+        log.info("Forgot skill {}: {}", name, record.forgotten);
+    }
+
     public Record record(String name) {
         return records.getOrDefault(name, new Record());
     }
@@ -338,6 +391,8 @@ public final class Skills {
             node.put("completions", record.completions);
             node.put("failures", record.failures);
             node.put("retired", record.retired);
+            node.put("empty", record.empty);
+            node.put("forgotten", record.forgotten);
             node.put("summary", skill.describe());
             ArrayNode problems = node.putArray("problems");
             record.problems.forEach(problems::add);
@@ -353,7 +408,10 @@ public final class Skills {
             Record record = records.get(skill.name());
             out.append(out.isEmpty() ? "" : "\n").append("  ").append(skill.describe())
                     .append(" [used ").append(record.uses).append(", finished ").append(record.completions)
-                    .append(record.retired ? ", RETIRED for not finishing" : "");
+                    .append(record.empty > 0 ? ", did nothing " + record.empty : "")
+                    .append(!record.retired ? ""
+                            : record.forgotten.isEmpty() ? ", RETIRED for not finishing"
+                            : ", FORGOTTEN by you: " + record.forgotten);
             if (!record.problems.isEmpty()) {
                 out.append("; last failures: ").append(String.join(" / ", record.problems));
             }
