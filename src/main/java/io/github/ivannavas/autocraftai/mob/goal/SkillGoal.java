@@ -490,7 +490,15 @@ public final class SkillGoal implements MobGoal {
             case "sword" -> Tool.SWORD.hotbarSlot(inventory);
             case "pickaxe" -> Tool.PICKAXE.hotbarSlot(inventory);
             case "axe" -> Tool.AXE.hotbarSlot(inventory);
-            case "block" -> PlaceBlockGoal.hotbarSlotWithBuildingBlock(player, reserve);
+            case "block" -> {
+                // Building material from the hotbar first; failing that any block the plan lets go of,
+                // from the hotbar or swapped in from the bag. The "blocks" reading counts the bag, and
+                // a skill that read "blocks > 0" failed here with "nothing called block in the bag".
+                int building = PlaceBlockGoal.hotbarSlotWithBuildingBlock(player, reserve);
+                yield building >= 0 ? building
+                        : PlaceBlockGoal.bringBlockToHotbar(player, reserve)
+                                ? PlaceBlockGoal.hotbarSlotWithBlock(player, reserve) : -1;
+            }
             case "hand" -> emptyHotbarSlot(inventory);
             default -> hotbarSlotCalled(inventory, what);
         };

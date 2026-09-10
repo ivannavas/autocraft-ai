@@ -396,6 +396,13 @@ public final class QLearningBrain {
     private Tactic tacticChoice = Tactic.CARRY_ON;
     /** The body as it was when the tactics table last chose, or null while the surroundings are quiet. */
     private Moment tacticSince;
+    /** The body's health when the running tactic took it, and when it was last let run on unasked. */
+    private float tacticStartHealth;
+    private long tacticHeldAt;
+    /** Health lost under a tactic before the hold on it breaks: half a heart. */
+    private static final float HURT_BREAKS_HOLD = 1.0F;
+    /** How long a tactic skill keeps the body before the table is asked again; the same answer keeps it. */
+    private static final long TACTIC_RECHECK_MILLIS = 30_000L;
     /** The surroundings as they were then: what was alive, and whether the body was under a roof. */
     private Surroundings tacticSeen;
     /** The last reason the objective's own craft was illegal, so it is logged once and not every second. */
@@ -750,7 +757,44 @@ public final class QLearningBrain {
      * cap goes on, and a layer that re-chose then would dig its own shelter open every second.
      */
     private boolean committed() {
-        return tacticGoal instanceof SkillGoal run && engine.isRunning(run) && !run.isDone() && !run.failed();
+        if (!(tacticGoal instanceof SkillGoal run && engine.isRunning(run) && !run.isDone() && !run.failed())) {
+            return false;
+        }
+        LocalPlayer player = Minecraft.getInstance().player;
+        if (player != null && player.getHealth() < tacticStartHealth - HURT_BREAKS_HOLD) {
+            // A tactic that has the body while the body is being hurt is not a shelter: ask again.
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        if (now - tacticHeldAt >= TACTIC_RECHECK_MILLIS) {
+            // Even a shelter is asked about again now and then. The same answer keeps it running —
+            // installing the column already running is a no-op — and a different one takes it away: a
+            // lesson since, a value worn down, a skill forgotten. A wait for health that would not come
+            // held the body at half a heart for four minutes with nobody asked.
+            tacticHeldAt = now;
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Stops whatever is running of a skill that has just been forgotten. Its record is closed, and so is
+     * its turn: the coach forgot a wait-for-health while the body was in the middle of it, and the run
+     * went on for another four minutes at half a heart with the goal layer choosing into a wall.
+     */
+    private void dropRunsOf(String name) {
+        if (tacticGoal instanceof SkillGoal run && run.skill().name().equals(name)) {
+            removeTactic();
+        }
+        if (passageGoal instanceof SkillGoal run && run.skill().name().equals(name)) {
+            removePassage();
+        }
+        if (installedGoal instanceof SkillGoal run && run.skill().name().equals(name)) {
+            uninstall();
+        }
+        if (craftSkill != null && craftSkill.skill().name().equals(name)) {
+            removeCraftSkill();
+        }
     }
 
     /**
@@ -761,6 +805,7 @@ public final class QLearningBrain {
     private void takeOfferedSkills(String stateKey, String craftKey, LocalPlayer player) {
         for (Skills.Forget forget : Skills.get().takeOfferedForgets()) {
             Skills.get().forget(forget.name(), forget.why());
+            dropRunsOf(forget.name());
         }
         for (Skill skill : Skills.get().takeOffered()) {
             Optional<String> refused = Skills.get().add(skill);
@@ -827,6 +872,7 @@ public final class QLearningBrain {
         }
         rescue.forgets().forEach((name, why) -> {
             Skills.get().forget(name, why.isEmpty() ? "the coach forgot it" : why);
+            dropRunsOf(name);
             PlannerLog.get().mentorNoted("forgot skill " + name + (why.isEmpty() ? "" : ": " + why));
         });
         Suite suite = suites.get(rescue.pursuit());
@@ -1233,7 +1279,11 @@ public final class QLearningBrain {
         //
         // Never a goal the engine says is mid-break, however. That one is not stalling now whatever the
         // move as a whole has wasted, and pulling it would throw away the block it is halfway through.
-        if (cutShort() && !engine.isCommitted(installedGoal)) {
+        // Nor cut short while a tactic skill has the body: the goal underneath has not run, so it has
+        // not failed, and a new choice every two seconds into a held body taught the table nothing but
+        // noise — fifty-two choices in two minutes under a wait for health.
+        if (cutShort() && !engine.isCommitted(installedGoal) && !sheltering()
+                && !(swimGoal != null && engine.isRunning(swimGoal))) {
             stalls++;
             log.debug("Cutting {} short: {} seconds spent going nowhere", installedName(), stalledSteps);
             uninstall();
@@ -1535,6 +1585,13 @@ public final class QLearningBrain {
         }
         wet = Moment.of(player);
 
+        if (tacticGoal != null || passageGoal != null) {
+            // Another layer has a move in the water — a breakout, a climb, a wall broken through. The
+            // swim goal would hold the controls it needs and the two would fight over the body.
+            removeSwim();
+            water.hold(key, Swim.CARRY_ON.ordinal());
+            return;
+        }
         if (holdsSwim()) {
             // A swim under way and getting somewhere keeps the body. Re-chosen every second, SHORE and
             // SURFACE took turns, each restart threw away the last one's heading, and the body drowned
@@ -1762,7 +1819,10 @@ public final class QLearningBrain {
         // A tactic that has the body keeps it, stalled or not: a tower being refused is not a wall in
         // the way, and a passage move that dug out the block the tower had just laid was the loop the
         // body sat in for a night.
-        return !(wet != null || installedGoal == null || busy(swimGoal) || busy(craftGoal) || crafting()
+        // Not "wet" as such any more: a swim that is getting somewhere is busy and keeps the body, and
+        // a swim stalled against the wall of a flooded hole is exactly the terrain question this layer
+        // is for. The coach taught BREAK_AHEAD and a breakout skill to a body that could not use them.
+        return !(installedGoal == null || busy(swimGoal) || busy(craftGoal) || crafting()
                 || (tacticGoal != null && engine.isRunning(tacticGoal))
                 || engine.isCommitted(installedGoal));
     }
@@ -1902,9 +1962,11 @@ public final class QLearningBrain {
      * it is the main lesson here: a night survived is a night that did not end in minus twenty.
      */
     private void tendTactics(LocalPlayer player) {
-        if (wet != null) {
-            // The water layer owns a wet body. Whatever was being done about the surroundings is
-            // settled on what it earned; the water is the surroundings now.
+        if (wet != null && !anySkillApplies(Skill.Layer.TACTIC, player)) {
+            // The water layer owns a swimming body, unless a tactic skill says the water is its
+            // business: the coach wrote two ways out of a flooded hole, both conditioned on "wet", and
+            // this line kept both from ever running. Whatever was being done about the surroundings
+            // is settled on what it earned; the water is the surroundings now.
             settleTactics(player, null);
             return;
         }
@@ -1970,7 +2032,7 @@ public final class QLearningBrain {
             tacticSince = null;
             tacticSeen = null;
             if (tacticGoal != null) {
-                log.debug("Tactic {} let go: {}", tacticChoice,
+                log.debug("Tactic {} let go: {}", tactics.columns.get(tacticColumn),
                         wet != null ? "in water" : now == null ? "no surroundings" : "quiet: " + now.key());
             }
         }
@@ -2120,6 +2182,9 @@ public final class QLearningBrain {
         }
         if (goal != null) {
             tacticGoal = goal;
+            LocalPlayer player = Minecraft.getInstance().player;
+            tacticStartHealth = player == null ? 0.0F : player.getHealth();
+            tacticHeldAt = System.currentTimeMillis();
             engine.addGoal(TACTIC_PRIORITY, goal);
             log.debug("Tactic {} in {}", name, here.key());
         }

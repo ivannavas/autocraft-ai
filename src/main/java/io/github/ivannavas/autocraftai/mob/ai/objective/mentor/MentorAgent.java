@@ -79,9 +79,13 @@ public class MentorAgent extends AgentExecutor {
 
             WATER - when the situation says IN THE WATER, the body is swimming and that is the whole
             problem: nothing else it does matters until it is out. The water table's moves are CARRY_ON,
-            SURFACE (get air), SHORE (swim for land) and PILLAR (stand on a block). Teach SHORE a large
-            positive value when land is near and SURFACE when air is low; teach CARRY_ON negative. The
-            body drowned a minute from a beach while being taught how to mine.
+            SURFACE (get air), SHORE (swim for land) and PILLAR (stand on a block; needs one). Teach
+            SHORE a large positive value when land is near and SURFACE when air is low; teach CARRY_ON
+            negative. A flooded hole under a roof is not a swim at all: no shore to reach and no block
+            to stand on. TACTIC and PASSAGE skills whose condition holds run in the water too, and the
+            swim stands aside for them, so the way out of a flooded hole is a skill — "wet and
+            cover != SKY": break the roof, or break into the wall and walk through — and the passage
+            moves BREAK_AHEAD and BREAK_ABOVE are on the table when the swim has stalled against a wall.
 
             DWELLING - the situation says how much of the last five minutes was spent within six blocks
             of here and how often this patch was visited. A body that has spent most of that time in one

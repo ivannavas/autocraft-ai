@@ -180,6 +180,9 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
               you may forget ANY skill at ANY time, the starter shelf included, with
               "forget": [{"name": "<SKILL>", "why": "<one short sentence>"}] — nothing is protected —
               and revise any, and write better ones.
+            Water: a TACTIC or PASSAGE skill whose condition holds runs in the water too — "wet and
+              cover != SKY" is a flooded hole under a roof, and breaking the roof or the wall is the way
+              out — and the swim stands aside while it runs.
             Menus are the skill's to work: select, place, use, recipe, take, put, close. A table or a
               furnace a skill sets down should be picked up again when the skill is done with it: select
               the hand (the pickaxe, for a furnace), break the block, and walk onto the drop.
