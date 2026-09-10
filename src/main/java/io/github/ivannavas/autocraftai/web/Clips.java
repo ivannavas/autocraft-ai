@@ -136,8 +136,23 @@ public final class Clips {
      * <p>Safe to call from the game thread: it returns immediately.
      */
     public void reached(String objective) {
+        long since = System.currentTimeMillis() - lastSavedAt;
+        long window = settings.clipSeconds() * 1000L;
+        if (lastSavedAt != 0L && since < window) {
+            // The buffer only holds one window, and objectives arrive in bursts — planks, sticks, a
+            // table, a pickaxe, four of them inside a minute. Saving each wrote four near-copies of the
+            // same video, and worse: a save queued behind another lands seconds later, by which time
+            // the window has moved on, so the file named after one objective showed the next.
+            log.info("Not clipping '{}': the clip of '{}' {}s ago already covers it", objective,
+                    lastObjective, since / 1000);
+            return;
+        }
         worker.execute(() -> save(objective));
     }
+
+    /** When the last clip was written, and of what, so a burst of objectives makes one clip and not five. */
+    private volatile long lastSavedAt;
+    private volatile String lastObjective = "";
 
     /**
      * How much of the death screen to let into the clip before the buffer is written out.
@@ -226,6 +241,8 @@ public final class Clips {
             Path clip = rename(Path.of(written), objective);
             saved.incrementAndGet();
             countedAt = 0L;
+            lastSavedAt = System.currentTimeMillis();
+            lastObjective = objective;
             log.info("Clip of '{}' saved to {}", objective, clip);
             prune(clip.getParent());
         } catch (Obs.ObsException e) {

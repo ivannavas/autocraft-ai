@@ -132,12 +132,22 @@ public final class ClaudePlanner implements ObjectivePlanner {
     });
 
     /**
-     * The plans waiting to be taken, oldest first. One question can answer several: a run spends whole
-     * minutes on chains whose steps take four seconds each — planks, sticks, a table, a pickaxe — and
-     * asking a thinking model for each of them cost a call apiece, forty-eight in an hour. The answer
-     * carries the next few objectives with it, and they are handed over without another word.
+     * The answer to the question just asked. Taken whenever it arrives, whatever the body is doing: a
+     * review's answer is meant to replace the objective in hand.
      */
-    private final java.util.concurrent.ConcurrentLinkedQueue<Plan> answers =
+    private final AtomicReference<Plan> answer = new AtomicReference<>();
+    /**
+     * The objectives that answer said come next, oldest first, taken only when the body has finished
+     * what it is on. One question can answer several: a run spends whole minutes on chains whose steps
+     * take four seconds each — planks, sticks, a table, a pickaxe — and asking a thinking model for
+     * each cost a call apiece, forty-eight in an hour.
+     *
+     * <p>Separate from the answer, and that separation is the whole of it: the run polls for an answer
+     * every step so a review can take effect at once, and a queue polled on the same footing handed
+     * over the whole chain in four steps. The body took the last objective of the four and stood in a
+     * fresh world with nothing in its bag, trying to get a pickaxe.
+     */
+    private final java.util.concurrent.ConcurrentLinkedQueue<Plan> queued =
             new java.util.concurrent.ConcurrentLinkedQueue<>();
     /** How many follow-up objectives one answer may carry. */
     private static final int MOST_QUEUED = 3;
@@ -239,7 +249,7 @@ public final class ClaudePlanner implements ObjectivePlanner {
         String signature = asked.signature();
         if (signature.equals(cachedSignature.get()) && now - cachedAt.get() < CACHE_TTL_MILLIS
                 && cachedPlan.get() != null) {
-            answers.add(cachedPlan.get());
+            answer.set(cachedPlan.get());
             asking.set(false);
             PlannerLog.get().kept("from memory (same situation)", signature);
             return;
@@ -314,8 +324,8 @@ public final class ClaudePlanner implements ObjectivePlanner {
                         plan.objective().reason());
                 PlannerLog.get().answered(plan, plan.objective().reason(), reply);
                 trouble.set(null);
-                answers.clear();
-                answers.add(plan);
+                queued.clear();
+                answer.set(plan);
                 queueFollowUps(reply);
                 cachedSignature.set(signature);
                 cachedPlan.set(plan);
@@ -614,7 +624,8 @@ public final class ClaudePlanner implements ObjectivePlanner {
     @Override
     public void reset() {
         world.incrementAndGet();
-        answers.clear();
+        answer.set(null);
+        queued.clear();
         // A key that failed in the last world is not going to work in this one either, but a network
         // that was down may well be back, and the first question of a run is the one worth asking.
         silentUntil.set(0L);
@@ -624,16 +635,22 @@ public final class ClaudePlanner implements ObjectivePlanner {
 
     @Override
     public Optional<Plan> take() {
-        Plan next = answers.poll();
-        if (next != null && !answers.isEmpty()) {
-            log.info("Taking a queued objective: {} ({} still queued)", next.objective().name(), answers.size());
+        return Optional.ofNullable(answer.getAndSet(null));
+    }
+
+    @Override
+    public Optional<Plan> takeQueued() {
+        Plan next = queued.poll();
+        if (next != null) {
+            log.info("Taking the next queued objective: {} ({} left in the queue)",
+                    next.objective().name(), queued.size());
         }
         return Optional.ofNullable(next);
     }
 
     @Override
     public void forgetQueued() {
-        answers.clear();
+        queued.clear();
     }
 
     /**
@@ -646,7 +663,7 @@ public final class ClaudePlanner implements ObjectivePlanner {
     private void queueFollowUps(String reply) {
         object(reply).map(node -> node.path("then")).filter(JsonNode::isArray).ifPresent(listed -> {
             for (JsonNode entry : listed) {
-                if (answers.size() > MOST_QUEUED) {
+                if (queued.size() >= MOST_QUEUED) {
                     return;
                 }
                 String piece = entry.toString();
@@ -655,7 +672,7 @@ public final class ClaudePlanner implements ObjectivePlanner {
                     continue;
                 }
                 Plan plan = new Plan(errand.get(), bounds(piece), needs(piece), reserved(piece));
-                answers.add(plan);
+                queued.add(plan);
                 log.info("Queued after it: {} ({}) needing {}", plan.objective(), plan.bounds(), plan.needs());
                 PlannerLog.get().plannerNoted("queued next: " + plan.objective());
             }

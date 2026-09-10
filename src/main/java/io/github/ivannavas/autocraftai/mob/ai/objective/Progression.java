@@ -974,6 +974,23 @@ public final class Progression {
         if (current != null) {
             return 0.0;
         }
+        // Nothing in hand: the objectives the last answer queued behind itself come first, in order,
+        // and cost nothing to take.
+        Optional<Plan> next = planner.takeQueued();
+        if (next.isPresent()) {
+            current = next.get().objective();
+            Chronicle.get().objectiveStarted(current.name(), current.toString());
+            plan = next.get();
+            lastPlan = next.get();
+            carriedOn = false;
+            bounds = next.get().bounds();
+            needs = next.get().needs();
+            reserved = next.get().reserved();
+            stepsOnCurrent = 0;
+            mentorNote = "";
+            refocus(context);
+            return taken(context);
+        }
         // A supplier rather than a situation: reading the world costs an inventory walk and an entity
         // query, and there is no sense paying for either when the planner is going to ignore the question.
         planner.consider(() -> situation(context.player(), context.obtained(), ""));

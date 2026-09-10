@@ -55,6 +55,14 @@ public interface ObjectivePlanner {
      * history that never happened here. Any answer still on its way from the old world is dropped rather
      * than adopted by the new one.
      */
+    /**
+     * The next objective the last answer queued behind itself, if there is one. Asked only when the body
+     * has nothing to do, so a chain is worked through in order rather than skipped to the end.
+     */
+    default Optional<Plan> takeQueued() {
+        return Optional.empty();
+    }
+
     /** Throws away objectives queued behind the one in hand: a death, a new world, a fresh question. */
     default void forgetQueued() {
     }
