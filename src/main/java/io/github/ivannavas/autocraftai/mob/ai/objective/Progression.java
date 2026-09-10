@@ -225,16 +225,6 @@ public final class Progression {
     private Reserve reserved = Reserve.none();
     private boolean wasSomewhereUseful;
     private int stepsOnCurrent;
-    /**
-     * The height to climb to in order to break out of a trap, or {@link Integer#MIN_VALUE} when not
-     * escaping. Set when the body is pinned and no planner is coming to say what the planner would —
-     * climb out of the hole. Cleared the moment the body has climbed to it.
-     */
-    private int escapeTo = Integer.MIN_VALUE;
-    /** Which way the last escape went, so a body still pinned after one tries the other next. */
-    private boolean escapedUp;
-    /** How far "out of here" is: enough to clear a ravine wall or drop out of a tree's crown. */
-    private static final int ESCAPE_RISE = 12;
 
     public Progression(ObjectivePlanner planner) {
         this.planner = planner;
@@ -357,17 +347,6 @@ public final class Progression {
      * as one number so the move that answers them does not have to know which it was.
      */
     public OptionalInt heightWanted(int y) {
-        // Escaping a trap comes before everything: while it holds, the one thing worth wanting is up and
-        // out. Cleared here the moment the body reaches it, so a normal objective takes over again.
-        if (escapeTo != Integer.MIN_VALUE) {
-            // Reached, whichever way it was: cleared when the body is at the escape height or past it in
-            // the direction it set off.
-            if (escapedUp ? y >= escapeTo : y <= escapeTo) {
-                escapeTo = Integer.MIN_VALUE;
-            } else {
-                return OptionalInt.of(escapeTo);
-            }
-        }
         if (current != null) {
             OptionalInt named = current.height();
             if (named.isPresent()) {
@@ -657,8 +636,6 @@ public final class Progression {
         current = null;
         plan = null;
         active = idle();
-        escapeTo = Integer.MIN_VALUE;
-        escapedUp = false;
         wasSomewhereUseful = false;
         bounds = Bounds.anywhere();
         needs = Map.of();
@@ -877,28 +854,11 @@ public final class Progression {
         noteProgress(context);
 
         // A pinned body is a block, and a block is the mentor's to answer, not the planner's — see the
-        // brain, which owns the tables the mentor teaches. The planner is spared the call; all that
-        // happens here is the local self-rescue, which is free and does not wait on the network: climb out
-        // of a hole, and if that was not it, drop out of the tree next time.
+        // brain, which owns the tables the mentor teaches. There was a self-rescue here — twelve blocks
+        // up, then twelve down, by turns, whenever the body read as pinned — and it built a tower to
+        // y=127 in an open savanna: a body climbing straight up reads as pinned, and every pinned
+        // decision set the escape twelve higher. Getting out of a hole is a lesson and a skill now.
         boolean pinned = context.pinned();
-        if (pinned && context.player() != null) {
-            int y = context.player().getBlockY();
-            // Up and down by turns, unless the objective itself is a height, or the body is under a
-            // roof: a climb that is pinned is not helped by a rescue that wants it lower, and a body
-            // in a hole with no sky over it has exactly one way out. On the box the flip masked the
-            // one tactic getting it up and turned the passage layer against the climb every other
-            // decision.
-            OptionalInt named = current.height();
-            boolean noSky = !context.player().level().canSeeSky(context.player().blockPosition().above());
-            if (named.isPresent() && named.getAsInt() != y) {
-                escapedUp = named.getAsInt() > y;
-            } else if (noSky) {
-                escapedUp = true;
-            } else {
-                escapedUp = !escapedUp;
-            }
-            escapeTo = escapedUp ? y + ESCAPE_RISE : y - ESCAPE_RISE;
-        }
 
         // Not stuck, just long: ask the planner whether the objective is still right. Rarely, and the
         // planner's own cache drops the call when nothing about the situation has changed since last time.

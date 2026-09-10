@@ -697,6 +697,9 @@ public final class QLearningBrain {
         // drained would be charged to whatever decision happened to look next.
         craftedThisStep = concat(craftedThisStep, CraftLog.get().drainCrafted());
         retireFinishedCraft();
+        // A screen nothing is using is closed before anything else is tended: with a furnace open the
+        // body can neither break nor place, and every goal died a second after it started.
+        closeStrayMenu(player);
         // On its own clock, whatever the commitment is doing: the water does not wait for a decision.
         tendWater(player);
         // Nor does a skeleton, or nightfall, or a roof the objective is on the other side of.
@@ -756,6 +759,29 @@ public final class QLearningBrain {
     private boolean displaced() {
         return busy(swimGoal) || busy(tacticGoal) || busy(craftGoal) || busy(craftSkill) || busy(passageGoal)
                 || crafting();
+    }
+
+    /**
+     * Closes a container screen that no goal is using. A smelt clicked the furnace and was taken away
+     * the same second — the objective had changed — and the furnace screen arrived after its goal had
+     * stopped and closed nothing; the body then walked in circles with the furnace open for five
+     * minutes, unable to break or place a thing.
+     */
+    private void closeStrayMenu(LocalPlayer player) {
+        if (player.containerMenu == null || player.containerMenu == player.inventoryMenu) {
+            return;
+        }
+        boolean using = (craftGoal != null && engine.isRunning(craftGoal))
+                || (craftSkill != null && engine.isRunning(craftSkill))
+                || (installedGoal instanceof SkillGoal && engine.isRunning(installedGoal))
+                || (tacticGoal instanceof SkillGoal && engine.isRunning(tacticGoal))
+                || (passageGoal instanceof SkillGoal && engine.isRunning(passageGoal));
+        if (using) {
+            return;
+        }
+        log.info("Closing a {} nothing is using", player.containerMenu.getClass().getSimpleName());
+        player.closeContainer();
+        Minecraft.getInstance().setScreenAndShow(null);
     }
 
     /** Whether the body is standing still for the coach's answer, and the answer is still on its way. */

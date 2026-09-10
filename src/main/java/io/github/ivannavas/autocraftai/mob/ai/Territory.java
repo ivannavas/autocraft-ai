@@ -131,7 +131,7 @@ public final class Territory {
         }
         double walked = walked();
         return walked >= PINNED_WITHIN
-                && flatDistance(trail.peekFirst(), trail.peekLast()) / walked < STRAIGHT_ENOUGH;
+                && trail.peekFirst().distanceTo(trail.peekLast()) / walked < STRAIGHT_ENOUGH;
     }
 
     /** Whether the body has barely walked at all across the whole trail, which is what a hole feels like. */
@@ -145,7 +145,9 @@ public final class Territory {
         Vec3 previous = null;
         for (Vec3 position : trail) {
             if (previous != null) {
-                total += flatDistance(previous, position);
+                // In three dimensions: a body climbing a pillar has walked, and was "pinned" while it
+                // climbed sixty blocks straight up.
+                total += previous.distanceTo(position);
             }
             previous = position;
         }

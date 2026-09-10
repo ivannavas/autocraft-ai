@@ -212,6 +212,9 @@ public final class SkillGoal implements MobGoal {
             inner.stop(body);
             inner = null;
         }
+        // A skill taken away with a screen open leaves it open for nobody: closed here, whatever step
+        // it was on. A skill that closed its own screen finds nothing to close.
+        close(body);
     }
 
     /** Sets the frame for a step: where the body stands and faces as the step begins. */
