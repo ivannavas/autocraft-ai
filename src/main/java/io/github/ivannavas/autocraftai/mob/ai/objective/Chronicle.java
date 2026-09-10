@@ -77,6 +77,25 @@ public final class Chronicle {
     private int skillsWritten;
     private int skillsRetired;
     private int skillsForgotten;
+    /** What the two agents have cost, in tokens, since the record began. */
+    private long callsMade;
+    private long inputTokens;
+    private long cacheReadTokens;
+    private long cacheWriteTokens;
+    private long outputTokens;
+    private double spentDollars;
+    /**
+     * Rates in dollars per million tokens, for turning the counts into a number the agents can act on.
+     * Kept per agent because they are not on the same model: the planner is on Sonnet 5 ($2/$10) and
+     * the coach on Opus 5 ($5/$25). Cache reads are a tenth of fresh input and cache writes a quarter
+     * more. Prices change; these are for the shape of the bill, not for the accounting.
+     */
+    private static final double PLANNER_INPUT_PER_MILLION = 2.0;
+    private static final double PLANNER_OUTPUT_PER_MILLION = 10.0;
+    private static final double MENTOR_INPUT_PER_MILLION = 5.0;
+    private static final double MENTOR_OUTPUT_PER_MILLION = 25.0;
+    private static final double CACHE_READ_SHARE = 0.1;
+    private static final double CACHE_WRITE_SHARE = 1.25;
     private Path file;
 
     private Chronicle() {
@@ -148,6 +167,28 @@ public final class Chronicle {
     public synchronized void skillForgotten(String name, String why) {
         skillsForgotten++;
         note("skill " + name + " forgotten: " + shorten(why));
+    }
+
+    /** What one call to an agent cost, in tokens, priced at that agent's own rate. */
+    public synchronized void spent(String who, long input, long output, long cacheWrite, long cacheRead) {
+        callsMade++;
+        inputTokens += input;
+        outputTokens += output;
+        cacheWriteTokens += cacheWrite;
+        cacheReadTokens += cacheRead;
+        boolean planner = "planner".equals(who);
+        double in = planner ? PLANNER_INPUT_PER_MILLION : MENTOR_INPUT_PER_MILLION;
+        double out = planner ? PLANNER_OUTPUT_PER_MILLION : MENTOR_OUTPUT_PER_MILLION;
+        spentDollars += (input * in + output * out + cacheRead * in * CACHE_READ_SHARE
+                + cacheWrite * in * CACHE_WRITE_SHARE) / 1_000_000.0;
+        if (callsMade % 10 == 0) {
+            save();
+        }
+    }
+
+    /** What the advice has cost so far, in dollars, at the rates above. */
+    private double dollars() {
+        return spentDollars;
     }
 
     /** Once a second while the body is in a world. Not written to disk: the record of it is the shares. */
@@ -253,6 +294,16 @@ public final class Chronicle {
                 .append(" in the 10 before, ").append(lessonsIn(1200, 1800)).append(" in the 10 before that.")
                 .append(" Skills: ").append(skillsWritten).append(" written, ").append(skillsRetired)
                 .append(" retired on their record, ").append(skillsForgotten).append(" forgotten on purpose.\n");
+        if (callsMade > 0) {
+            long played = Math.max(1, (System.currentTimeMillis() - startedAt) / 60_000L);
+            text.append(String.format(Locale.ROOT,
+                    "  What your advice has cost: %d calls, $%.2f so far, about $%.2f an hour"
+                            + " (%d output tokens, %d input, %d%% of it read from cache).%n",
+                    callsMade, dollars(), dollars() * 60.0 / played, outputTokens,
+                    inputTokens + cacheReadTokens + cacheWriteTokens,
+                    (int) (100 * cacheReadTokens
+                            / Math.max(1, inputTokens + cacheReadTokens + cacheWriteTokens))));
+        }
         if (!events.isEmpty()) {
             text.append("  Recent events, oldest first:\n");
             long now = System.currentTimeMillis();
@@ -302,6 +353,12 @@ public final class Chronicle {
             skillsWritten = root.path("skillsWritten").asInt(0);
             skillsRetired = root.path("skillsRetired").asInt(0);
             skillsForgotten = root.path("skillsForgotten").asInt(0);
+            callsMade = root.path("callsMade").asLong(0);
+            inputTokens = root.path("inputTokens").asLong(0);
+            outputTokens = root.path("outputTokens").asLong(0);
+            cacheReadTokens = root.path("cacheReadTokens").asLong(0);
+            cacheWriteTokens = root.path("cacheWriteTokens").asLong(0);
+            spentDollars = root.path("spentDollars").asDouble(0.0);
             reachSeconds.clear();
             root.path("reachSeconds").forEach(node -> reachSeconds.add(node.asInt()));
             deathsByCause.clear();
@@ -332,6 +389,8 @@ public final class Chronicle {
         objectiveInHand = "";
         deaths = lessonsTaught = lessonsWorked = lessonsFailed = lessonsLate = 0;
         skillsWritten = skillsRetired = skillsForgotten = 0;
+        callsMade = inputTokens = outputTokens = cacheReadTokens = cacheWriteTokens = 0;
+        spentDollars = 0.0;
         save();
     }
 
@@ -364,6 +423,12 @@ public final class Chronicle {
             root.put("skillsWritten", skillsWritten);
             root.put("skillsRetired", skillsRetired);
             root.put("skillsForgotten", skillsForgotten);
+            root.put("callsMade", callsMade);
+            root.put("inputTokens", inputTokens);
+            root.put("outputTokens", outputTokens);
+            root.put("cacheReadTokens", cacheReadTokens);
+            root.put("cacheWriteTokens", cacheWriteTokens);
+            root.put("spentDollars", spentDollars);
             ArrayNode reach = root.putArray("reachSeconds");
             reachSeconds.forEach(reach::add);
             ObjectNode causes = root.putObject("deathsByCause");

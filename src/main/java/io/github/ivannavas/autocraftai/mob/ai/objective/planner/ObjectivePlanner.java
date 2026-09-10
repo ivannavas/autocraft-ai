@@ -55,6 +55,10 @@ public interface ObjectivePlanner {
      * history that never happened here. Any answer still on its way from the old world is dropped rather
      * than adopted by the new one.
      */
+    /** Throws away objectives queued behind the one in hand: a death, a new world, a fresh question. */
+    default void forgetQueued() {
+    }
+
     default void reset() {
     }
 

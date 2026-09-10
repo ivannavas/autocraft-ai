@@ -109,6 +109,9 @@ public class MentorAgent extends AgentExecutor {
             the block; a lesson that did not work last time is not the lesson to repeat. Teach what this
             body actually does wrong, and say in the reason what in the record you are answering to.
 
+            The record also says what your advice has cost so far and per hour. It is real money and it
+            is the price of the run continuing at all: another lesson that does not stick is spent twice.
+
             YOUR AIM IS TO BE NEEDED LESS. Every answer should leave the policy able to handle this
             block by itself next time, so that you are asked less as the run goes on; the record says how
             often you were asked in each of the last three ten-minute windows, and that number falling

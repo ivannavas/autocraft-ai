@@ -80,8 +80,13 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public final class ClaudePlanner implements ObjectivePlanner {
 
-    /** The model this asks. Deliberately the strongest one: it is asked once an objective, not once a tick. */
-    private static final String MODEL = "claude-opus-5";
+    /**
+     * The model this asks. Sonnet rather than Opus: choosing the next errand from a described situation
+     * is the easier of the two jobs — the coach's is to work out why a body is stuck, which is not —
+     * and at a fifth of Opus's output rate it is what makes a run affordable to leave running. The
+     * coach stays on Opus.
+     */
+    private static final String MODEL = "claude-sonnet-5";
     private static final String API_URL = "https://api.anthropic.com/v1/messages";
     /** Room for the thinking as well as the answer; see {@code ClaudeMentor#MAX_TOKENS}. */
     private static final int MAX_TOKENS = 2500;
@@ -115,7 +120,16 @@ public final class ClaudePlanner implements ObjectivePlanner {
         return worker;
     });
 
-    private final AtomicReference<Plan> answer = new AtomicReference<>();
+    /**
+     * The plans waiting to be taken, oldest first. One question can answer several: a run spends whole
+     * minutes on chains whose steps take four seconds each — planks, sticks, a table, a pickaxe — and
+     * asking a thinking model for each of them cost a call apiece, forty-eight in an hour. The answer
+     * carries the next few objectives with it, and they are handed over without another word.
+     */
+    private final java.util.concurrent.ConcurrentLinkedQueue<Plan> answers =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
+    /** How many follow-up objectives one answer may carry. */
+    private static final int MOST_QUEUED = 3;
     private final AtomicBoolean asking = new AtomicBoolean();
     private final AtomicLong silentUntil = new AtomicLong();
     /** When the last question actually went out, for the minimum interval between them. */
@@ -214,7 +228,7 @@ public final class ClaudePlanner implements ObjectivePlanner {
         String signature = asked.signature();
         if (signature.equals(cachedSignature.get()) && now - cachedAt.get() < CACHE_TTL_MILLIS
                 && cachedPlan.get() != null) {
-            answer.set(cachedPlan.get());
+            answers.add(cachedPlan.get());
             asking.set(false);
             PlannerLog.get().kept("from memory (same situation)", signature);
             return;
@@ -246,7 +260,10 @@ public final class ClaudePlanner implements ObjectivePlanner {
         RuntimeException last = null;
         for (int attempt = 1; attempt <= TRIES; attempt++) {
             try {
-                return agent.execute(conversation(asked), prompt).response();
+                io.github.ivannavas.sprout.model.AgentResult result =
+                        agent.execute(conversation(asked), prompt);
+                note(result.totalUsage(), "planner");
+                return result.response();
             } catch (RuntimeException e) {
                 last = e;
                 if (attempt == TRIES || !Failure.worthRetrying(e)) {
@@ -286,7 +303,9 @@ public final class ClaudePlanner implements ObjectivePlanner {
                         plan.objective().reason());
                 PlannerLog.get().answered(plan, plan.objective().reason(), reply);
                 trouble.set(null);
-                answer.set(plan);
+                answers.clear();
+                answers.add(plan);
+                queueFollowUps(reply);
                 cachedSignature.set(signature);
                 cachedPlan.set(plan);
                 cachedAt.set(System.currentTimeMillis());
@@ -419,6 +438,17 @@ public final class ClaudePlanner implements ObjectivePlanner {
      * the run, and remembers why for the overlay. Nothing is owed across a rest: the next question is
      * put when the rest is over, from the situation then.
      */
+    /** Books what a call cost, so the run can see its own bill rather than guess at it. */
+    public static void note(io.github.ivannavas.sprout.model.TokenUsage usage, String who) {
+        if (usage == null) {
+            return;
+        }
+        log.info("{} call: {} in, {} out, {} cache read, {} cache write", who, usage.inputTokens(),
+                usage.outputTokens(), usage.cacheReadTokens(), usage.cacheWriteTokens());
+        io.github.ivannavas.autocraftai.mob.ai.objective.Chronicle.get().spent(who, usage.inputTokens(),
+                usage.outputTokens(), usage.cacheWriteTokens(), usage.cacheReadTokens());
+    }
+
     private void rest(String why) {
         trouble.set(why);
         wanted.set(false);
@@ -568,7 +598,7 @@ public final class ClaudePlanner implements ObjectivePlanner {
     @Override
     public void reset() {
         world.incrementAndGet();
-        answer.set(null);
+        answers.clear();
         // A key that failed in the last world is not going to work in this one either, but a network
         // that was down may well be back, and the first question of a run is the one worth asking.
         silentUntil.set(0L);
@@ -578,7 +608,42 @@ public final class ClaudePlanner implements ObjectivePlanner {
 
     @Override
     public Optional<Plan> take() {
-        return Optional.ofNullable(answer.getAndSet(null));
+        Plan next = answers.poll();
+        if (next != null && !answers.isEmpty()) {
+            log.info("Taking a queued objective: {} ({} still queued)", next.objective().name(), answers.size());
+        }
+        return Optional.ofNullable(next);
+    }
+
+    @Override
+    public void forgetQueued() {
+        answers.clear();
+    }
+
+    /**
+     * The follow-up objectives an answer carries, checked like the first one and queued behind it.
+     *
+     * <p>Each is parsed from its own object, so a bad one is dropped without touching the rest, and the
+     * queue is capped: the further ahead the planner guesses, the less it knows about where the body
+     * will actually be.
+     */
+    private void queueFollowUps(String reply) {
+        object(reply).map(node -> node.path("then")).filter(JsonNode::isArray).ifPresent(listed -> {
+            for (JsonNode entry : listed) {
+                if (answers.size() > MOST_QUEUED) {
+                    return;
+                }
+                String piece = entry.toString();
+                Optional<Phase> errand = parse(piece);
+                if (errand.isEmpty()) {
+                    continue;
+                }
+                Plan plan = new Plan(errand.get(), bounds(piece), needs(piece), reserved(piece));
+                answers.add(plan);
+                log.info("Queued after it: {} ({}) needing {}", plan.objective(), plan.bounds(), plan.needs());
+                PlannerLog.get().plannerNoted("queued next: " + plan.objective());
+            }
+        });
     }
 
     @Override

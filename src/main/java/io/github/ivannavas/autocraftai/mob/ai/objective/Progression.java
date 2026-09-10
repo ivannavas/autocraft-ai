@@ -650,6 +650,8 @@ public final class Progression {
         plan = null;
         lastPlan = null;
         carriedOn = false;
+        // Objectives queued for the body that just died are for a bag it no longer has.
+        planner.forgetQueued();
         active = idle();
         wasSomewhereUseful = false;
         bounds = Bounds.anywhere();

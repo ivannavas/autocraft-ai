@@ -235,6 +235,7 @@ public class ObjectiveAgent extends AgentExecutor {
 
             Answer with a JSON object ONLY, no text around it and no code fences:
             {"objective": "<SHAPE>", "target": "<TARGET FOR THAT SHAPE>", "amount": <integer>,
+             "then": [{ ...the same shape, up to three more objectives to take in order... }],
              "sources": [{"block": "<id>", "tool": "<TOOL>", "band": {"floor": <integer>, "ceiling": <integer>},
                           "terrain": ["<TERRAIN>"], "ways": ["<WAY>"]}],
              "bounds": {"floor": <integer>, "ceiling": <integer>},
@@ -243,5 +244,18 @@ public class ObjectiveAgent extends AgentExecutor {
              "reason": "<one short sentence, in the player's language named in the situation>"}
             DESCEND and ASCEND need no target; TRAVEL and BUILD need neither amount nor sources; and
             "bounds" is optional on all of them.
+
+            EVERY QUESTION COSTS. You are a large model asked to think, and the run pays for each answer,
+            so make each one carry as far as it honestly can.
+             - Do not set an objective the player finishes in seconds. Planks, sticks, a crafting table, a
+               wooden pickaxe out of wood it already carries: the player's own crafting layer makes those
+               by itself when they are on "needs". Naming them as objectives spent a whole call each and
+               ten of the last thirty-five objectives were over within five seconds. Set the objective
+               that takes minutes — the ore, the wood, the height, the journey — and put the crafts it
+               needs on "needs".
+             - Use "then" for the two or three objectives that plainly come next whatever happens, in
+               order. They are taken one after another with no further question, so the run keeps working
+               while you are not asked. Leave it out when the next step really does depend on how this one
+               goes.
             """;
 }

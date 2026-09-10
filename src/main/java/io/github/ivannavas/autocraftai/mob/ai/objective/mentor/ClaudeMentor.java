@@ -27,6 +27,7 @@ import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.ivannavas.autocraftai.mob.ai.objective.planner.ClaudePlanner;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.Failure;
 import io.github.ivannavas.autocraftai.mob.ai.objective.planner.PlannerLog;
 import io.github.ivannavas.autocraftai.mob.ai.skill.Skill;
@@ -321,7 +322,9 @@ public final class ClaudeMentor implements Mentor {
         RuntimeException last = null;
         for (int attempt = 1; attempt <= TRIES; attempt++) {
             try {
-                return agent.execute(CONVERSATION, prompt).response();
+                io.github.ivannavas.sprout.model.AgentResult result = agent.execute(CONVERSATION, prompt);
+                ClaudePlanner.note(result.totalUsage(), "mentor");
+                return result.response();
             } catch (RuntimeException e) {
                 last = e;
                 if (attempt == TRIES || !Failure.worthRetrying(e)) {
