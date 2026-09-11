@@ -473,8 +473,13 @@ public final class Control {
      */
     private void startStream(HttpExchange exchange) throws IOException {
         JsonNode body = body(exchange);
-        String server = body.path("server").asText(settings.streamServer());
-        String key = body.path("key").asText(settings.streamKey());
+        // Blank counts as absent. The panel sends every field it has, filled or not, and "server": ""
+        // used to be taken at its word: the configured ingest was never used, and the refusal blamed
+        // the key that had just been pasted.
+        String server = given(body, "server", settings.streamServer());
+        String key = given(body, "key", settings.streamKey());
+        log.info("Stream start requested over the control API: server {}, key {}",
+                server.isBlank() ? "missing" : "given", key.isBlank() ? "missing" : "given");
         try {
             String message = Obs.with(settings, obs -> {
                 String scene = obs.stage();
@@ -631,6 +636,12 @@ public final class Control {
     }
 
     /** An absent or unreadable body is an empty one: every field these endpoints take is optional. */
+    /** A text field of the body, or the fallback when it is missing or blank. */
+    private static String given(JsonNode body, String field, String fallback) {
+        String value = body.path(field).asText("");
+        return value.isBlank() ? fallback : value.trim();
+    }
+
     private static JsonNode body(HttpExchange exchange) {
         try (var in = exchange.getRequestBody()) {
             byte[] raw = in.readAllBytes();

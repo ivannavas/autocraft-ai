@@ -204,7 +204,12 @@ public final class Obs implements AutoCloseable {
      * @return false if it was already streaming, which is not a failure — it is the state that was asked for
      */
     public boolean go(String server, String key) throws ObsException {
-        if (server.isBlank() || key.isBlank()) {
+        if (server.isBlank()) {
+            throw new ObsException("No stream server. Set stream.server in control.properties (or "
+                    + "AUTOCRAFT_STREAM_SERVER) to the ingest — YouTube's is "
+                    + "rtmps://a.rtmps.youtube.com:443/live2 — or type it in the panel.");
+        }
+        if (key.isBlank()) {
             throw new ObsException("No stream key. Paste it in the panel, or set stream.key in "
                     + "control.properties. YouTube's is in YouTube Studio under Go Live -> Stream "
                     + "settings, and it does not change between broadcasts.");
