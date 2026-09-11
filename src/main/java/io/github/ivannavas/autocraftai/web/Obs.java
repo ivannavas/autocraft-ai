@@ -166,16 +166,22 @@ public final class Obs implements AutoCloseable {
         // Order is the whole point: OBS puts a new source at the top of the scene, so the game going in
         // first and the page second is what makes the page an overlay rather than something behind it.
         int game = create(scene, GAME_SOURCE, settings.captureKind(), captureSettings());
-        int overlayWidth = (int) Math.round(width * settings.overlayWidth());
-        int overlayHeight = (int) Math.round(height * settings.overlayHeight());
-        int overlay = create(scene, OVERLAY_SOURCE, "browser_source",
-                overlaySettings(overlayWidth, overlayHeight));
-
         // The game covers the canvas; the desktop it is capturing is set to the same shape, so "cover"
         // crops nothing. If it ever is a different shape, cropping the edges beats bars down the sides.
         fit(scene, game, 0, 0, width, height, "OBS_BOUNDS_SCALE_OUTER");
-        int overlayTop = (int) Math.round(height * settings.overlayTop());
-        fit(scene, overlay, 0, overlayTop, overlayWidth, overlayHeight, "OBS_BOUNDS_SCALE_INNER");
+
+        // The page is optional; the one above it was discarded with the game's source either way, so
+        // turning it off takes it off the air at the next rebuild rather than leaving a stale copy.
+        if (settings.overlayEnabled()) {
+            int overlayWidth = (int) Math.round(width * settings.overlayWidth());
+            int overlayHeight = (int) Math.round(height * settings.overlayHeight());
+            int overlay = create(scene, OVERLAY_SOURCE, "browser_source",
+                    overlaySettings(overlayWidth, overlayHeight));
+            int overlayTop = (int) Math.round(height * settings.overlayTop());
+            fit(scene, overlay, 0, overlayTop, overlayWidth, overlayHeight, "OBS_BOUNDS_SCALE_INNER");
+        } else {
+            log.info("Scene built without the overlay: overlay.enabled is false");
+        }
 
         call("SetCurrentProgramScene", JSON.createObjectNode().put("sceneName", scene));
 

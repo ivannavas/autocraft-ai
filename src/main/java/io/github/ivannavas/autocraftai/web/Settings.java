@@ -163,6 +163,14 @@ public final class Settings {
     }
 
     /**
+     * Whether the overlay goes into the scene at all. Off, the broadcast is the game and nothing else;
+     * the page is still served, and the control panel still embeds it.
+     */
+    public boolean overlayEnabled() {
+        return Boolean.parseBoolean(value("overlay.enabled", "true"));
+    }
+
+    /**
      * How much video is kept in memory, in seconds, ready to be written out when something happens.
      *
      * <p>This is the length of every clip: the buffer holds the last minute, and reaching an objective
@@ -285,6 +293,7 @@ public final class Settings {
                 + ",\"scene\":" + quote(scene())
                 + ",\"captureKind\":" + quote(captureKind())
                 + ",\"overlayUrl\":" + quote(overlayUrl())
+                + ",\"overlayEnabled\":" + overlayEnabled()
                 + ",\"streamServerSet\":" + !streamServer().isEmpty()
                 + ",\"streamKeySet\":" + !streamKey().isEmpty()
                 + ",\"width\":" + width()
