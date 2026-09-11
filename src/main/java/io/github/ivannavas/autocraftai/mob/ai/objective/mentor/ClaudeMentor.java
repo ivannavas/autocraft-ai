@@ -51,12 +51,12 @@ import lombok.extern.slf4j.Slf4j;
 public final class ClaudeMentor implements Mentor {
 
     /**
-     * Sonnet, not Opus. The coaching was $2.6 an hour and half the lessons landed after the body had
-     * moved on, mostly because the answer took the better part of a minute to think. A faster answer
-     * to the state as it stands beats a deeper one to a state that is gone; whether the lessons get
-     * worse is measured — the chronicle counts the ones that worked — and this is one line to put back.
+     * Opus. Sonnet was tried for an afternoon — the coaching was $2.6 an hour on Opus and half the
+     * lessons landed late — and answered faster and cheaper, but taught AROUND in a one-block pit. The
+     * coach is the one call where the judgement is the product; the planner stays on Sonnet, and the
+     * longer minimum interval between questions is what keeps the bill down.
      */
-    private static final String MODEL = "claude-sonnet-5";
+    private static final String MODEL = "claude-opus-5";
     private static final String API_URL = "https://api.anthropic.com/v1/messages";
     /**
      * Room for the answer and for the thinking before it. The model thinks by default, and the thinking

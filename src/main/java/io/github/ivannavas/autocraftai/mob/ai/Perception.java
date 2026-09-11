@@ -1,7 +1,9 @@
 package io.github.ivannavas.autocraftai.mob.ai;
 
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.function.Predicate;
@@ -66,6 +68,20 @@ public final class Perception {
      * "arrived" by being in the right biome every second, and the body circled the tree.
      */
     private static final int BLOCK_SCAN_VERTICAL = 8;
+
+    /**
+     * Blocks the eyes leave out for a while, and until when. A block seen is not a block that can be
+     * reached: the scan looks eight down through solid ground, and an ore eight below and four to the
+     * side was "in view" for a body standing in a pit that could not get a step nearer it. The brain
+     * puts a block here after a few moves at it that never landed a blow, and the eyes report the next
+     * thing instead — the ore is back when the time runs out, by which point the body has usually moved.
+     */
+    private final Map<BlockPos, Long> shunnedBlocks = new HashMap<>();
+
+    /** Leaves a block out of the scans for a while. */
+    public void shun(BlockPos pos, long millis) {
+        shunnedBlocks.put(pos.immutable(), System.currentTimeMillis() + millis);
+    }
 
     public Sighting look(Minecraft client, LocalPlayer player, Optional<Predicate<BlockState>> wanted) {
         return look(client, player, wanted, item -> true, item -> true);
@@ -200,6 +216,13 @@ public final class Perception {
             // it as one to be gathered is how it came to dig its own pillar out from under itself.
             if (Placed.get().isOurs(level, pos)) {
                 continue;
+            }
+            Long shunnedUntil = shunnedBlocks.get(pos);
+            if (shunnedUntil != null) {
+                if (shunnedUntil > System.currentTimeMillis()) {
+                    continue;
+                }
+                shunnedBlocks.remove(pos);
             }
             double distance = Vec3.atCenterOf(pos).distanceToSqr(from);
             if (distance < bestDistance) {

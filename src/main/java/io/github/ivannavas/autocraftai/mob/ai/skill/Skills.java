@@ -225,14 +225,25 @@ public final class Skills {
             JsonNode root = JSON.readTree(new String(in.readAllBytes(), StandardCharsets.UTF_8));
             for (JsonNode entry : root.path("skills")) {
                 String name = entry.path("name").asText("").strip().toUpperCase(java.util.Locale.ROOT);
-                if (onlyMissing && skills.containsKey(name)) {
-                    // Still there, whether ours or a writer's own under the same name: leave it.
+                Skill stored = skills.get(name);
+                // A writer's own under the same name is left alone. A starter nobody has rewritten —
+                // its reason still says "starter:", which a coach's or a strategist's revision replaces
+                // with their own sentence — follows the shelf when the shelf changes: HOLE_UP lost its
+                // wait for day on every box this way, without a reset.
+                boolean shipped = stored != null && stored.reason().startsWith("starter:");
+                if (onlyMissing && stored != null && !shipped) {
                     continue;
                 }
                 try {
                     Skill skill = Skill.parse(entry, Set.of());
+                    if (onlyMissing && shipped && skill.describe().equals(stored.describe())) {
+                        continue;
+                    }
+                    if (shipped) {
+                        log.info("Starter {} updated from the shelf: {}", skill.name(), skill.describe());
+                    }
                     skills.put(skill.name(), skill);
-                    records.put(skill.name(), new Record());
+                    records.putIfAbsent(skill.name(), new Record());
                     added++;
                 } catch (IllegalArgumentException e) {
                     log.warn("Dropping a starter skill: {}", e.getMessage());

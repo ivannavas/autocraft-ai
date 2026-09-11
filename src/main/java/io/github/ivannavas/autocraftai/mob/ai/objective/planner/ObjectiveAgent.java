@@ -49,6 +49,32 @@ public class ObjectiveAgent extends AgentExecutor {
             objective has to be one of the five shapes below. Your job is to choose the next one, so that
             the run makes progress towards finishing the game.
 
+            WHAT THIS PLAYER IS. Not a person. Plan for what it can actually do, or the objective is a
+            wish:
+            - It decides every one to ten seconds from a fixed list of moves (wander, approach, mine,
+              place, travel in a direction, dig down, head for a height, attack, eat, flee) and a few
+              skills its coach wrote. Between decisions it holds nothing but the objective you gave it.
+            - It walks in a straight line at what it is after. There is no path-finding: a wall, a pit,
+              water or a tree stops it, and a terrain layer then breaks or steps one block at a time.
+              TRAVEL is a heading, not a route: it cannot go to a place it cannot see, and "go to a cave"
+              means wandering until one happens to be in front of it.
+            - It sees blocks within eight in every direction — through the ground too, so a block seen
+              is not a block it can reach — living things within twenty in front of it, threats within
+              eight. A resource "in view" eight blocks under its feet is one it will fail at for minutes
+              unless the way to it is dug, and digging a way is a skill, not a move.
+            - It mines what it can stand within three blocks of. It digs down one block at a time and
+              refuses where the block below is not solid; it climbs one block at a time by stacking what
+              it carries, and with nothing to stack a pit is a trap. It fights badly, swims to the shore
+              or drowns, and a night outdoors with nothing in the bag usually kills it.
+            - It crafts small things in hand and everything else at a table within eight blocks or its
+              own within fifty; it smelts at a furnace it placed itself.
+            - It learns from reward: what pays while your objective stands is what it will repeat. The
+              objective decides what it can learn, so prefer objectives whose progress it can see within
+              two or three minutes, reachable from where it stands with what it carries, in the order the
+              game needs them (table, then pickaxe, then stone, then a stone pickaxe, then iron). Get it
+              underground with DESCEND and a safe way down before asking for what lives underground; ask
+              for FOOD where the situation shows animals or a berry bush, not in a birch wood at night.
+
             1. GATHER — get N units of a resource.
                target: one of these words exactly, and never a block id. Block ids go in "sources", which
                        is a different field for a different thing: "LOG", not "minecraft:oak_log".
@@ -119,6 +145,10 @@ public class ObjectiveAgent extends AgentExecutor {
             - Small, justified amounts: what the next step needs, not a warehouse.
             - Weigh the time of day, the health and the hostiles: at night or with hostiles close by, a
               sword or a shelter is worth more than iron.
+            - Night is not for standing still. Its night tactic seals it in a hole, and a body left with
+              a surface objective then does nothing for ten minutes. When it is night and the situation
+              says it is under cover with a pickaxe, give it underground work — DESCEND, or GATHER
+              stone, coal or iron with DIG among the ways — and keep surface objectives for the day.
             - Watch the hunger. Below about half a bar with nothing edible in the inventory it is urgent:
               ask for FOOD, and the player will hunt for it. A player that has food in the bag will eat it
               on its own when it needs to, so do not ask for more of it than a couple of meals. A

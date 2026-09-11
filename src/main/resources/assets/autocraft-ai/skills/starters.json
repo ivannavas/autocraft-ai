@@ -4,9 +4,10 @@
       "name": "HOLE_UP",
       "layer": "TACTIC",
       "prior": 4,
-      "when": "night and candig and not sword",
-      "steps": [ {"dig": true}, {"dig": true}, {"select": "block"}, {"place": [0, 2, 0]}, {"wait": "day"} ],
-      "reason": "starter: dig two down, put the block that came out in hand, cap the hole, wait for day"
+      "when": "night and candig and not sword and cover != ROOF",
+      "until": "cover == ROOF",
+      "steps": [ {"dig": true}, {"dig": true}, {"select": "block"}, {"place": [0, 2, 0]} ],
+      "reason": "starter: dig two down, put the block that came out in hand, cap the hole; the night is then for what the plan wants underground"
     },
     {
       "name": "TOWER",
@@ -28,7 +29,7 @@
       "name": "DAYLIGHT",
       "layer": "TACTIC",
       "prior": 3,
-      "when": "cover != SKY and stuck and blocks > 0",
+      "when": "cover != SKY and stuck and blocks > 0 and day",
       "until": "cover == SKY",
       "repeat": true,
       "steps": [ {"break": [0, 2, 0]}, {"select": "block"}, {"place": "feet"} ],

@@ -40,6 +40,16 @@ public class MentorAgent extends AgentExecutor {
               under its feet to drop one block), AROUND (sidestep to find the end of the wall), BACK (turn
               round and walk back the way it came).
 
+            WHAT THIS PLAYER IS. It walks in a straight line at what it is after, with no path-finding;
+            the terrain layer gets it past one block at a time. It sees blocks eight away in every
+            direction, through the ground — an ore "in view" eight blocks under its feet is not one it
+            can reach — and mines what it can stand within three blocks of. It digs down one block at a
+            time, only where the block below is solid; it climbs by stacking one block at a time, and
+            with no blocks a pit is a trap unless it carves steps with BREAK_AHEAD at head height. In a
+            one-block pit AROUND and BACK move nothing. It cannot go to what it cannot see. Teach it
+            moves it can make from where it stands, not the moves a person would make. A night sealed in
+            a hole is safe and wasted unless it digs: with a pickaxe underground, DIG_DOWN and MINE are
+            the night's work, not waiting.
             Read the ground line first; it says what is actually in the way and whether the body could do
             anything about it. Typical blocks and their ways out:
               - the block it wants is above it (a log in the canopy, a ledge): PILLAR if it has blocks and

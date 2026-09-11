@@ -101,6 +101,8 @@ public final class MineSightingGoal implements MobGoal {
     /** What this attempt has to show for itself: ground covered on the way, blows landed once there. */
     private final Advance advance = new Advance();
     private boolean breaking;
+    /** Whether a blow ever landed on the block: the difference between slow and hopeless. */
+    private boolean struck;
     private boolean equipped;
     private boolean blocked;
     /** The block came apart under this goal's own swings, which is the one way it finishes. */
@@ -162,6 +164,11 @@ public final class MineSightingGoal implements MobGoal {
      */
     public boolean gaveUp() {
         return blocked;
+    }
+
+    /** Whether this attempt ever landed a blow on the block, however long it has been at it. */
+    public boolean struck() {
+        return struck;
     }
 
     /** The block this is after. */
@@ -328,6 +335,7 @@ public final class MineSightingGoal implements MobGoal {
         Minecraft.getInstance().level.addBreakingBlockEffect(hit.getBlockPos(), hit.getDirection());
         body.player().swing(InteractionHand.MAIN_HAND);
         breaking = true;
+        struck = true;
         chargeForABareHandedSwing(body);
         return true;
     }

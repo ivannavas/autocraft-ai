@@ -326,6 +326,14 @@ public final class QLearningBrain {
     private static final int DEATH_RESCUE_WINDOW = 400;
     /** Drops the body gave up walking to, and until when each is left out of its sight. */
     private final Map<Entity, Long> shunned = new HashMap<>();
+    /**
+     * How many moves have gone at each block without a blow landing. A block reached is struck within
+     * the first move; one that is not reached after a few is out of reach from anywhere the legs can get
+     * to, and it is left out of sight for a while rather than chosen again every other second — the run
+     * alternated MINE and TRAVEL sixty times a minute at an ore eight blocks under a pit.
+     */
+    private final Map<BlockPos, Integer> fruitlessMines = new HashMap<>();
+    private static final int FRUITLESS_MINES_BEFORE_SHUN = 3;
     /** Told what killed the body, once per death. No-op until something wants it. */
     private Consumer<String> onDeath = cause -> {
     };
@@ -1511,6 +1519,16 @@ public final class QLearningBrain {
         // Nor cut short while a tactic skill has the body: the goal underneath has not run, so it has
         // not failed, and a new choice every two seconds into a held body taught the table nothing but
         // noise — fifty-two choices in two minutes under a wait for health.
+        if (installedGoal instanceof MineSightingGoal mine && mine.target() != null) {
+            if (mine.struck()) {
+                fruitlessMines.remove(mine.target());
+            } else if (fruitlessMines.merge(mine.target(), 1, Integer::sum) >= FRUITLESS_MINES_BEFORE_SHUN) {
+                fruitlessMines.remove(mine.target());
+                perception.shun(mine.target(), SHUN_MILLIS);
+                log.info("Leaving {} out of sight for {} s: {} moves at it and not one blow landed",
+                        mine.target().toShortString(), SHUN_MILLIS / 1000, FRUITLESS_MINES_BEFORE_SHUN);
+            }
+        }
         if (cutShort() && !engine.isCommitted(installedGoal) && !sheltering()
                 && !(swimGoal != null && engine.isRunning(swimGoal))) {
             stalls++;
