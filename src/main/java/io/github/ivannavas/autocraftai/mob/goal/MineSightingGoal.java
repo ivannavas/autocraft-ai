@@ -1,15 +1,18 @@
 package io.github.ivannavas.autocraftai.mob.goal;
 
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
 import io.github.ivannavas.autocraftai.mob.MobBody;
 import io.github.ivannavas.autocraftai.mob.MobControl;
 import io.github.ivannavas.autocraftai.mob.MobGoal;
+import io.github.ivannavas.autocraftai.mob.ai.Obstruction;
 import io.github.ivannavas.autocraftai.mob.ai.Sighting;
 import io.github.ivannavas.autocraftai.mob.ai.WastedEffort;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Tool;
+import lombok.extern.slf4j.Slf4j;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.client.player.LocalPlayer;
@@ -68,6 +71,7 @@ import net.minecraft.world.phys.Vec3;
  * it has no reason to. The goal would never once be rewarded for the thing it exists to do. So once a
  * break is genuinely under way this goal declares itself uninterruptable and runs to the end.
  */
+@Slf4j
 public final class MineSightingGoal implements MobGoal {
 
     private static final Set<MobControl> CONTROLS = EnumSet.of(MobControl.MOVE, MobControl.LOOK);
@@ -117,7 +121,13 @@ public final class MineSightingGoal implements MobGoal {
 
     @Override
     public boolean canUse(MobBody body) {
-        return target != null && !body.level().getBlockState(target).isAir();
+        // The flags first: when the answer is already no, there is no reason to go and read the world.
+        // And the same flags as for continuing, which they were not: a goal that had given up could not
+        // continue but could always start, so the engine stopped it and started it again every tick —
+        // ten times in one logged second — until the brain read the flicker as a stall and cut the move.
+        // {@link #retry} is the one way back, and it is for a world that has changed.
+        return !blocked && !broke && ticksRunning < GIVE_UP_TICKS
+                && target != null && !body.level().getBlockState(target).isAir();
     }
 
     @Override
@@ -127,8 +137,7 @@ public final class MineSightingGoal implements MobGoal {
         if (breaking && body.level().getBlockState(target).isAir()) {
             broke = true;
         }
-        // The flags first: when the answer is already no, there is no reason to go and read the world.
-        return !blocked && !broke && ticksRunning < GIVE_UP_TICKS && canUse(body);
+        return canUse(body);
     }
 
     /**
@@ -200,6 +209,18 @@ public final class MineSightingGoal implements MobGoal {
 
     @Override
     public void start(MobBody body) {
+        if (ticksRunning == 0 && log.isDebugEnabled()) {
+            // Where the block is relative to the body, because "cut short after two seconds" said nothing
+            // about why: a stone four blocks under the turf reads as a resource in view, and a walk to it
+            // ends standing on the turf above it.
+            Vec3 eye = body.player().getEyePosition();
+            Vec3 centre = Vec3.atCenterOf(target);
+            log.debug("Mining {} at {}: {} blocks off, {} up from the feet",
+                    body.level().getBlockState(target).getBlock().getName().getString(),
+                    target.toShortString(),
+                    String.format("%.1f", Math.hypot(centre.x - eye.x, centre.z - eye.z)),
+                    target.getY() - body.player().getBlockY());
+        }
         // Only what the stop actually undid: the break was cancelled and the held item may have changed
         // hands. The counters are the attempt's, and the attempt did not start again just because the
         // body came back.
@@ -216,7 +237,13 @@ public final class MineSightingGoal implements MobGoal {
         if (!withinReach(body, centre)) {
             body.moveControl().moveTo(centre, SPEED);
             advance.walking(body);
-            occluder = null;
+            // Out of reach with the legs already as close as they get — the block is under the turf the
+            // body stands on, or in the roof over it — is not a walk that has not finished, it is ground
+            // in the way, and the terrain layer is told so the way the leaves round a log are: the first
+            // block on the line from the eye is what stands between them. Without this the walk ended
+            // standing on top of the ore, going nowhere, cut after two seconds, eight times on the same
+            // coal, and no table had a move that dug the two blocks down to it.
+            occluder = overOrUnder(body, centre) ? firstOnTheLine(body) : null;
             return;
         }
 
@@ -238,6 +265,21 @@ public final class MineSightingGoal implements MobGoal {
         double reach = Math.max(2.5, body.player().blockInteractionRange() - REACH_MARGIN);
         return body.player().getEyePosition().distanceToSqr(centre) <= reach * reach;
     }
+
+    /** Whether the block is about under or over the body: nowhere left to walk to get nearer it. */
+    private static boolean overOrUnder(MobBody body, Vec3 centre) {
+        Vec3 at = body.position();
+        return Math.hypot(centre.x - at.x, centre.z - at.z) <= OVER_UNDER_BLOCKS;
+    }
+
+    /** The nearest block on the line from the eye to the target, not counting the target, or null. */
+    private BlockPos firstOnTheLine(MobBody body) {
+        List<BlockPos> between = Obstruction.occluders(body.player(), target);
+        return between.isEmpty() ? null : between.get(0);
+    }
+
+    /** How far off, on the flat, still counts as standing over or under the block. */
+    private static final double OVER_UNDER_BLOCKS = 1.5;
 
     /**
      * Selects the tool once, on arrival rather than every tick. Switching slots mid-break is what
@@ -291,7 +333,8 @@ public final class MineSightingGoal implements MobGoal {
     }
 
     /**
-     * Books the tick against wasted effort when this swing will not drop anything.
+     * Books the tick against wasted effort when this swing will not drop anything, and to useful effort
+     * when it will: a blow landing on the block the plan is after, with the tool that gets it to drop.
      *
      * <p>The game's own test, not ours: a block that needs no tool comes back correct however empty the
      * hand is, so wood punched by hand costs nothing here and only stone, ore and their like do.
@@ -299,6 +342,8 @@ public final class MineSightingGoal implements MobGoal {
     private void chargeForABareHandedSwing(MobBody body) {
         if (!body.player().hasCorrectToolForDrops(body.level().getBlockState(target))) {
             WastedEffort.get().wastedSwing();
+        } else {
+            WastedEffort.get().usefulSwing();
         }
     }
 

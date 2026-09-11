@@ -58,6 +58,7 @@ public record StepContext(
         InventoryCensus obtained,
         int steps,
         int wastedTicks,
+        int usefulTicks,
         int stalledSteps,
         int foodBefore,
         int foodAfter,
@@ -137,5 +138,10 @@ public record StepContext(
     /** Seconds spent swinging at blocks the thing in hand was never going to get a drop out of. */
     public double wastedSeconds() {
         return wastedTicks / TICKS_PER_SECOND;
+    }
+
+    /** Seconds spent landing blows on the block the plan is after, with the tool that will drop it. */
+    public double usefulSeconds() {
+        return usefulTicks / TICKS_PER_SECOND;
     }
 }

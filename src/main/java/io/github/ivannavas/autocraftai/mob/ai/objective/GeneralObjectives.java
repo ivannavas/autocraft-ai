@@ -39,6 +39,17 @@ public final class GeneralObjectives {
      */
     private static final double WASTED_EFFORT_COST = 4.0;
     /**
+     * Per second of blows landing on the block the plan is after, with the tool that drops it.
+     *
+     * <p>Small on purpose — half a second of standing about — because the drop itself is the prize and
+     * this is not to be mistaken for it. It is there so that a move which got to the block and started
+     * on it is worth more than one that got nowhere near, which the tables could not tell apart: the
+     * block takes a second or two to come apart, the move was cut or rotated away before it did, and in
+     * the row for "stone in view, pickaxe in hand" every move sat below zero after a hundred visits.
+     * Nothing about a row like that says "mine"; the least bad move wins, then the next.
+     */
+    private static final double HITTING_WEIGHT = 0.5;
+    /**
      * Per second the move spent with its goal getting nowhere at all.
      *
      * <p>Impatience already charges for the passage of time, and deliberately charges very little: a
@@ -88,6 +99,7 @@ public final class GeneralObjectives {
             objective("standing about", context -> -STALL_COST * context.stalledSteps()),
             // Already a per-second quantity, since it is counted in ticks as they pass.
             objective("wasted effort", context -> -WASTED_EFFORT_COST * context.wastedSeconds()),
+            objective("hitting", context -> HITTING_WEIGHT * context.usefulSeconds()),
             objective("nourishment", context -> context.foodGained() * NOURISHMENT_WEIGHT),
             objective("breath", context -> context.airDelta() * BREATH_WEIGHT));
 

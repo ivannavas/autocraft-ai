@@ -24,6 +24,15 @@ public final class WastedEffort {
     private static final WastedEffort INSTANCE = new WastedEffort();
 
     private int ticks;
+    /**
+     * The other side of the ledger: ticks of a blow landing on the block the plan is after, with the tool
+     * that will get it to drop. Not a record of anything gained — the drop pays for itself when it comes —
+     * but a move that is a second away from it and a move that is nowhere near read the same to the tables
+     * without this: both stood still, both were charged for standing. A row in which every move ended
+     * short of the block had every value below zero, and a table with nothing above zero does not choose,
+     * it rotates.
+     */
+    private int useful;
 
     private WastedEffort() {
     }
@@ -37,6 +46,11 @@ public final class WastedEffort {
         ticks++;
     }
 
+    /** One tick of a blow landing on the wanted block with the right thing in hand. */
+    public void usefulSwing() {
+        useful++;
+    }
+
     /** How much has been wasted since this was last asked, and start counting again. */
     public int drain() {
         int spent = ticks;
@@ -44,7 +58,15 @@ public final class WastedEffort {
         return spent;
     }
 
+    /** How many blows have landed usefully since this was last asked, and start counting again. */
+    public int drainUseful() {
+        int landed = useful;
+        useful = 0;
+        return landed;
+    }
+
     public void clear() {
         ticks = 0;
+        useful = 0;
     }
 }

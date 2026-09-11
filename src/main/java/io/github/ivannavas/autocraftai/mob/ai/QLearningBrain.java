@@ -478,6 +478,7 @@ public final class QLearningBrain {
     private InventoryCensus obtained = InventoryCensus.empty();
     private InventoryCensus previousStepCensus;
     private int wastedTicks;
+    private int usefulTicks;
     private List<Resource> craftedThisStep = List.of();
     /**
      * Blocks put down and own blocks taken back up: over the move in flight, for scoring the decision, and
@@ -711,6 +712,7 @@ public final class QLearningBrain {
         // Taken here for the same reason as the gains: the goals count it as it happens, and reading it
         // anywhere but once a step would either drop it or charge for it twice.
         wastedTicks += WastedEffort.get().drain();
+        usefulTicks += WastedEffort.get().drainUseful();
         // Same once-a-step rule, same reason: a craft counted twice would be charged twice, and one never
         // drained would be charged to whatever decision happened to look next.
         craftedThisStep = concat(craftedThisStep, CraftLog.get().drainCrafted());
@@ -1218,11 +1220,37 @@ public final class QLearningBrain {
                 && stepsRun < commitment.steps() + COMMITTED_GRACE_STEPS) {
             return true;
         }
+        // The terrain layer has a fix in hand for this very move: the move stands until the fix has
+        // been tried. Deciding again underneath it was how a break through the dirt in front of the
+        // stone was thrown away at every second: the new choice wanted a different block, the terrain
+        // question changed with it, and the half-broken dirt was left where it was. The layer's own
+        // patience and the fix's own give-up bound this; there is no bound to add here.
+        if (terrainWorking()) {
+            return true;
+        }
         if (cutShort()) {
             return false;
         }
+        // And a moment to use what the terrain layer just did: the dirt is gone, the stone is in view,
+        // and the block the move was after is a second or two from dropping. A decision here, with a
+        // one-second commitment expired long ago, was a roll of the dice on a row that had never been
+        // paid — and the dice sent the body wandering off from the hole it had just had opened for it.
+        if (passageHandedBackAtStep >= 0
+                && stepsRun < passageHandedBackAtStep + PASSAGE_HANDBACK_GRACE_STEPS) {
+            return true;
+        }
         return stepsRun < commitment.steps();
     }
+
+    /** Whether the terrain layer has a move installed over the committed goal, chosen or still running. */
+    private boolean terrainWorking() {
+        return passageGoal != null;
+    }
+
+    /** The step at which the terrain layer last handed the body back, or -1 since the last decision. */
+    private int passageHandedBackAtStep = -1;
+    /** How many steps the committed goal gets to use what the terrain layer did before the next decision. */
+    private static final int PASSAGE_HANDBACK_GRACE_STEPS = 3;
 
     /**
      * Whether the move has spent long enough on nothing to be worth ending early.
@@ -1238,7 +1266,7 @@ public final class QLearningBrain {
     }
 
     private void decide(Minecraft client, LocalPlayer player) {
-        StepContext step = stepSince(since, player, Math.max(1, stepsRun), wastedTicks, stalledSteps,
+        StepContext step = stepSince(since, player, Math.max(1, stepsRun), wastedTicks, usefulTicks, stalledSteps,
                 craftedThisStep, placedSinceDecision, reclaimedSinceDecision);
 
         // Score before looking: reaching a rung changes what the body is after, and the sighting that
@@ -1418,6 +1446,8 @@ public final class QLearningBrain {
         lastState = pursuit.label() + ' ' + observation.key();
         since = Moment.of(player);
         wastedTicks = 0;
+        usefulTicks = 0;
+        passageHandedBackAtStep = -1;
         craftedThisStep = List.of();
         placedSinceDecision = Map.of();
         reclaimedSinceDecision = Map.of();
@@ -1685,7 +1715,7 @@ public final class QLearningBrain {
                 // Out. The last choice is settled against the second it bought, with no continuation:
                 // dry land is not a state this table has, and the question will not come round again
                 // until the next water does.
-                water.learnTerminal(score(stepSince(wet, player, 1, 0, 0, List.of(),
+                water.learnTerminal(score(stepSince(wet, player, 1, 0, 0, 0, List.of(),
                         placedThisStep, reclaimedThisStep)) + dwelling(player, 1));
                 water.forget();
                 wet = null;
@@ -1701,7 +1731,7 @@ public final class QLearningBrain {
             // Paid like the other layers, dwelling included: the general score pays distance covered,
             // and a body swimming circles in a pit pool was earning 1.9 a second for the shore it never
             // reached.
-            water.learn(key, score(stepSince(wet, player, 1, 0, 0, List.of(), placedThisStep,
+            water.learn(key, score(stepSince(wet, player, 1, 0, 0, 0, List.of(), placedThisStep,
                     reclaimedThisStep)) + dwelling(player, 1), 1, legal);
         }
         wet = Moment.of(player);
@@ -1805,6 +1835,11 @@ public final class QLearningBrain {
             if (installedGoal instanceof MineSightingGoal mine) {
                 mine.retry();
             }
+            // Another go means from a clean sheet: the seconds it stood while the fix was made were the
+            // fix's, and with them still on the count the move was cut the second it got the body back.
+            stalledSteps = 0;
+            stalledNow = false;
+            passageHandedBackAtStep = stepsRun;
         }
         Obstruction here = obstruction(player);
         boolean woken = false;
@@ -2005,7 +2040,7 @@ public final class QLearningBrain {
         // A passage move that made no way pays for the corner too: a body that jumps and breaks the
         // block above in the same spot for a quarter of an hour is otherwise settled a second at a time,
         // and each second looks like nothing much.
-        return score(stepSince(stuckSince, player, 1, 0, 0, List.of(), placedThisStep, reclaimedThisStep))
+        return score(stepSince(stuckSince, player, 1, 0, 0, 0, List.of(), placedThisStep, reclaimedThisStep))
                 + PASSAGE_PROGRESS_WEIGHT * progress
                 + (progress <= 0.0 ? dwelling(player, 1) : 0.0);
     }
@@ -2067,6 +2102,7 @@ public final class QLearningBrain {
         if (goal != null) {
             passageGoal = goal;
             engine.addGoal(PASSAGE_PRIORITY, goal);
+            log.debug("Passage {} on {}", passage.columns.get(column), here.key());
         }
     }
 
@@ -2241,7 +2277,7 @@ public final class QLearningBrain {
     }
 
     private double tacticReward(LocalPlayer player, Surroundings now) {
-        double reward = score(stepSince(tacticSince, player, 1, 0, 0, List.of(), placedThisStep,
+        double reward = score(stepSince(tacticSince, player, 1, 0, 0, 0, List.of(), placedThisStep,
                 reclaimedThisStep)) + exposure(1);
         if (tacticSeen == null) {
             return reward;
@@ -2404,8 +2440,8 @@ public final class QLearningBrain {
      *
      * @param from where to measure from, or null when there is nothing earlier than now
      */
-    private StepContext stepSince(Moment from, LocalPlayer player, int steps, int wasted, int stalled,
-                                  List<Resource> crafted, Map<Resource, Integer> placed,
+    private StepContext stepSince(Moment from, LocalPlayer player, int steps, int wasted, int useful,
+                                  int stalled, List<Resource> crafted, Map<Resource, Integer> placed,
                                   Map<Resource, Integer> reclaimed) {
         Moment now = Moment.of(player);
         Moment then = from == null ? now : from;
@@ -2420,6 +2456,7 @@ public final class QLearningBrain {
                 obtained,
                 steps,
                 wasted,
+                useful,
                 stalled,
                 then.food(),
                 now.food(),
@@ -3237,6 +3274,8 @@ public final class QLearningBrain {
         // A tally of the moment, not a record of the run: an episode that ends takes it with it rather
         // than charging the next one for swings it never made.
         wastedTicks = 0;
+        usefulTicks = 0;
+        passageHandedBackAtStep = -1;
         WastedEffort.get().clear();
         craftedThisStep = List.of();
         CraftLog.get().drainCrafted();

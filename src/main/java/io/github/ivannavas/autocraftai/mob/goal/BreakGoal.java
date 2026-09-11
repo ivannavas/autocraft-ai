@@ -9,6 +9,7 @@ import io.github.ivannavas.autocraftai.mob.MobBody;
 import io.github.ivannavas.autocraftai.mob.MobControl;
 import io.github.ivannavas.autocraftai.mob.MobGoal;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Tool;
+import lombok.extern.slf4j.Slf4j;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.client.player.LocalPlayer;
@@ -38,6 +39,7 @@ import net.minecraft.world.phys.Vec3;
  * nothing and is still a passage; whether it was worth the seconds is the passage table's lesson to
  * learn, and it learns it from the seconds.
  */
+@Slf4j
 public final class BreakGoal implements MobGoal {
 
     private static final Set<MobControl> CONTROLS = EnumSet.of(MobControl.MOVE, MobControl.LOOK);
@@ -92,6 +94,19 @@ public final class BreakGoal implements MobGoal {
      */
     public boolean breaking() {
         return breaking && !blocked;
+    }
+
+    @Override
+    public void start(MobBody body) {
+        if (ticksRunning == 0 && log.isDebugEnabled()) {
+            StringBuilder what = new StringBuilder();
+            for (BlockPos target : targets) {
+                what.append(what.isEmpty() ? "" : ", ")
+                        .append(body.level().getBlockState(target).getBlock().getName().getString())
+                        .append(" at ").append(target.toShortString());
+            }
+            log.debug("Breaking {}", what);
+        }
     }
 
     @Override
