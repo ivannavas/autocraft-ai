@@ -75,7 +75,15 @@ public enum Passage {
         }
     },
 
-    /** Put a block under the feet and stand on it: one block of height, with room above to do it. */
+    /**
+     * Put a block under the feet and stand on it: one block of height, with room above to do it.
+     *
+     * <p>A way up, or a way over a wall. Not a way across a drop or across nothing: on the flat with a
+     * drop ahead every block laid makes the drop a block deeper and the ground a block further, and
+     * from the top of a pillar every direction reads as a drop — so a table that had been taught PILLAR
+     * once on that row laid forty-one blocks in four minutes and stood in the sky over a forest with
+     * no move left that made way. The precondition is what the move can do, as with the others.
+     */
     PILLAR {
         @Override
         public MobGoal create(Obstruction here, Reserve reserve) {
@@ -84,8 +92,10 @@ public enum Passage {
 
         @Override
         public boolean isApplicable(Obstruction here) {
+            boolean overSomething = here.wanted() != Obstruction.Wanted.FLAT
+                    || here.ahead() == Obstruction.Ahead.WALL || here.ahead() == Obstruction.Ahead.STEP;
             return here.hasBlocks() && here.above() == Obstruction.Above.OPEN && here.canStack()
-                    && here.wanted() != Obstruction.Wanted.DOWN;
+                    && here.wanted() != Obstruction.Wanted.DOWN && overSomething;
         }
     },
 

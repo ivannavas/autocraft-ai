@@ -5,6 +5,7 @@ import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 import io.github.ivannavas.autocraftai.mob.ai.objective.Resource;
 import net.minecraft.client.player.LocalPlayer;
@@ -13,6 +14,7 @@ import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -53,7 +55,7 @@ public final class Placed {
     private static final double NEAR = 6.0;
 
     /** One block the body put down: what it is, and what resource it was. */
-    private record Own(Block kind, Resource resource) {
+    private record Own(Block kind, Resource resource, long at) {
     }
 
     private record Pending(BlockPos pos, Own own) {
@@ -95,7 +97,7 @@ public final class Placed {
                 && resource != Resource.CRAFTING_TABLE && resource != Resource.FURNACE) {
             return;
         }
-        pending.add(new Pending(pos.immutable(), new Own(item.getBlock(), resource)));
+        pending.add(new Pending(pos.immutable(), new Own(item.getBlock(), resource, 0L)));
     }
 
     /**
@@ -124,6 +126,29 @@ public final class Placed {
         return best;
     }
 
+    /**
+     * How many of the body's own blocks of this kind stand in a box — {@code radius} out on the flat,
+     * from {@code yFrom} to {@code yTo} — and were put down since a moment. What lets a build objective
+     * pay for the blocks that went into the walls and not for the ones that went under the feet.
+     */
+    public int ownWithin(Level level, BlockPos origin, int radius, int yFrom, int yTo,
+                         Predicate<BlockState> block, long since) {
+        int found = 0;
+        for (Map.Entry<BlockPos, Own> entry : ours.entrySet()) {
+            Own own = entry.getValue();
+            BlockPos pos = entry.getKey();
+            if (own.at() < since
+                    || pos.getY() < yFrom || pos.getY() > yTo
+                    || Math.abs(pos.getX() - origin.getX()) > radius
+                    || Math.abs(pos.getZ() - origin.getZ()) > radius
+                    || !level.isLoaded(pos) || !block.test(level.getBlockState(pos))) {
+                continue;
+            }
+            found++;
+        }
+        return found;
+    }
+
     /** Whether this is one of the body's own blocks, still standing where it was put. */
     public boolean isOurs(Level level, BlockPos pos) {
         Own own = ours.get(pos);
@@ -136,9 +161,10 @@ public final class Placed {
      */
     public void sweep(LocalPlayer player) {
         Level level = player.level();
+        long now = System.currentTimeMillis();
         for (Pending asked : pending) {
             if (level.isLoaded(asked.pos()) && level.getBlockState(asked.pos()).is(asked.own().kind())) {
-                ours.put(asked.pos(), asked.own());
+                ours.put(asked.pos(), new Own(asked.own().kind(), asked.own().resource(), now));
                 if (asked.own().resource() != null) {
                     placed.merge(asked.own().resource(), 1, Integer::sum);
                 }

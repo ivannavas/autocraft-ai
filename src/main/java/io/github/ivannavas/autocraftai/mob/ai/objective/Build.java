@@ -8,6 +8,7 @@ import java.util.Optional;
 import java.util.function.Predicate;
 
 import net.minecraft.client.player.LocalPlayer;
+import io.github.ivannavas.autocraftai.mob.ai.Placed;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
@@ -74,8 +75,25 @@ public record Build(Structure structure, String reason) implements Phase {
     public double score(StepContext context) {
         Resource material = structure.material();
         int spent = Math.max(0, context.before().count(material) - context.after().count(material));
-        return spent * material.worth();
+        if (spent == 0 || context.player() == null) {
+            return 0.0;
+        }
+        // Paid per block that went into the structure, not per block that left the bag. Spent was the
+        // whole measure once, and a body on BUILD_SHELTER learned that the cheapest way to spend stone
+        // was under its own feet: twenty-three placements in four minutes, a pillar sixteen high over
+        // a forest, and not a wall to show for it. What joined the walls since the step began — the
+        // registry knows when each block of its own went down — is what counts.
+        long since = System.currentTimeMillis() - Math.max(1, context.steps()) * 1000L - JOINED_MARGIN_MILLIS;
+        BlockPos feet = context.player().blockPosition();
+        int joined = Placed.get().ownWithin(context.player().level(), feet, structure.radius(),
+                feet.getY(), feet.getY() + WALL_HEIGHT, structure.block(), since);
+        return Math.min(spent, joined) * material.worth();
     }
+
+    /** How far above the feet a block still counts as the structure's: walls and a roof, not a tower. */
+    private static final int WALL_HEIGHT = 2;
+    /** Slack on the step's clock, so a block placed on the step's first tick is not missed. */
+    private static final long JOINED_MARGIN_MILLIS = 1_500L;
 
     /** What it is made of is what the eyes should be looking for while gathering it. */
     @Override
@@ -92,9 +110,12 @@ public record Build(Structure structure, String reason) implements Phase {
         BlockPos origin = player.blockPosition();
         int radius = structure.radius();
         int found = 0;
+        // Around and over the body, never under it: a shelter is walls at the height of the body and
+        // something over its head. Counted a radius down as well, the pillar it stood on was a quarter
+        // of a shelter.
         for (BlockPos pos : BlockPos.betweenClosed(
-                origin.offset(-radius, -radius, -radius),
-                origin.offset(radius, radius, radius))) {
+                origin.offset(-radius, 0, -radius),
+                origin.offset(radius, WALL_HEIGHT, radius))) {
             if (level.isLoaded(pos) && structure.block().test(level.getBlockState(pos))) {
                 found++;
                 if (found >= structure.count()) {
