@@ -141,6 +141,9 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
               PLANKS, COBBLESTONE, RAW_IRON, COAL...) or a Minecraft item or block id (ender_pearl,
               water_bucket, furnace, crafting_table, chest, water, lava);
               and the block tests solid(f,u,r), air(f,u,r), breakable(f,u,r), water(f,u,r), lava(f,u,r).
+              Require in the when whatever the steps need — pickaxe, has(axe) > 0, blocks > 0, near(x)
+              — so the skill is never tried where it cannot run: a body fresh from a death carries
+              nothing, and "nothing called block in the bag" was the commonest failure of all.
             Positions are [forward, up, right] from the feet along the way the body faces, each within 4:
               [1,0,0] is the block ahead at foot height, [1,1,0] the one in front of the face, [0,2,0]
               the one over the head.

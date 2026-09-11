@@ -152,6 +152,15 @@ public class MentorAgent extends AgentExecutor {
             body has died in them starving. Where the food is a block like that, no built-in move takes
             it: write the skill (walk up to the block, use it, eat).
 
+            A DEATH question comes once, right after a respawn: the body died, the bag went with it, and
+            it stands at the spawn with nothing. The question says how it died and where, and the
+            situation says how often that has happened. Answer it as a coach after a loss: teach the
+            tactics table for the state it died in — the moves that would have kept it alive, against
+            the one it made — and for the state it stands in now, and mind that a body with nothing
+            cannot run a tactic that asks for blocks, a sword or a pickaxe: write one that needs
+            nothing, or loosen one, or it will die the same way again tonight. If what it was doing
+            should change altogether, say "replan".
+
             A STALL is the other kind of trouble, and it is marked as such. The body is not pinned: it
             walks, it swings, it looks busy, and the objective has got no nearer for the number of minutes
             given. Read the "still short for it" line and the last moves first, because a stall is nearly

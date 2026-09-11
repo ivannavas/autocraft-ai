@@ -58,7 +58,12 @@ public final class ClaudeMentor implements Mentor {
      * all — the whole budget gone on thinking — which came through as an empty reply, logged as "nothing
      * to add". A lesson with a skill in it is under 600 tokens of text; the rest is headroom.
      */
-    private static final int MAX_TOKENS = 6_000;
+    /**
+     * Room for the thinking and the answer both. Twelve thousand, like the planner's: at six the coach
+     * ran out mid-answer once an hour — "mentor call: 6000 out" and nothing parsed — on a question it
+     * had thought about for five thousand tokens and answered with a skill and a forget list.
+     */
+    private static final int MAX_TOKENS = 12_000;
     /**
      * Long enough for a model that thinks. Thirty seconds was the client's default and it was under
      * what these calls take: the run logged a dozen "Anthropic chat request failed" an hour, every one
@@ -227,15 +232,16 @@ public final class ClaudeMentor implements Mentor {
         String prompt = asked.describe() + history(asked.pursuit(), now) + (before == null ? ""
                 : "\nYou already taught this " + (before.times() == 0 ? "a while ago" : "once") + " ("
                         + before.summary() + ") and it is still "
-                        + (asked.starving() ? "starving" : asked.stalled() ? "getting nowhere" : "stuck")
+                        + (asked.died() ? "dying the same way" : asked.starving() ? "starving"
+                                : asked.stalled() ? "getting nowhere" : "stuck")
                         + ". Teach a different way out"
-                        + (asked.stalled() || asked.starving() ? ", or replan." : "."));
+                        + (asked.stalled() || asked.starving() || asked.died() ? ", or replan." : "."));
         if (!lastSkillProblem.isEmpty() && asked.skillProblem().isEmpty()) {
             prompt += "\nThe last skill you wrote was refused: " + lastSkillProblem
                     + ". Fix it if you write one again.";
         }
-        PlannerLog.get().mentorAsked((asked.starving() ? "starving: " : asked.stalled() ? "stall: " : "unblock: ")
-                + asked.summary(), prompt);
+        PlannerLog.get().mentorAsked((asked.died() ? "death: " : asked.starving() ? "starving: "
+                : asked.stalled() ? "stall: " : "unblock: ") + asked.summary(), prompt);
         final String question = prompt;
         thread.execute(() -> {
             try {
@@ -295,7 +301,7 @@ public final class ClaudeMentor implements Mentor {
                     skill, skillProblem,
                     // Only a stall may be given up on. A pinned body is a block, and a block is
                     // answered with a way out, not with a different errand to be blocked on.
-                    asked.stalled() || asked.starving() ? replanIn(reply) : "",
+                    asked.stalled() || asked.starving() || asked.died() ? replanIn(reply) : "",
                     asked.situation().objective(), askedAt, forgetsIn(reply));
             if (rescue.isEmpty()) {
                 log.info("The mentor had nothing to add for {}: {}", asked.summary(), shorten(reply));

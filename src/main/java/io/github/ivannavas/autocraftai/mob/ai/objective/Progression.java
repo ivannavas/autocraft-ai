@@ -409,6 +409,11 @@ public final class Progression {
      *
      * @param cause the server's own sentence, or empty when none was caught
      */
+    /** How many times the body has died this run. */
+    public int deaths() {
+        return deaths;
+    }
+
     public void died(String cause) {
         deaths++;
         lastDeath = cause == null ? "" : cause.strip();

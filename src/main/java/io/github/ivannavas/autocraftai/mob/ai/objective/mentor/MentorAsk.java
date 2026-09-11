@@ -59,7 +59,7 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
                         List<String> passageMoves, int y, String driver, String craftKey,
                         List<String> craftMoves, String tacticKey, String tacticWords,
                         List<String> tacticMoves, String waterKey, List<String> waterMoves, String dwell,
-                        boolean holding, String skills, String skillProblem) {
+                        boolean holding, String skills, String skillProblem, String death) {
 
     /** Why the mentor is being asked. */
     public enum Reason {
@@ -73,7 +73,14 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
          * minutes, while the body placed blocks in a taiga and died in a berry bush twice. Hunger used to
          * be the planner's alone; what to do about it where the body stands is a lesson.
          */
-        STARVING
+        STARVING,
+        /**
+         * The body has just died and stands respawned with nothing. Ten deaths in an hour, every one at
+         * night, and the only agent told was the strategist, which answered with objectives; the
+         * tactics table had learned that doing nothing at night is worth minus twenty and had no move
+         * a naked body could make. The moment after a death is when there is something to teach.
+         */
+        DEATH
     }
 
     public MentorAsk {
@@ -89,6 +96,7 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
         dwell = dwell == null ? "" : dwell;
         skills = skills == null ? "" : skills;
         skillProblem = skillProblem == null ? "" : skillProblem;
+        death = death == null ? "" : death.strip();
     }
 
     public boolean stalled() {
@@ -99,6 +107,10 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
         return reason == Reason.STARVING;
     }
 
+    public boolean died() {
+        return reason == Reason.DEATH;
+    }
+
     /**
      * What one asking is about, for not asking it twice.
      *
@@ -107,6 +119,10 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
      * question every minute for as long as it lasted.
      */
     public String key() {
+        if (died()) {
+            // By cause: the same death again is the same question, and the coach is told it is.
+            return "death|" + situation.lastDeath();
+        }
         if (starving()) {
             return pursuit + "|starving|" + situation.objective();
         }
@@ -117,6 +133,9 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
 
     /** One line for the log, so a reader can tell one block apart from the next. */
     public String summary() {
+        if (died()) {
+            return pursuit + " died: " + situation.lastDeath();
+        }
         if (starving()) {
             return pursuit + " starving (" + situation.food() + "/" + situation.maxFood() + ") on "
                     + situation.objective() + " at " + stuckState;
@@ -131,7 +150,20 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
     /** The prompt: the situation as the planner states it, then the block, the ground and the moves. */
     public String describe() {
         StringBuilder text = new StringBuilder(situation.describe());
-        if (starving()) {
+        if (died()) {
+            text.append("\n\nDEATH. The body has just died — \"").append(situation.lastDeath())
+                    .append("\" — ").append(death)
+                    .append(". It has respawned and stands here now, with nothing in the bag, in this state:\n  ")
+                    .append(stuckState)
+                    .append("\nThis is the moment to teach two things: what it should have done where it")
+                    .append(" died, and what it should do now that it carries nothing. The tactics are the")
+                    .append(" layer for both. Look at which tactics on the list a body with nothing could")
+                    .append(" actually run — most ask for blocks, a sword or a pickaxe, so at night after a")
+                    .append(" death the only legal answer has been to carry on, and carrying on is what")
+                    .append(" killed it — and write or revise one whose when fits a body with nothing:")
+                    .append(" fleeing towards light, digging into dirt and waiting, climbing. The situation")
+                    .append(" above says what has killed it before and how often.");
+        } else if (starving()) {
             text.append("\n\nSTARVING. Working on ").append(pursuit).append(" at Y ").append(y)
                     .append(", hunger ").append(situation.food()).append('/').append(situation.maxFood())
                     .append(" and nothing edible in the bag");
@@ -195,7 +227,10 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
             text.append("\nThe last skill you wrote was refused: ").append(skillProblem)
                     .append(". Fix it if you write one again.");
         }
-        if (starving()) {
+        if (died()) {
+            text.append("\nTeach the state it died in and the state it stands in now; if what it was")
+                    .append(" doing should change altogether, say so with \"replan\".");
+        } else if (starving()) {
             text.append("\nTeach it the way to food from here — or, if food cannot be reached from here")
                     .append(" with what it has, say so with \"replan\" and the strategist will be asked")
                     .append(" for the way.");

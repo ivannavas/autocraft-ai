@@ -308,6 +308,15 @@ public final class QLearningBrain {
     /** When the coach was last asked about hunger; asked again only after a while, whatever it says. */
     private long starvingAskedAt;
     private static final long STARVING_ASK_AGAIN_MILLIS = 300_000L;
+    /** What the last death was, in words, until the coach has been asked about it or it grows stale. */
+    private String deathNote;
+    private long deathNotedAt;
+    /** How long after a respawn a death is still worth asking the coach about. */
+    private static final long DEATH_ASK_FOR_MILLIS = 180_000L;
+    /** How many deaths the run had when the last death lesson landed: it worked if there were no more. */
+    private int rescueDeaths;
+    /** Decisions a death lesson has to stand, with no death, to be called worked. Ten minutes or so. */
+    private static final int DEATH_RESCUE_WINDOW = 400;
     /** Drops the body gave up walking to, and until when each is left out of its sight. */
     private final Map<Entity, Long> shunned = new HashMap<>();
     /** Told what killed the body, once per death. No-op until something wants it. */
@@ -1008,16 +1017,20 @@ public final class QLearningBrain {
         Optional<Vec3> askedFrom = territory.positionAgo((int) Math.min(waited, Integer.MAX_VALUE));
         boolean movedOn = body != null && askedFrom.isPresent()
                 && body.position().distanceTo(askedFrom.get()) >= RESCUE_MOVED;
-        boolean stillBlocked = rescue.starving()
+        boolean stillBlocked = rescue.died()
+                // A death lesson is never late: it is about a state already gone, taught for next time.
+                ? true
+                : rescue.starving()
                 ? body != null && body.getFoodData().getFoodLevel()
                         <= io.github.ivannavas.autocraftai.mob.ai.objective.planner.Situation.STARVING_AT
                 : rescue.stalled()
                 ? progression.stepsWithoutProgress() >= STALLED_BEFORE_MENTOR
                 : territory.pinned() && !movedOn;
-        // A starving lesson is about the body, not the objective: it stands whatever the planner has
-        // swapped in meanwhile, as long as the body is still hungry.
-        if ((!sameObjective && !rescue.starving()) || !stillBlocked) {
-            String why = !sameObjective && !rescue.starving()
+        // A starving or death lesson is about the body, not the objective: it stands whatever the
+        // planner has swapped in meanwhile.
+        boolean aboutTheBody = rescue.starving() || rescue.died();
+        if ((!sameObjective && !aboutTheBody) || !stillBlocked) {
+            String why = !sameObjective && !aboutTheBody
                     ? "the objective had changed to " + (objectiveNow.isEmpty() ? "nothing" : objectiveNow)
                     : rescue.starving() ? "it had found food"
                     : rescue.stalled() ? "the objective had got nearer" : "the body had already moved on";
@@ -1048,6 +1061,7 @@ public final class QLearningBrain {
         LocalPlayer taughtAt = Minecraft.getInstance().player;
         rescuePosition = taughtAt == null ? null : taughtAt.position();
         rescueFood = taughtAt == null ? 0 : taughtAt.getFoodData().getFoodLevel();
+        rescueDeaths = progression.deaths();
         log.info("Applied lessons ({}) to {} at {} / {}", rescue.summary(), rescue.pursuit(),
                 rescue.state(), rescue.terrain());
         Chronicle.get().lessonTaught(rescue.pursuit(), rescue.summary());
@@ -1072,11 +1086,14 @@ public final class QLearningBrain {
         LocalPlayer judged = Minecraft.getInstance().player;
         boolean away = rescuePosition == null || judged == null
                 || judged.position().distanceTo(rescuePosition) >= RESCUE_MOVED;
-        boolean worked = hungry ? judged != null && judged.getFoodData().getFoodLevel() > rescueFood
+        boolean lost = lastRescue.died();
+        boolean diedAgain = lost && progression.deaths() > rescueDeaths;
+        boolean worked = lost ? since >= DEATH_RESCUE_WINDOW && !diedAgain
+                : hungry ? judged != null && judged.getFoodData().getFoodLevel() > rescueFood
                 : stall ? progression.progressCount() > rescueProgress
                 : since >= RESCUE_JUDGED_AFTER && !territory.pinned() && away;
-        long window = stall || hungry ? STALL_RESCUE_WINDOW : RESCUE_WINDOW;
-        String what = hungry ? "it ate" : stall ? "the objective got nearer" : "free";
+        long window = lost ? DEATH_RESCUE_WINDOW : stall || hungry ? STALL_RESCUE_WINDOW : RESCUE_WINDOW;
+        String what = lost ? "still alive" : hungry ? "it ate" : stall ? "the objective got nearer" : "free";
         if (worked) {
             log.info("Mentor lesson worked: {} after {} decisions ({})", what, since, lastRescue.summary());
             PlannerLog.get().mentorNoted("worked: " + what + " after " + since + " decisions ("
@@ -1084,8 +1101,9 @@ public final class QLearningBrain {
             mentor.judged(lastRescue, "worked: " + what + " after " + since + " decisions");
             Chronicle.get().lessonJudged("worked: " + what + " after " + since + " decisions");
             lastRescue = null;
-        } else if (since >= window) {
-            String still = hungry ? "still starving" : stall ? "no nearer" : "still pinned";
+        } else if (since >= window || diedAgain) {
+            String still = diedAgain ? "died again" : hungry ? "still starving" : stall ? "no nearer"
+                    : "still pinned";
             log.info("Mentor lesson did not work: {} after {} decisions ({})", still, since,
                     lastRescue.summary());
             PlannerLog.get().mentorNoted("did not work: " + still + " after " + since + " decisions ("
@@ -1376,12 +1394,20 @@ public final class QLearningBrain {
                 <= io.github.ivannavas.autocraftai.mob.ai.objective.planner.Situation.STARVING_AT
                 && held.count(Resource.FOOD) <= 0
                 && System.currentTimeMillis() - starvingAskedAt > STARVING_ASK_AGAIN_MILLIS;
+        // And a body just back from a death, before anything else: the one question with the answer
+        // still fresh. Asked for a few minutes after the respawn, then let go.
+        if (deathNote != null && System.currentTimeMillis() - deathNotedAt > DEATH_ASK_FOR_MILLIS) {
+            deathNote = null;
+        }
+        boolean died = deathNote != null;
         // Nor while a tactic has the body: a body sealed in a hole for the night is pinned on purpose,
         // and a coach asked about it would teach it the way out of its own shelter.
-        if ((pinned || stalled || starving) && progression.current().isPresent()
+        if ((pinned || stalled || starving || died) && (progression.current().isPresent() || died)
                 && !objectiveCraftable(legalCrafts) && !crafting() && !sheltering()) {
-            MentorAsk.Reason reason = starving ? MentorAsk.Reason.STARVING
+            MentorAsk.Reason reason = died ? MentorAsk.Reason.DEATH
+                    : starving ? MentorAsk.Reason.STARVING
                     : pinned ? MentorAsk.Reason.BLOCK : MentorAsk.Reason.STALL;
+            String death = died ? deathNote : "";
             String stuck = observation.key();
             String folder = pursuit.name();
             // The moves the body may actually make here, not every column: a lesson about a move the
@@ -1392,7 +1418,7 @@ public final class QLearningBrain {
             boolean stuckUnderCover = stalled;
             // Not held still for hunger: a starving body standing about for the answer is a starving
             // body forty-five seconds nearer dying, and the lesson is about where the food is, not here.
-            boolean holdable = !starving && mayHoldStill(player);
+            boolean holdable = !starving && !died && mayHoldStill(player);
             boolean asked = mentor.consider(() -> {
                 Obstruction ground = ground(player);
                 Surroundings around = Surroundings.around(player, progression.reserved(), stuckUnderCover);
@@ -1408,8 +1434,11 @@ public final class QLearningBrain {
                         moves, ground.key(), ground.words(), passageMoves, y, driver(), craftKey,
                         craftMoves, around.key(), around.words(), tacticMoves,
                         waterKey, waterMoves, dwellWords(player), mayHold,
-                        Skills.get().catalogue(), "");
+                        Skills.get().catalogue(), "", death);
             });
+            if (asked && died) {
+                deathNote = null;
+            }
             if (asked && starving) {
                 starvingAskedAt = System.currentTimeMillis();
             }
@@ -3226,6 +3255,13 @@ public final class QLearningBrain {
                 cause = player.getCombatTracker().getDeathMessage().getString();
             }
             log.info("Died: {}", cause);
+            // Taken before the plan is restarted below: the objective it died on and the surroundings
+            // it died in are what the coach is asked about once the body is back on its feet.
+            deathNote = (progression.current().map(objective -> "while on " + objective).orElse("with no objective"))
+                    + " at Y " + player.getBlockY()
+                    + (lastSurroundings == null ? "" : "; the surroundings there: " + lastSurroundings.words()
+                            + " (row " + lastSurroundings.key() + ")");
+            deathNotedAt = System.currentTimeMillis();
             progression.died(cause);
             onDeath.accept(cause);
         }
