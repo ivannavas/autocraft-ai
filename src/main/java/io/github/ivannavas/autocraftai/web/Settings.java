@@ -110,6 +110,33 @@ public final class Settings {
         return "xshm_input_v2";
     }
 
+    /**
+     * The OBS input kind that captures what the machine plays: PulseAudio's output capture on Linux
+     * (PipeWire answers to it), WASAPI's on Windows, CoreAudio's on macOS.
+     */
+    public String audioKind() {
+        return value("obs.audio.kind", defaultAudioKind());
+    }
+
+    private static String defaultAudioKind() {
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        if (os.contains("win")) {
+            return "wasapi_output_capture";
+        }
+        if (os.contains("mac") || os.contains("darwin")) {
+            return "coreaudio_output_capture";
+        }
+        return "pulse_output_capture";
+    }
+
+    /**
+     * Which output the sound is taken from: {@code default} is the default sink's monitor, which on the
+     * streaming box is the null sink the game plays into. Empty leaves the scene silent on purpose.
+     */
+    public String audioDevice() {
+        return value("obs.audio.device", "default");
+    }
+
     /** Which display the capture takes, when the capture is a display. */
     public int captureMonitor() {
         return number("obs.capture.monitor", 0);
@@ -292,6 +319,8 @@ public final class Settings {
                 + ",\"obsPasswordSet\":" + !obsPassword().isEmpty()
                 + ",\"scene\":" + quote(scene())
                 + ",\"captureKind\":" + quote(captureKind())
+                + ",\"audioKind\":" + quote(audioKind())
+                + ",\"audioDevice\":" + quote(audioDevice())
                 + ",\"overlayUrl\":" + quote(overlayUrl())
                 + ",\"overlayEnabled\":" + overlayEnabled()
                 + ",\"streamServerSet\":" + !streamServer().isEmpty()

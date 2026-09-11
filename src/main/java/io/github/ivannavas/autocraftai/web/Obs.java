@@ -75,6 +75,7 @@ public final class Obs implements AutoCloseable {
     /** The names the mod claims inside its scene. Anything else in the collection is left alone. */
     private static final String GAME_SOURCE = "AutoCraft AI - game";
     private static final String OVERLAY_SOURCE = "AutoCraft AI - qtable";
+    private static final String SOUND_SOURCE = "AutoCraft AI - sound";
 
     private final Settings settings;
     private final HttpClient http = HttpClient.newHttpClient();
@@ -151,7 +152,7 @@ public final class Obs implements AutoCloseable {
         // Removing an input takes its scene item with it, in this scene and in any other. Both of these
         // are named for the mod, so nothing that was not created here can be caught by it.
         List<String> inputs = inputs();
-        for (String owned : List.of(GAME_SOURCE, OVERLAY_SOURCE)) {
+        for (String owned : List.of(GAME_SOURCE, OVERLAY_SOURCE, SOUND_SOURCE)) {
             if (inputs.contains(owned)) {
                 discard(owned);
             }
@@ -176,6 +177,7 @@ public final class Obs implements AutoCloseable {
         } else {
             log.info("Scene built without the overlay: overlay.enabled is false");
         }
+        sound(scene);
 
         call("SetCurrentProgramScene", JSON.createObjectNode().put("sceneName", scene));
 
@@ -483,6 +485,31 @@ public final class Obs implements AutoCloseable {
     }
 
     /** @return the scene item id, which is what a transform is addressed by */
+    /**
+     * Puts the game's sound into the scene.
+     *
+     * <p>A display capture is picture only, and a scene built of nothing else went out silent for as
+     * long as it has been going out: the box has PipeWire with a null sink the game plays into and
+     * OBS has the socket to hear it, and nothing ever asked. An output capture on the default sink's
+     * monitor is the whole of it. Not thrown on failure — a box with no sound server, or an OBS build
+     * without the plugin, still gets its picture; the log says what it did not get.
+     */
+    private void sound(String scene) {
+        String device = settings.audioDevice();
+        if (device.isBlank()) {
+            log.info("Scene built without sound: obs.audio.device is empty");
+            return;
+        }
+        try {
+            create(scene, SOUND_SOURCE, settings.audioKind(),
+                    JSON.createObjectNode().put("device_id", device));
+            log.info("Sound in the scene: {} on '{}'", settings.audioKind(), device);
+        } catch (ObsException e) {
+            log.warn("Scene is up but silent: OBS refused the sound capture ({} on '{}'): {}",
+                    settings.audioKind(), device, e.getMessage());
+        }
+    }
+
     private int create(String scene, String name, String kind, ObjectNode inputSettings) throws ObsException {
         JsonNode created = call("CreateInput", JSON.createObjectNode()
                 .put("sceneName", scene)
