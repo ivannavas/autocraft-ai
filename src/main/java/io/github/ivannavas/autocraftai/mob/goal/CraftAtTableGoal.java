@@ -59,6 +59,14 @@ public final class CraftAtTableGoal implements CraftingGoal {
     private static final int STALLED_GIVE_UP_TICKS = 80;
     /** How far out an existing table is worth walking to. */
     private static final int TABLE_SCAN_RANGE = 8;
+    /**
+     * How far off the body's own table may stand and still count as its table. It set the workbench up,
+     * went for stone, and came back to a stone pickaxe it could not make: the plan's list said "a table",
+     * the gate said "none in sight", and five objectives in a row were given up thirty blocks from a
+     * table that was still standing. A walk of this length is cheaper than a log, four planks and a
+     * second table — and than the ten minutes of punching stone that came instead.
+     */
+    private static final int OWN_TABLE_RANGE = 48;
     /** Kept under the server's reach so an interaction is never sent from too far to land. */
     private static final double REACH_MARGIN = 0.5;
     private static final float SPEED = 1.0F;
@@ -248,8 +256,13 @@ public final class CraftAtTableGoal implements CraftingGoal {
 
     /** Puts a table down in front of the body, on the first bit of ground with room above it. */
     private void placeTable(MobBody body) {
+        if (ticksRunning % ATTEMPT_INTERVAL_TICKS != 0) {
+            return;
+        }
         int slot = hotbarSlotWithTable(body.player());
-        if (slot < 0 || ticksRunning % ATTEMPT_INTERVAL_TICKS != 0) {
+        if (slot < 0) {
+            // In the bag but not on the bar: brought down first, placed on the next attempt.
+            bringTableToHotbar(body.player());
             return;
         }
         BlockPos ground = spotForTable(body);
@@ -290,19 +303,78 @@ public final class CraftAtTableGoal implements CraftingGoal {
         return null;
     }
 
-    /** Whether a table is within walking distance or in the hotbar ready to be put down. */
+    /** Whether a table is within walking distance, or anywhere in the bag ready to be put down. */
     public static boolean tableAvailable(LocalPlayer player) {
         return player != null
-                && (findTable(player) != null || hotbarSlotWithTable(player) >= 0);
+                && (findTable(player) != null || hotbarSlotWithTable(player) >= 0
+                        || bagSlotWithTable(player) >= 0);
     }
 
     /**
-     * Whether a craft here costs no trek: a table in sight, or one in the hotbar to put down. What a
+     * Whether a craft here costs no trek: a table in sight, or one in the bag to put down. What a
      * craft the plan did not ask for has to show before it is allowed to take the body — the remembered
      * table thirty blocks off is worth walking back to for a pickaxe the plan wants, not for a sword.
      */
     public static boolean tableInSight(LocalPlayer player) {
-        return player != null && (nearbyTable(player) != null || hotbarSlotWithTable(player) >= 0);
+        return player != null && (nearbyTable(player) != null || hotbarSlotWithTable(player) >= 0
+                || bagSlotWithTable(player) >= 0);
+    }
+
+    /**
+     * Where the table is, in words, for the two agents: they were told "a table" was on the list and
+     * never that the body had one forty blocks behind it, and planned a second one from logs it did
+     * not have.
+     */
+    public static String tableWords(LocalPlayer player) {
+        if (player == null) {
+            return "";
+        }
+        if (hotbarSlotWithTable(player) >= 0 || bagSlotWithTable(player) >= 0) {
+            return "carrying one, ready to put down";
+        }
+        BlockPos near = nearbyTable(player);
+        if (near != null) {
+            return "one stands within reach";
+        }
+        BlockPos own = Placed.get().nearestOwn(player.level(), player.position(), Blocks.CRAFTING_TABLE);
+        if (own == null) {
+            return "none: not carried, none in sight, none of its own still standing anywhere it knows";
+        }
+        int away = (int) Math.round(Math.sqrt(own.distToCenterSqr(player.position())));
+        return away <= OWN_TABLE_RANGE
+                ? "its own stands " + away + " blocks away at " + own.toShortString()
+                        + "; a craft the plan asks for walks back to it"
+                : "left its own " + away + " blocks behind at " + own.toShortString()
+                        + ", too far to walk back for; it needs another or to go back that way";
+    }
+
+    /** A main-inventory slot holding a table, as the inventory menu numbers it, or -1. */
+    private static int bagSlotWithTable(LocalPlayer player) {
+        Inventory inventory = player.getInventory();
+        for (int slot = Inventory.SELECTION_SIZE; slot < Inventory.INVENTORY_SIZE; slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            if (!stack.isEmpty() && stack.is(Items.CRAFTING_TABLE)) {
+                return slot;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Swaps a table from the bag into the selected hotbar slot, the click a player makes with a number
+     * key over an inventory slot. A crafted table lands in the hotbar only while the hotbar has room,
+     * which by the second table of a run it has not, and a table nine slots too far in was "no table".
+     */
+    private static boolean bringTableToHotbar(LocalPlayer player) {
+        int from = bagSlotWithTable(player);
+        Minecraft client = Minecraft.getInstance();
+        if (from < 0 || client.gameMode == null) {
+            return false;
+        }
+        int chosen = player.getInventory().getSelectedSlot();
+        client.gameMode.handleContainerInput(player.inventoryMenu.containerId, from, chosen,
+                ContainerInput.SWAP, player);
+        return true;
     }
 
     private BlockPos findTable(MobBody body) {
@@ -311,10 +383,15 @@ public final class CraftAtTableGoal implements CraftingGoal {
 
     private static BlockPos findTable(LocalPlayer player) {
         BlockPos best = nearbyTable(player);
+        if (best != null) {
+            return best;
+        }
         // None in sight, but the body may have set one up earlier and walked off mining. It knows where
-        // its own went; walk back to the nearest that is still standing rather than stand here stuck.
-        return best != null ? best
-                : Placed.get().nearestOwn(player.level(), player.position(), Blocks.CRAFTING_TABLE);
+        // its own went; walk back to the nearest that is still standing rather than stand here stuck —
+        // within reason: past OWN_TABLE_RANGE a new table is the shorter errand.
+        BlockPos own = Placed.get().nearestOwn(player.level(), player.position(), Blocks.CRAFTING_TABLE);
+        return own != null && own.distToCenterSqr(player.position()) <= (double) OWN_TABLE_RANGE * OWN_TABLE_RANGE
+                ? own : null;
     }
 
     /** The nearest table within the scan range, or null. */

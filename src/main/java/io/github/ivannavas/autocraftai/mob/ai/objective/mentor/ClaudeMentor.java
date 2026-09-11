@@ -226,13 +226,16 @@ public final class ClaudeMentor implements Mentor {
         lastAsked.set(now);
         String prompt = asked.describe() + history(asked.pursuit(), now) + (before == null ? ""
                 : "\nYou already taught this " + (before.times() == 0 ? "a while ago" : "once") + " ("
-                        + before.summary() + ") and it is still " + (asked.stalled() ? "getting nowhere" : "stuck")
-                        + ". Teach a different way out" + (asked.stalled() ? ", or replan." : "."));
+                        + before.summary() + ") and it is still "
+                        + (asked.starving() ? "starving" : asked.stalled() ? "getting nowhere" : "stuck")
+                        + ". Teach a different way out"
+                        + (asked.stalled() || asked.starving() ? ", or replan." : "."));
         if (!lastSkillProblem.isEmpty() && asked.skillProblem().isEmpty()) {
             prompt += "\nThe last skill you wrote was refused: " + lastSkillProblem
                     + ". Fix it if you write one again.";
         }
-        PlannerLog.get().mentorAsked((asked.stalled() ? "stall: " : "unblock: ") + asked.summary(), prompt);
+        PlannerLog.get().mentorAsked((asked.starving() ? "starving: " : asked.stalled() ? "stall: " : "unblock: ")
+                + asked.summary(), prompt);
         final String question = prompt;
         thread.execute(() -> {
             try {
@@ -292,7 +295,7 @@ public final class ClaudeMentor implements Mentor {
                     skill, skillProblem,
                     // Only a stall may be given up on. A pinned body is a block, and a block is
                     // answered with a way out, not with a different errand to be blocked on.
-                    asked.stalled() ? replanIn(reply) : "",
+                    asked.stalled() || asked.starving() ? replanIn(reply) : "",
                     asked.situation().objective(), askedAt, forgetsIn(reply));
             if (rescue.isEmpty()) {
                 log.info("The mentor had nothing to add for {}: {}", asked.summary(), shorten(reply));

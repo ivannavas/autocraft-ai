@@ -75,6 +75,10 @@ public record Rescue(MentorAsk.Reason reason, String pursuit, String state, List
         return reason == MentorAsk.Reason.STALL;
     }
 
+    public boolean starving() {
+        return reason == MentorAsk.Reason.STARVING;
+    }
+
     /** Whether the mentor gave the objective up rather than teaching a way to it. */
     public boolean asksToReplan() {
         return !replan.isEmpty();

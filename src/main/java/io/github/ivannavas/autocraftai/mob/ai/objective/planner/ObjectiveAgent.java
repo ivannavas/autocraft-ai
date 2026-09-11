@@ -85,8 +85,9 @@ public class ObjectiveAgent extends AgentExecutor {
                           "band": {"floor": 0, "ceiling": 72}, "terrain": ["MOUNTAIN", "CAVE"],
                           "ways": ["WALK", "DIG", "CLIMB"]}]
                        Anything that is crafted rather than found (planks, sticks, pickaxe, sword, table)
-                       has no sources, and neither does FOOD: it comes off animals, and the player gets it
-                       by hunting rather than by looking for a block.
+                       has no sources, and neither does FOOD: it comes off animals, and off sweet berry
+                       bushes when used rather than broken; the player gets it by hunting or picking rather
+                       than by looking for a block to mine.
 
             2. TRAVEL — go to a different kind of place. Use it when the problem is where the player is
                standing: there are no trees in a desert however many times you ask for logs.

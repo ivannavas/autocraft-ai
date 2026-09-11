@@ -66,7 +66,14 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
         /** The body has not moved for a while: something is in its way. */
         BLOCK,
         /** The body moves and the objective gets no nearer, for minutes on end. */
-        STALL
+        STALL,
+        /**
+         * The hunger bar is all but empty and there is nothing edible in the bag. Not a block and not a
+         * stall: the body may be moving and the objective may even be food — and it was, for eighteen
+         * minutes, while the body placed blocks in a taiga and died in a berry bush twice. Hunger used to
+         * be the planner's alone; what to do about it where the body stands is a lesson.
+         */
+        STARVING
     }
 
     public MentorAsk {
@@ -88,6 +95,10 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
         return reason == Reason.STALL;
     }
 
+    public boolean starving() {
+        return reason == Reason.STARVING;
+    }
+
     /**
      * What one asking is about, for not asking it twice.
      *
@@ -96,6 +107,9 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
      * question every minute for as long as it lasted.
      */
     public String key() {
+        if (starving()) {
+            return pursuit + "|starving|" + situation.objective();
+        }
         return stalled()
                 ? pursuit + "|stall|" + situation.objective()
                 : pursuit + '|' + stuckState;
@@ -103,6 +117,10 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
 
     /** One line for the log, so a reader can tell one block apart from the next. */
     public String summary() {
+        if (starving()) {
+            return pursuit + " starving (" + situation.food() + "/" + situation.maxFood() + ") on "
+                    + situation.objective() + " at " + stuckState;
+        }
         if (stalled()) {
             return pursuit + " stalled " + situation.minutesWithoutProgress() + " min on "
                     + situation.objective() + " at " + stuckState;
@@ -113,7 +131,21 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
     /** The prompt: the situation as the planner states it, then the block, the ground and the moves. */
     public String describe() {
         StringBuilder text = new StringBuilder(situation.describe());
-        if (stalled()) {
+        if (starving()) {
+            text.append("\n\nSTARVING. Working on ").append(pursuit).append(" at Y ").append(y)
+                    .append(", hunger ").append(situation.food()).append('/').append(situation.maxFood())
+                    .append(" and nothing edible in the bag");
+            if (situation.deaths() > 0) {
+                text.append("; it has died ").append(situation.deaths()).append(" time")
+                        .append(situation.deaths() == 1 ? "" : "s")
+                        .append(situation.lastDeath().isEmpty() ? "" : ", the last one: \"" + situation.lastDeath() + '"');
+            }
+            text.append(". Nothing on the lists below feeds it by itself: teach the moves that get it to")
+                    .append(" food from where it stands now, and if what feeds it here is not a move on")
+                    .append(" the lists, write it as a skill — a GOAL skill for FOOD that walks up to what")
+                    .append(" gives food and takes it, then EAT. Its state as it stands now:\n  ")
+                    .append(stuckState);
+        } else if (stalled()) {
             text.append("\n\nSTALL. Working on ").append(pursuit).append(" at Y ").append(y)
                     .append(", the body is not pinned — it moves — but the objective has got no nearer for ")
                     .append(situation.minutesWithoutProgress()).append(" minutes. ")
@@ -163,7 +195,11 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
             text.append("\nThe last skill you wrote was refused: ").append(skillProblem)
                     .append(". Fix it if you write one again.");
         }
-        if (stalled()) {
+        if (starving()) {
+            text.append("\nTeach it the way to food from here — or, if food cannot be reached from here")
+                    .append(" with what it has, say so with \"replan\" and the strategist will be asked")
+                    .append(" for the way.");
+        } else if (stalled()) {
             text.append("\nTeach it what would get the objective moving — or, if the objective cannot be")
                     .append(" reached from here with what it has, say so with \"replan\" and the strategist")
                     .append(" will be asked for another.");

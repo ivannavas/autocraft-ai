@@ -141,13 +141,7 @@ public final class Obs implements AutoCloseable {
 
         // The canvas first: a source is laid out against it, so sizing it afterwards would move
         // everything that had already been placed.
-        call("SetVideoSettings", JSON.createObjectNode()
-                .put("baseWidth", width)
-                .put("baseHeight", height)
-                .put("outputWidth", width)
-                .put("outputHeight", height)
-                .put("fpsNumerator", settings.fps())
-                .put("fpsDenominator", 1));
+        canvas(width, height);
 
         if (!scenes().contains(scene)) {
             call("CreateScene", JSON.createObjectNode().put("sceneName", scene));
@@ -340,6 +334,53 @@ public final class Obs implements AutoCloseable {
                 + "why; a recording path it cannot write to is the usual one — check that "
                 + settings.clipsDir() + " exists and that OBS is allowed to write there (a Flatpak "
                 + "needs 'flatpak override --filesystem=' for anything outside home).");
+    }
+
+    /**
+     * Sizes the canvas, only when it is not that size already.
+     *
+     * <p>OBS refuses {@code SetVideoSettings} while any output is running, and the replay buffer is an
+     * output: it is started by this very scene and outlives the game, so every rebuild after the first
+     * — every restart of the game — was refused before it had removed or created anything, and the
+     * broadcast kept the old scene, overlay and all. Asking first is what makes the ordinary rebuild a
+     * no-op here; a canvas that really has to change stops the buffer for it, and {@link #buffer()}
+     * starts it again at the end as it always did. A live broadcast is left alone: a canvas that
+     * changes shape under a stream is not a thing anyone wants done for them.
+     */
+    private void canvas(int width, int height) throws ObsException {
+        JsonNode video = call("GetVideoSettings", JSON.createObjectNode());
+        boolean same = video.path("baseWidth").asInt() == width
+                && video.path("baseHeight").asInt() == height
+                && video.path("outputWidth").asInt() == width
+                && video.path("outputHeight").asInt() == height
+                && video.path("fpsNumerator").asInt() == settings.fps()
+                && video.path("fpsDenominator").asInt() == 1;
+        if (same) {
+            return;
+        }
+        if (streaming()) {
+            log.warn("OBS canvas is not {}x{}@{} but a broadcast is live; leaving it as it is",
+                    width, height, settings.fps());
+            return;
+        }
+        if (buffering()) {
+            call("StopReplayBuffer", JSON.createObjectNode());
+            for (int attempt = 0; attempt < START_ATTEMPTS && buffering(); attempt++) {
+                try {
+                    Thread.sleep(START_POLL_MILLIS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new ObsException("Interrupted waiting for the replay buffer to stop");
+                }
+            }
+        }
+        call("SetVideoSettings", JSON.createObjectNode()
+                .put("baseWidth", width)
+                .put("baseHeight", height)
+                .put("outputWidth", width)
+                .put("outputHeight", height)
+                .put("fpsNumerator", settings.fps())
+                .put("fpsDenominator", 1));
     }
 
     public boolean buffering() throws ObsException {

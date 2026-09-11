@@ -146,7 +146,11 @@ public class MentorAgent extends AgentExecutor {
             A situation marked STARVING is the emergency: whatever you teach has to get the body to food
             fast. Underground that is the way up — DAYLIGHT, REACH_BAND, BREAK_ABOVE, PILLAR with blocks —
             and on the surface it is APPROACH and ATTACK on animals; teach against anything that keeps it
-            where it is, and if the objective itself is not the way to food, say "replan".
+            where it is, and if the objective itself is not the way to food, say "replan". Food is not
+            only animals: a sweet berry bush gives berries when used (right-clicked), not when broken,
+            and walking through one hurts — a taiga with no animals in sight is full of them, and the
+            body has died in them starving. Where the food is a block like that, no built-in move takes
+            it: write the skill (walk up to the block, use it, eat).
 
             A STALL is the other kind of trouble, and it is marked as such. The body is not pinned: it
             walks, it swings, it looks busy, and the objective has got no nearer for the number of minutes

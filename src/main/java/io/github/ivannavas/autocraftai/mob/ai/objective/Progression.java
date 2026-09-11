@@ -458,7 +458,8 @@ public final class Progression {
     private Situation situation(LocalPlayer player, InventoryCensus obtained, String objective) {
         Situation base = Situation.of(player, obtained, achieved, objective);
         List<String> shortOf = current == null ? List.of() : shortOf(player);
-        return base.withRun(deaths, lastDeath, shortOf, minutesWithoutProgress(), mentorNote);
+        return base.withRun(deaths, lastDeath, shortOf, minutesWithoutProgress(), mentorNote)
+                .withTable(CraftAtTableGoal.tableWords(player));
     }
 
     /**

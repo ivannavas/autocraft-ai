@@ -76,7 +76,8 @@ public record Situation(
         String lastDeath,
         List<String> shortOf,
         int minutesWithoutProgress,
-        String note) {
+        String note,
+        String table) {
 
     /** How far out a mob counts as being on top of us. */
     private static final double THREAT_RANGE = 16.0;
@@ -100,6 +101,7 @@ public record Situation(
         lastDeath = lastDeath == null ? "" : lastDeath;
         shortOf = shortOf == null ? List.of() : List.copyOf(shortOf);
         note = note == null ? "" : note.strip();
+        table = table == null ? "" : table.strip();
     }
 
     /**
@@ -132,7 +134,7 @@ public record Situation(
                 objective,
                 DecisionLog.get().recent(),
                 Minecraft.getInstance().getLanguageManager().getSelected(),
-                0, "", List.of(), 0, "");
+                0, "", List.of(), 0, "", "");
     }
 
     /** The same moment, with the run's own record filled in. */
@@ -140,7 +142,14 @@ public record Situation(
                              String note) {
         return new Situation(biome, dimension, night, lightLevel, health, maxHealth, food, maxFood, depth,
                 hostilesNearby, carrying, obtained, achieved, objective, decisions, language,
-                deaths, lastDeath, shortOf, minutesWithoutProgress, note);
+                deaths, lastDeath, shortOf, minutesWithoutProgress, note, table);
+    }
+
+    /** The same moment, with where the crafting table is said in words. */
+    public Situation withTable(String table) {
+        return new Situation(biome, dimension, night, lightLevel, health, maxHealth, food, maxFood, depth,
+                hostilesNearby, carrying, obtained, achieved, objective, decisions, language,
+                deaths, lastDeath, shortOf, minutesWithoutProgress, note, table);
     }
 
     private static int hostilesNear(LocalPlayer player) {
@@ -239,6 +248,12 @@ public record Situation(
         text.append("Hostiles in sight: ").append(hostilesNearby).append('\n');
         text.append("Inventory: ").append(carrying.isEmpty() ? "empty" : String.join(", ", carrying))
                 .append('\n');
+        if (!table.isEmpty()) {
+            // Said apart from the bag because a table is the one thing on a list the body need not
+            // carry to have: it is placed to be used, and both agents planned a second one from logs
+            // it did not have while its own stood forty blocks back.
+            text.append("Crafting table: ").append(table).append('\n');
+        }
         text.append("Obtained over the whole run: ").append(totals()).append('\n');
         text.append("Objectives already completed: ")
                 .append(achieved.isEmpty() ? "none" : String.join(", ", achieved)).append('\n');

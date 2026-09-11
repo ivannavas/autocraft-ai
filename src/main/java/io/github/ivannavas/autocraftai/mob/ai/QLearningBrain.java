@@ -241,8 +241,17 @@ public final class QLearningBrain {
      * Per block the body got towards where it wanted to go, paid to the passage table on top of the
      * ordinary reward. What a descent pays per block, and for the same reason: a table that can only
      * see the standing costs of a second learns nothing from a second that opened the way.
+     *
+     * <p>Two, not the 0.6 it was. The standing costs of a second come to about half a point once the
+     * body has been on the same spot for a while, and a block of stone takes the pickaxe a second or
+     * two: at 0.6 a block, the move that dug straight down to an ore came out at nothing, and a table
+     * learned from scratch — every row fresh — put BACK, AROUND, PILLAR and BREAK_AHEAD all below zero
+     * on "ore behind stone" after eighty visits, with BREAK_AHEAD the least bad by a tenth. A tenth is
+     * not a lesson; the body walked round its own pit for minutes on it. A block of way made has to be
+     * worth more than the seconds it took, or the table cannot tell the move that works from the ones
+     * that do not.
      */
-    private static final double PASSAGE_PROGRESS_WEIGHT = 0.6;
+    private static final double PASSAGE_PROGRESS_WEIGHT = 2.0;
     /**
      * Above everything but the water: a body being shot at is not chopping a tree, and not drowning
      * still beats not being shot. Level with the swim goal, so whichever of the two has the body keeps
@@ -294,6 +303,11 @@ public final class QLearningBrain {
     private long rescueDecision;
     /** How often the objective had got nearer when the last stall lesson landed, for judging it. */
     private long rescueProgress;
+    /** The hunger bar when the last starving lesson landed: it worked if the body has eaten since. */
+    private int rescueFood;
+    /** When the coach was last asked about hunger; asked again only after a while, whatever it says. */
+    private long starvingAskedAt;
+    private static final long STARVING_ASK_AGAIN_MILLIS = 300_000L;
     /** Drops the body gave up walking to, and until when each is left out of its sight. */
     private final Map<Entity, Long> shunned = new HashMap<>();
     /** Told what killed the body, once per death. No-op until something wants it. */
@@ -994,12 +1008,18 @@ public final class QLearningBrain {
         Optional<Vec3> askedFrom = territory.positionAgo((int) Math.min(waited, Integer.MAX_VALUE));
         boolean movedOn = body != null && askedFrom.isPresent()
                 && body.position().distanceTo(askedFrom.get()) >= RESCUE_MOVED;
-        boolean stillBlocked = rescue.stalled()
+        boolean stillBlocked = rescue.starving()
+                ? body != null && body.getFoodData().getFoodLevel()
+                        <= io.github.ivannavas.autocraftai.mob.ai.objective.planner.Situation.STARVING_AT
+                : rescue.stalled()
                 ? progression.stepsWithoutProgress() >= STALLED_BEFORE_MENTOR
                 : territory.pinned() && !movedOn;
-        if (!sameObjective || !stillBlocked) {
-            String why = !sameObjective
+        // A starving lesson is about the body, not the objective: it stands whatever the planner has
+        // swapped in meanwhile, as long as the body is still hungry.
+        if ((!sameObjective && !rescue.starving()) || !stillBlocked) {
+            String why = !sameObjective && !rescue.starving()
                     ? "the objective had changed to " + (objectiveNow.isEmpty() ? "nothing" : objectiveNow)
+                    : rescue.starving() ? "it had found food"
                     : rescue.stalled() ? "the objective had got nearer" : "the body had already moved on";
             String late = "arrived " + waited + " s after the question, by which time " + why
                     + "; the rows are taught, " + (rescue.asksToReplan() ? "the replan is dropped, " : "")
@@ -1027,6 +1047,7 @@ public final class QLearningBrain {
         rescueProgress = progression.progressCount();
         LocalPlayer taughtAt = Minecraft.getInstance().player;
         rescuePosition = taughtAt == null ? null : taughtAt.position();
+        rescueFood = taughtAt == null ? 0 : taughtAt.getFoodData().getFoodLevel();
         log.info("Applied lessons ({}) to {} at {} / {}", rescue.summary(), rescue.pursuit(),
                 rescue.state(), rescue.terrain());
         Chronicle.get().lessonTaught(rescue.pursuit(), rescue.summary());
@@ -1044,16 +1065,18 @@ public final class QLearningBrain {
         }
         long since = decisionsMade - rescueDecision;
         boolean stall = lastRescue.stalled();
+        boolean hungry = lastRescue.starving();
         // "Free after one decision" was the commonest verdict and meant nothing: the body twitched
         // and the pinned reading cleared. A block is only broken when the body has been unpinned for
-        // a few decisions and is standing somewhere else.
+        // a few decisions and is standing somewhere else. A starving lesson worked when the body ate.
         LocalPlayer judged = Minecraft.getInstance().player;
         boolean away = rescuePosition == null || judged == null
                 || judged.position().distanceTo(rescuePosition) >= RESCUE_MOVED;
-        boolean worked = stall ? progression.progressCount() > rescueProgress
+        boolean worked = hungry ? judged != null && judged.getFoodData().getFoodLevel() > rescueFood
+                : stall ? progression.progressCount() > rescueProgress
                 : since >= RESCUE_JUDGED_AFTER && !territory.pinned() && away;
-        long window = stall ? STALL_RESCUE_WINDOW : RESCUE_WINDOW;
-        String what = stall ? "the objective got nearer" : "free";
+        long window = stall || hungry ? STALL_RESCUE_WINDOW : RESCUE_WINDOW;
+        String what = hungry ? "it ate" : stall ? "the objective got nearer" : "free";
         if (worked) {
             log.info("Mentor lesson worked: {} after {} decisions ({})", what, since, lastRescue.summary());
             PlannerLog.get().mentorNoted("worked: " + what + " after " + since + " decisions ("
@@ -1062,7 +1085,7 @@ public final class QLearningBrain {
             Chronicle.get().lessonJudged("worked: " + what + " after " + since + " decisions");
             lastRescue = null;
         } else if (since >= window) {
-            String still = stall ? "no nearer" : "still pinned";
+            String still = hungry ? "still starving" : stall ? "no nearer" : "still pinned";
             log.info("Mentor lesson did not work: {} after {} decisions ({})", still, since,
                     lastRescue.summary());
             PlannerLog.get().mentorNoted("did not work: " + still + " after " + since + " decisions ("
@@ -1228,16 +1251,20 @@ public final class QLearningBrain {
         if (terrainWorking()) {
             return true;
         }
-        if (cutShort()) {
-            return false;
-        }
-        // And a moment to use what the terrain layer just did: the dirt is gone, the stone is in view,
+        // A moment to use what the terrain layer just did: the dirt is gone, the stone is in view,
         // and the block the move was after is a second or two from dropping. A decision here, with a
         // one-second commitment expired long ago, was a roll of the dice on a row that had never been
         // paid — and the dice sent the body wandering off from the hole it had just had opened for it.
+        // Before the cut, not after: a mine still standing over its ore after one block of the column
+        // is gone stalls at once, and cut there it was torn down and made again, block in the way and
+        // all, for the terrain layer to be asked afresh. Left standing, the same question gets the
+        // same answer continued.
         if (passageHandedBackAtStep >= 0
                 && stepsRun < passageHandedBackAtStep + PASSAGE_HANDBACK_GRACE_STEPS) {
             return true;
+        }
+        if (cutShort()) {
+            return false;
         }
         return stepsRun < commitment.steps();
     }
@@ -1342,11 +1369,19 @@ public final class QLearningBrain {
         // and may answer by giving the objective up rather than by teaching a way to it.
         boolean pinned = pinnedStreak >= PINNED_BEFORE_MENTOR;
         boolean stalled = progression.stepsWithoutProgress() >= STALLED_BEFORE_MENTOR;
+        // And a body starving with nothing to eat, whatever it is doing: the planner was the only one
+        // told, and it answered with FOOD objectives the tables had no move for — eighteen minutes of
+        // placing blocks in a taiga, and two deaths in the berry bushes that were the food.
+        boolean starving = player.getFoodData().getFoodLevel()
+                <= io.github.ivannavas.autocraftai.mob.ai.objective.planner.Situation.STARVING_AT
+                && held.count(Resource.FOOD) <= 0
+                && System.currentTimeMillis() - starvingAskedAt > STARVING_ASK_AGAIN_MILLIS;
         // Nor while a tactic has the body: a body sealed in a hole for the night is pinned on purpose,
         // and a coach asked about it would teach it the way out of its own shelter.
-        if ((pinned || stalled) && progression.current().isPresent()
+        if ((pinned || stalled || starving) && progression.current().isPresent()
                 && !objectiveCraftable(legalCrafts) && !crafting() && !sheltering()) {
-            MentorAsk.Reason reason = pinned ? MentorAsk.Reason.BLOCK : MentorAsk.Reason.STALL;
+            MentorAsk.Reason reason = starving ? MentorAsk.Reason.STARVING
+                    : pinned ? MentorAsk.Reason.BLOCK : MentorAsk.Reason.STALL;
             String stuck = observation.key();
             String folder = pursuit.name();
             // The moves the body may actually make here, not every column: a lesson about a move the
@@ -1355,7 +1390,9 @@ public final class QLearningBrain {
             List<String> craftMoves = legalNames(crafting.columns, legalCrafts);
             int y = player.getBlockY();
             boolean stuckUnderCover = stalled;
-            boolean holdable = mayHoldStill(player);
+            // Not held still for hunger: a starving body standing about for the answer is a starving
+            // body forty-five seconds nearer dying, and the lesson is about where the food is, not here.
+            boolean holdable = !starving && mayHoldStill(player);
             boolean asked = mentor.consider(() -> {
                 Obstruction ground = ground(player);
                 Surroundings around = Surroundings.around(player, progression.reserved(), stuckUnderCover);
@@ -1373,6 +1410,9 @@ public final class QLearningBrain {
                         waterKey, waterMoves, dwellWords(player), mayHold,
                         Skills.get().catalogue(), "");
             });
+            if (asked && starving) {
+                starvingAskedAt = System.currentTimeMillis();
+            }
             if (asked && holdable) {
                 // The question went out about this very spot: stay on it. The claims the tables hold
                 // are dropped rather than settled again — the step just gone has been credited above —
@@ -2698,6 +2738,7 @@ public final class QLearningBrain {
         Map<Resource, Integer> needs = progression.needs();
         Resource after = progression.current().flatMap(Phase::scores).orElse(null);
         boolean tableInSight = CraftAtTableGoal.tableInSight(player);
+        boolean tableAvailable = CraftAtTableGoal.tableAvailable(player);
         long now = System.currentTimeMillis();
         String why = "";
         for (int i = 0; i < choices.length; i++) {
@@ -2714,13 +2755,21 @@ public final class QLearningBrain {
                 // blocks away because "PICKAXE=1" stayed on the list after the first one was in the bag.
                 allowed[i] = false;
                 reason = "the list already has enough of it";
-            } else if (!choices[i].handheld() && !choices[i].isSmelted() && !tableInSight) {
-                // A three-wide recipe needs a table, in the hotbar or standing within reach. Without one
+            } else if (!choices[i].handheld() && !choices[i].isSmelted()
+                    && !(needs.containsKey(made) ? tableAvailable : tableInSight)) {
+                // A three-wide recipe needs a table, in the bag or standing within reach. Without one
                 // it used to fall through to the two-by-two grid and run there forever, never making
                 // anything; now it is simply not on offer, and the reason is said, so the list's own
                 // CRAFTING_TABLE craft is what gets chosen instead.
+                //
+                // What the plan asked for may walk back to the body's own table within a few dozen
+                // blocks — the goal always knew the way, and this gate was what stopped it: five stone
+                // pickaxes in a row were given up "no table in sight" with the workbench still standing
+                // thirty blocks back. A craft nobody asked for still has to have its table in sight.
                 allowed[i] = false;
-                reason = "no crafting table in the hotbar or in sight to make it at";
+                reason = needs.containsKey(made)
+                        ? "no crafting table in the bag, in sight, or of its own within " + 48 + " blocks"
+                        : "no crafting table in the bag or in sight to make it at";
             } else if (choices[i].isSmelted()) {
                 // Smelting is not on the recipe book: it is legal when the ore is in the bag and there is
                 // something to burn. The goal finds or places the furnace itself.
