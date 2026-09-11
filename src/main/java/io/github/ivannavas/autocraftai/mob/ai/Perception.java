@@ -143,9 +143,15 @@ public final class Perception {
     private Sighting nearestVisibleLiving(LocalPlayer player) {
         Vec3 eye = player.getEyePosition();
         Vec3 look = player.getLookAngle();
+        // Not hostiles: the one within THREAT_RANGE is already the focus by the first rule, and one
+        // further off is scenery. Let in here, a zombie fifteen blocks away under the trees took the
+        // focus off an objective with no block to look for, every move on the row was about the
+        // zombie, and the body chose thirty times a minute between six of them that earned nothing.
+        // The tactics layer keeps its own watch on hostiles at any range.
         return nearest(player, SIGHT_RANGE,
                 candidate -> candidate instanceof LivingEntity living
                         && living.isAlive()
+                        && !(candidate instanceof Enemy)
                         && inViewCone(eye, look, living)
                         && player.hasLineOfSight(living))
                 .map(found -> Sighting.of(classify(found), found))

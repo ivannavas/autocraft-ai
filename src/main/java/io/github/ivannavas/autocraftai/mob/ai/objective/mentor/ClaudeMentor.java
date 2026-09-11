@@ -50,7 +50,13 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public final class ClaudeMentor implements Mentor {
 
-    private static final String MODEL = "claude-opus-5";
+    /**
+     * Sonnet, not Opus. The coaching was $2.6 an hour and half the lessons landed after the body had
+     * moved on, mostly because the answer took the better part of a minute to think. A faster answer
+     * to the state as it stands beats a deeper one to a state that is gone; whether the lessons get
+     * worse is measured — the chronicle counts the ones that worked — and this is one line to put back.
+     */
+    private static final String MODEL = "claude-sonnet-5";
     private static final String API_URL = "https://api.anthropic.com/v1/messages";
     /**
      * Room for the answer and for the thinking before it. The model thinks by default, and the thinking
@@ -87,7 +93,7 @@ public final class ClaudeMentor implements Mentor {
      * two of them four seconds apart. A body still pinned this long after a lesson is worth a second
      * opinion; one pinned for four seconds is not a second block.
      */
-    private static final long MIN_INTERVAL_MILLIS = 45_000L;
+    private static final long MIN_INTERVAL_MILLIS = 90_000L;
     /** How long after teaching a state the same state may be taught again, if the body is still stuck. */
     private static final long RETEACH_AFTER_MILLIS = 90_000L;
     /** How many times one state may be taught. Two: the first answer and one that knows it failed. */

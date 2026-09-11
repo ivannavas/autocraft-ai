@@ -899,7 +899,7 @@
       "tally.stalls": "%s times cut short",
       "verdict.avoid": "avoids", "verdict.none": "no opinion yet",
       "qualifier.wall": "wall", "qualifier.blocks": "carrying blocks",
-      "qualifier.hungry": "hungry",
+      "qualifier.hungry": "hungry", "qualifier.bush": "berry bush near",
       "bag.empty": "empty-handed", "bag.holding": "holding %s",
       "needs.nothing": "has all it needs", "needs.short": "short of %s",
       "shape.gather": "get %1$s %2$s", "shape.travel": "go to %s",
@@ -1134,28 +1134,34 @@
 
   // --- labels for the learned tables --------------------------------------------------------
 
-  const QUALIFIERS = [["W", "qualifier.wall"], ["B", "qualifier.blocks"], ["H", "qualifier.hungry"]];
+  const QUALIFIERS = [["W", "qualifier.wall"], ["B", "qualifier.blocks"], ["H", "qualifier.hungry"],
+    ["S", "qualifier.bush"]];
+  // The two words an objective with no block source adds to its key: cover overhead, and where the
+  // body stands against the plan's band. Absent on every other row.
+  const setting = (cover, band) =>
+    (cover && cover !== "NONE" ? " · " + t("cover." + cover) : "") +
+    (band && band !== "IN" ? " · " + t("band." + band) : "");
   const qualifiers = flags =>
     QUALIFIERS.filter(([letter]) => flags && flags.includes(letter))
       .map(([, key]) => " · " + t(key)).join("");
 
   function stateLabel(key, verdict) {
-    const [source, focus, distance, health, flags] = key.split("|");
+    const [source, focus, distance, health, flags, cover, band] = key.split("|");
     const near = word("distance", distance);
     return `<span class="focus">${word("focus", focus)}</span>` +
            `<span class="qualifier">${sourceOf(source)}${near ? " · " + near : ""} · ${word("health", health)}` +
-           `${qualifiers(flags)}</span>` + verdict;
+           `${qualifiers(flags)}${setting(cover, band)}</span>` + verdict;
   }
 
   function timingLabel(key, verdict) {
     const slash = key.lastIndexOf("/");
     const state = slash < 0 ? key : key.slice(0, slash);
     const action = slash < 0 ? "" : key.slice(slash + 1);
-    const [source, focus, distance, health, flags] = state.split("|");
+    const [source, focus, distance, health, flags, cover, band] = state.split("|");
     const near = word("distance", distance);
     return `<span class="focus">${word("action", action)}</span>` +
            `<span class="qualifier"> · ${word("focus", focus)}${sourceOf(source)}` +
-           `${near ? " · " + near : ""} · ${word("health", health)}${qualifiers(flags)}</span>` + verdict;
+           `${near ? " · " + near : ""} · ${word("health", health)}${qualifiers(flags)}${setting(cover, band)}</span>` + verdict;
   }
 
   function craftLabel(key, verdict) {

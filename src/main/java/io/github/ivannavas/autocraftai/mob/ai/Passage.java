@@ -99,7 +99,15 @@ public enum Passage {
         }
     },
 
-    /** Take out the block under the feet: one block of depth, where there is ground under it to land on. */
+    /**
+     * Take out the block under the feet: one block of depth, where there is ground under it to land on.
+     *
+     * <p>Only when the way wanted is down. Offered on the flat as well, it was chosen fourteen times in
+     * three minutes by a body looking for food: a hole a block deep at every stall, then "in a hole
+     * under a roof", then round and round in it — the planner read the run as "ninety per cent of the
+     * time underground" on an objective that lives on the surface. A block of depth is not a way past a
+     * wall; the same precondition PILLAR has, the other way up.
+     */
     DIG {
         @Override
         public MobGoal create(Obstruction here, Reserve reserve) {
@@ -108,8 +116,7 @@ public enum Passage {
 
         @Override
         public boolean isApplicable(Obstruction here) {
-            return here.canDig() && here.wanted() != Obstruction.Wanted.UP
-                    && here.wanted() != Obstruction.Wanted.TOWARD;
+            return here.canDig() && here.wanted() == Obstruction.Wanted.DOWN;
         }
     },
 

@@ -38,6 +38,15 @@ public final class SwimGoal implements MobGoal {
     private final BlockPos target;
 
     private int ticksRunning;
+    /** Ticks since the body was last in water: a bob at the shoreline, not a landing, until it is not. */
+    private int dryTicks;
+    /**
+     * How long out of the water a swim keeps the body. At the water's edge the game reads "in water"
+     * one tick and not the next as the body bobs, and a swim that let go on the first dry tick was
+     * stopped and started seven times in a second, never got its stroke in, and the body drowned a
+     * block from the shore.
+     */
+    private static final int SHORELINE_GRACE_TICKS = 10;
     private final Advance advance = new Advance();
 
     /**
@@ -63,7 +72,8 @@ public final class SwimGoal implements MobGoal {
 
     @Override
     public boolean canContinueToUse(MobBody body) {
-        return ticksRunning < GIVE_UP_TICKS && canUse(body);
+        return ticksRunning < GIVE_UP_TICKS && target != null && !arrived(body)
+                && (body.player().isInWater() || dryTicks < SHORELINE_GRACE_TICKS);
     }
 
     /**
@@ -79,12 +89,14 @@ public final class SwimGoal implements MobGoal {
     @Override
     public void start(MobBody body) {
         ticksRunning = 0;
+        dryTicks = 0;
         advance.reset();
     }
 
     @Override
     public void tick(MobBody body) {
         ticksRunning++;
+        dryTicks = body.player().isInWater() ? 0 : dryTicks + 1;
         Vec3 spot = Vec3.atCenterOf(target);
         body.lookControl().lookAt(spot);
 

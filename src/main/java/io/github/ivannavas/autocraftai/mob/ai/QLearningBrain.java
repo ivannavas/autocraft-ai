@@ -253,6 +253,13 @@ public final class QLearningBrain {
      */
     private static final double PASSAGE_PROGRESS_WEIGHT = 2.0;
     /**
+     * The most way a second may be paid for, in blocks. A move makes a block of way a second at most;
+     * more is a fall, or the legs sprinting towards the destination, and neither is the terrain layer's
+     * doing. Unbounded, a stroll that happened to head the right way earned AROUND fifteen points on
+     * "nothing ahead" and made the terrain layer the body's walker.
+     */
+    private static final double PASSAGE_PROGRESS_CAP = 1.0;
+    /**
      * Above everything but the water: a body being shot at is not chopping a tree, and not drowning
      * still beats not being shot. Level with the swim goal, so whichever of the two has the body keeps
      * it — and the tactics layer steps aside for a wet body anyway.
@@ -498,6 +505,7 @@ public final class QLearningBrain {
     /** The block it was trying to get at, and how many were on the line to it, when it last chose. */
     private BlockPos stuckSought;
     private int stuckBetween;
+    private Obstruction.Ahead stuckAhead;
     private InventoryCensus obtained = InventoryCensus.empty();
     private InventoryCensus previousStepCensus;
     private int wastedTicks;
@@ -1345,7 +1353,13 @@ public final class QLearningBrain {
             }
             active = suite;
         }
-        Observation observation = Observation.of(player, context, pursuit.source());
+        Observation observation = Observation.of(player, context, pursuit.source(),
+                lastSurroundings == null ? null : lastSurroundings.cover(),
+                progression.heightWanted(player.getBlockY()),
+                Pursuit.NO_SOURCE.equals(pursuit.source()) && berryBushNear(player));
+        // Closing on something to eat pays a little on its own. Food only paid when eaten, and a
+        // hungry body with a pig in view had nothing between "saw it" and "ate it" to learn from.
+        reward += closingOnFood(observation);
 
         boolean[] legalGoals = legalGoals(context);
         // The bag as the plan counts it: a workbench standing within reach is a table held.
@@ -1474,7 +1488,12 @@ public final class QLearningBrain {
         // Timing is keyed by the goal as well as the state: the question is not "how long to commit" but
         // "how long to commit to this".
         String timingKey = observation.key() + '/' + chosenName;
-        active.timing.learn(timingKey, reward, step.steps(), active.timing.everything);
+        // Learned as a rate — what the move earned per second held — and not as the move's total.
+        // Learned as the total, a second of any move at all cost less than ten of it whenever the
+        // seconds were charged and nothing came of them, and SHORT won two rows in three all day
+        // whatever the move; as a rate a long move that ended in the log is worth more per second
+        // than a short one that did not, and a losing move loses the same per second at any length.
+        active.timing.learn(timingKey, reward / Math.max(1, step.steps()), 1, active.timing.everything);
         Commitment chosen = Commitment.values()[active.timing.choose(timingKey, active.timing.everything)];
 
         int craft = chooseCraft(craftKey, legalCrafts);
@@ -1966,6 +1985,7 @@ public final class QLearningBrain {
         stuckTarget = here.target();
         stuckSought = here.sought();
         stuckBetween = here.aheadBlocks().size();
+        stuckAhead = here.ahead();
 
         if (holdsPassageSkill() || holdsPassageBreak()) {
             // A skill is a list of steps, and the built-in passage moves are one swing each. Re-chosen
@@ -2109,9 +2129,27 @@ public final class QLearningBrain {
         // A passage move that made no way pays for the corner too: a body that jumps and breaks the
         // block above in the same spot for a quarter of an hour is otherwise settled a second at a time,
         // and each second looks like nothing much.
-        return score(stepSince(stuckSince, player, 1, 0, 0, 0, List.of(), placedThisStep, reclaimedThisStep))
-                + PASSAGE_PROGRESS_WEIGHT * progress
-                + (progress <= 0.0 ? dwelling(player, 1) : 0.0);
+        // The second's own costs and gains, not the plan's. With the plan's score in it, the cobblestone
+        // the goal's pickaxe brought in during a second the terrain layer was holding was paid to
+        // whatever the terrain layer had chosen — "CARRY_ON worth 9.97: step 7.97" in the trace — and
+        // DIG on the flat climbed to seven on the dirt the shopping list wanted. The terrain layer is
+        // paid for way made; what the way was made for is the goal table's to collect.
+        double step = generalScore(stepSince(stuckSince, player, 1, 0, 0, 0, List.of(), placedThisStep, reclaimedThisStep));
+        double way = PASSAGE_PROGRESS_WEIGHT
+                * Math.max(-PASSAGE_PROGRESS_CAP, Math.min(progress, PASSAGE_PROGRESS_CAP));
+        double dwell = progress <= 0.0 ? dwelling(player, 1) : 0.0;
+        double reward = step + way + dwell;
+        if (log.isDebugEnabled() && Math.abs(reward) >= 2.0) {
+            // Said whenever a second was worth a lot either way, so a column that climbs for no reason
+            // anyone can name — DIG at seven on the flat — can be traced to the part that paid it.
+            log.debug("Passage second worth {} for {} wanting {} with {} ahead: step {}, way {} ({} blocks), dwelling {}",
+                    String.format("%.2f", reward),
+                    passageColumn >= 0 && passageColumn < passage.columns.size()
+                            ? passage.columns.get(passageColumn) : "?",
+                    stuckWanting, stuckAhead, String.format("%.2f", step), String.format("%.2f", way),
+                    String.format("%.2f", progress), String.format("%.2f", dwell));
+        }
+        return reward;
     }
 
     private static double flat(Vec3 from, Vec3 to) {
@@ -2577,11 +2615,46 @@ public final class QLearningBrain {
     }
 
     /** The step's worth against the general objectives and the rung being climbed. */
+    /**
+     * A little for getting nearer to something to eat, while food is what the plan is after: the
+     * distance bucket of a living thing in view dropped since the last decision.
+     */
+    private double closingOnFood(Observation now) {
+        if (lastObservation == null || !"FOOD".equals(pursuit.name())
+                || !FocusKind.PASSIVE.name().equals(now.subject())
+                || !FocusKind.PASSIVE.name().equals(lastObservation.subject())
+                || now.distance() == Perception.Distance.NONE) {
+            return 0.0;
+        }
+        return now.distance().ordinal() < lastObservation.distance().ordinal() ? CLOSING_ON_FOOD : 0.0;
+    }
+
+    private static final double CLOSING_ON_FOOD = 2.0;
+
+    /** Whether a sweet berry bush stands within a few blocks: food, for a body that knows to use it. */
+    private static boolean berryBushNear(LocalPlayer player) {
+        BlockPos feet = player.blockPosition();
+        for (BlockPos pos : BlockPos.betweenClosed(feet.offset(-BUSH_SCAN, -2, -BUSH_SCAN),
+                feet.offset(BUSH_SCAN, 2, BUSH_SCAN))) {
+            if (player.level().isLoaded(pos)
+                    && player.level().getBlockState(pos).is(net.minecraft.world.level.block.Blocks.SWEET_BERRY_BUSH)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static final int BUSH_SCAN = 8;
+
     private double score(StepContext step) {
+        return generalScore(step) + progression.score(step);
+    }
+
+    /** The general objectives alone — health, patience, effort, food, breath — without the plan's. */
+    private double generalScore(StepContext step) {
         return GeneralObjectives.all().stream()
                 .mapToDouble(objective -> objective.score(step))
-                .sum()
-                + progression.score(step);
+                .sum();
     }
 
     private boolean[] legalGoals(ActionContext context) {
@@ -3401,7 +3474,9 @@ public final class QLearningBrain {
             }
             this.goals = new Table(columnsFor(Skill.Layer.GOAL), folder.resolve("goals.txt"));
             this.goals.table.inherit(general.table);
-            this.timing = new Table(names(Commitment.values()), folder.resolve("timing.txt"));
+            // A new file name for a new meaning: the old tables held totals, and their lesson was
+            // "SHORT"; they are left where they are rather than read as rates.
+            this.timing = new Table(names(Commitment.values()), folder.resolve("timing-rate.txt"));
             this.placement = new Table(names(Spot.values()), folder.resolve("placement.txt"));
             this.position = new Table(names(Ground.values()), folder.resolve("position.txt"));
             tables().forEach(Table::load);
