@@ -44,7 +44,7 @@
   "overlay.autocraft-ai.qualifier.wall": "pared",
   "overlay.autocraft-ai.qualifier.blocks": "con bloques",
   "overlay.autocraft-ai.qualifier.hungry": "con hambre",
-  "overlay.autocraft-ai.qualifier.bush": "arbusto de bayas cerca",
+  "overlay.autocraft-ai.qualifier.bush": "comida silvestre cerca",
   "overlay.autocraft-ai.bag.empty": "con las manos vacías",
   "overlay.autocraft-ai.bag.holding": "con %s",
   "overlay.autocraft-ai.needs.nothing": "tiene todo lo que necesita",

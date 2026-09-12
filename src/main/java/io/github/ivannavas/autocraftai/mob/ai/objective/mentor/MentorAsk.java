@@ -189,7 +189,7 @@ public record MentorAsk(Reason reason, Situation situation, String pursuit, Stri
                     .append(stuckState);
         }
         text.append("\n  (state key: source | what is in view | how far | health | flags: W walled in,")
-                .append(" B carrying blocks, H hungry, S berry bush near; an objective with no block")
+                .append(" B carrying blocks, H hungry, S food growing near (berry bush or melon); an objective with no block")
                 .append(" source adds | cover: SKY/PIT/ROOF | the body against the plan's band: BELOW/IN/ABOVE)")
                 .append("\nThe ground where it stands: ").append(terrainWords)
                 .append("\n  (terrain key: ").append(terrain).append(" = wanted | ahead | overhead | tags: B blocks,")

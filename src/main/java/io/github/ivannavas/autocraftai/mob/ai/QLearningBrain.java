@@ -2683,13 +2683,14 @@ public final class QLearningBrain {
 
     private static final double CLOSING_ON_FOOD = 2.0;
 
-    /** Whether a sweet berry bush stands within a few blocks: food, for a body that knows to use it. */
+    /** Whether a sweet berry bush or a melon stands within a few blocks: food, for a body that knows to take it. */
     private static boolean berryBushNear(LocalPlayer player) {
         BlockPos feet = player.blockPosition();
         for (BlockPos pos : BlockPos.betweenClosed(feet.offset(-BUSH_SCAN, -2, -BUSH_SCAN),
                 feet.offset(BUSH_SCAN, 2, BUSH_SCAN))) {
             if (player.level().isLoaded(pos)
-                    && player.level().getBlockState(pos).is(net.minecraft.world.level.block.Blocks.SWEET_BERRY_BUSH)) {
+                    && (player.level().getBlockState(pos).is(net.minecraft.world.level.block.Blocks.SWEET_BERRY_BUSH)
+                            || player.level().getBlockState(pos).is(net.minecraft.world.level.block.Blocks.MELON))) {
                 return true;
             }
         }

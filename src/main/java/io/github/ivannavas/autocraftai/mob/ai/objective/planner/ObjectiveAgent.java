@@ -122,6 +122,13 @@ public class ObjectiveAgent extends AgentExecutor {
             3. DESCEND — get down to a height. Stone, coal and iron are underground, and the player will
                never find them on the surface however long it looks.
                amount: the Y level to reach, between -55 and 120
+               The way down is cheap and the way back is not: it climbs one block at a time, and under a
+               roof or a jungle canopy the sky is ten minutes away. A body sent down with nothing to eat
+               came back up starving over twenty-five minutes and died at the top. So before DESCEND, or
+               any GATHER of what lives underground, the bag holds the trip: a pickaxe, food for the
+               trip (3 or more), a crafting table and a few logs for the next pickaxe. Whatever is
+               missing is the objective first. And the trip is for a set take — N iron, N coal — with
+               ASCEND back to the surface height right after it, queued, while there is still food.
 
             4. ASCEND — get up to a height. The way out of a hole, a ravine or a cave: the player can stack
                the blocks it is carrying under its own feet and climb, but only if you ask it to. If it has
@@ -155,6 +162,11 @@ public class ObjectiveAgent extends AgentExecutor {
               situation marked STARVING is the emergency: answer with the quickest route to food and
               nothing else — FOOD when it is on the surface, ASCEND to the surface height when it is
               underground — and keep the band wide enough that it can climb.
+              Where food is: animals in plains, forests and savannas; sweet berry bushes in taigas;
+              melons in jungles (a melon block is broken for slices); apples now and then off oak
+              leaves. The situation says S in the state when a berry bush or a melon stands within a
+              few blocks, and PASSIVE when an animal is in view. Ask for FOOD where one of those is
+              true; anywhere else the objective is to get to such a place first.
             - Readiness. The player is rewarded for already holding what an objective needs when the
               objective arrives, and charged every second it pursues a block its tools cannot break. So
               never set an objective whose tool is missing from the inventory — cobblestone with no

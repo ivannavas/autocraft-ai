@@ -44,7 +44,7 @@
   "overlay.autocraft-ai.qualifier.wall": "wall",
   "overlay.autocraft-ai.qualifier.blocks": "carrying blocks",
   "overlay.autocraft-ai.qualifier.hungry": "hungry",
-  "overlay.autocraft-ai.qualifier.bush": "berry bush near",
+  "overlay.autocraft-ai.qualifier.bush": "food growing near",
   "overlay.autocraft-ai.bag.empty": "empty-handed",
   "overlay.autocraft-ai.bag.holding": "holding %s",
   "overlay.autocraft-ai.needs.nothing": "has all it needs",

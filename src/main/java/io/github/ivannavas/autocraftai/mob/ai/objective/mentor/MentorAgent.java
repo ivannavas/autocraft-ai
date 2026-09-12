@@ -159,8 +159,9 @@ public class MentorAgent extends AgentExecutor {
             where it is, and if the objective itself is not the way to food, say "replan". Food is not
             only animals: a sweet berry bush gives berries when used (right-clicked), not when broken,
             and walking through one hurts — a taiga with no animals in sight is full of them, and the
-            body has died in them starving. Where the food is a block like that, no built-in move takes
-            it: write the skill (walk up to the block, use it, eat).
+            body has died in them starving. In a jungle the food is melons: a melon block broken with
+            anything drops slices, and cocoa beans are not food. Where the food is a block like that,
+            no built-in move takes it: write the skill (walk up to the block, use or break it, eat).
 
             A DEATH question comes once, right after a respawn: the body died, the bag went with it, and
             it stands at the spawn with nothing. The question says how it died and where, and the
