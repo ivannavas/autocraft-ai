@@ -658,6 +658,11 @@ public final class ClaudePlanner implements ObjectivePlanner {
     }
 
     @Override
+    public boolean hasAnswer() {
+        return answer.get() != null;
+    }
+
+    @Override
     public Optional<Plan> takeQueued() {
         Plan next = queued.poll();
         if (next != null) {

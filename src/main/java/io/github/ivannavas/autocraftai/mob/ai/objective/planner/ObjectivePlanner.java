@@ -67,6 +67,11 @@ public interface ObjectivePlanner {
     default void forgetQueued() {
     }
 
+    /** Whether an answer to the last question is waiting to be taken. */
+    default boolean hasAnswer() {
+        return false;
+    }
+
     default void reset() {
     }
 

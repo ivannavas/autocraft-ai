@@ -437,6 +437,12 @@ public final class Progression {
         log.info("Giving up {} at the mentor's request: {}", current.name(), why);
         Chronicle.get().objectiveAbandoned(current.name(), "the coach gave it up: " + why);
         mentorNote = why == null ? "" : why.strip();
+        // And the chain queued behind it goes too. The coach said this plan was wrong for the body as
+        // it stands; taking the next link of the same plan is answering that with more of it. A run
+        // that had just died twice was told "get wood, you have nothing", the coach cancelled it, and
+        // the run took the link behind it — dig a shaft to y=55 — and spent three minutes punching
+        // stone with bare hands for a descent nobody wanted any more.
+        planner.forgetQueued();
         current = null;
         plan = null;
         stepsOnCurrent = 0;
@@ -944,6 +950,11 @@ public final class Progression {
     }
 
     /** What the mentor is told about a block: the run as it stands, with the objective in hand. */
+    /** Whether the planner has answered and the answer is still to be taken, which happens at a decision. */
+    public boolean answerWaiting() {
+        return planner.hasAnswer();
+    }
+
     public Situation blockSituation(net.minecraft.client.player.LocalPlayer player,
                                     InventoryCensus obtained) {
         return situation(player, obtained, current == null ? "" : current.toString());

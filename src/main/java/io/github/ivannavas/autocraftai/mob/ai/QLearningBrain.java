@@ -1318,6 +1318,12 @@ public final class QLearningBrain {
         if (commitment == null) {
             return false;
         }
+        // An answer is waiting: decide now, whatever the move is doing. Answers are taken at decisions,
+        // and the terrain layer keeps the body between them — so a review that had just called the
+        // shaft useless sat unread for two minutes while the body dug on down it.
+        if (progression.answerWaiting()) {
+            return false;
+        }
         if (installedGoal != null && engine.isCommitted(installedGoal)
                 && stepsRun < commitment.steps() + COMMITTED_GRACE_STEPS) {
             return true;
