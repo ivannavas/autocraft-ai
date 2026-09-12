@@ -28,7 +28,15 @@ public enum CraftChoice {
      * Its {@link #input} is what feeds the top slot, which is what tells the brain to reach for a
      * {@link io.github.ivannavas.autocraftai.mob.goal.SmeltGoal} instead of a crafting one.
      */
-    IRON(Resource.IRON, Resource.RAW_IRON, false);
+    IRON(Resource.IRON, Resource.RAW_IRON, false),
+    /** The other thing a furnace makes: raw copper into the ingot, on the same terms as iron. */
+    COPPER(Resource.COPPER, Resource.RAW_COPPER, false),
+    /**
+     * A piece of body armour, at a table, out of whatever the bag can make one from. Which piece is the
+     * recipe book's business: the choice is "put something on", and the body wears it as soon as it has
+     * it. Every death this run but one was a mob or a fall.
+     */
+    ARMOUR(Resource.ARMOUR, null, false);
 
     private final Resource resource;
     private final Resource input;

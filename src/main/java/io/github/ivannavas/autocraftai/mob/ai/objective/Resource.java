@@ -52,6 +52,15 @@ public enum Resource {
      */
     STONE_PICKAXE(stack -> stack.is(Items.STONE_PICKAXE), 14.0, null, Where.SURFACE),
     SWORD(stack -> stack.is(ItemTags.SWORDS), 10.0, null, Where.SURFACE),
+    /**
+     * Any piece of body armour: the game's own test, so a helmet of copper and a pair of leather boots
+     * both count. Worn the moment it is carried — see {@link io.github.ivannavas.autocraftai.mob.ai.Armoury}
+     * — so "get armour" is an objective whose good is had without anything else being learned first.
+     *
+     * <p>It is here because the run kept dying to skeletons and zombies with the copper for a helmet in
+     * the bag and no word in the vocabulary for what to do with it.
+     */
+    ARMOUR(Resource::isArmour, 16.0, null, Where.SURFACE),
     COBBLESTONE(stack -> stack.is(Items.COBBLESTONE), 2.0,
             state -> state.is(BlockTags.BASE_STONE_OVERWORLD), Where.UNDERGROUND),
 
@@ -75,6 +84,19 @@ public enum Resource {
      * its recipe lives in the smelting goal rather than the recipe book.
      */
     IRON(stack -> stack.is(Items.IRON_INGOT), 14.0, null, Where.SURFACE),
+
+    /**
+     * What copper ore drops. A stone pickaxe gets it, it is commoner than iron and shallower, and it
+     * smelts into the ingot below.
+     */
+    RAW_COPPER(stack -> stack.is(Items.RAW_COPPER), 10.0, state -> state.is(BlockTags.COPPER_ORES),
+            Where.UNDERGROUND),
+
+    /**
+     * The copper ingot. Tools of copper mine what stone mines and last longer; armour of copper is the
+     * first armour a run can reach, and armour is what the deaths have been about.
+     */
+    COPPER(stack -> stack.is(Items.COPPER_INGOT), 12.0, null, Where.SURFACE),
 
     /** Out of reach until there is a diamond pickaxe, and nameable anyway: the portal is made of it. */
     OBSIDIAN(stack -> stack.is(Items.OBSIDIAN), 20.0, state -> state.is(Blocks.OBSIDIAN), Where.UNDERGROUND),
@@ -176,7 +198,11 @@ public enum Resource {
             FURNACE, Map.of(COBBLESTONE, 8),
             // Smelted rather than crafted, but the chain is the same shape: one raw iron makes one ingot,
             // so contributesTo and the reserve can reason about it like any other step.
-            IRON, Map.of(RAW_IRON, 1));
+            IRON, Map.of(RAW_IRON, 1),
+            COPPER, Map.of(RAW_COPPER, 1),
+            // The cheapest piece is four ingots; the others want more, and the chain only has to be
+            // roughly right for the reserve and the shopping list to reason about it.
+            ARMOUR, Map.of(COPPER, 4));
 
     /**
      * Whether having this is a step towards having {@code target} — the thing itself, or something it is
@@ -199,7 +225,17 @@ public enum Resource {
 
     /** The things that are three wide on the grid: made at a table, or not at all. */
     private static final java.util.Set<Resource> AT_A_TABLE =
-            java.util.EnumSet.of(SWORD, PICKAXE, STONE_PICKAXE, FURNACE);
+            java.util.EnumSet.of(SWORD, PICKAXE, STONE_PICKAXE, FURNACE, ARMOUR);
+
+    /**
+     * Whether this is a piece of body armour: the game's own four tags, not merely "the game would let
+     * you put it on your head" — which is also true of a carved pumpkin, and a blinded body is worse off
+     * than a bare one.
+     */
+    private static boolean isArmour(ItemStack stack) {
+        return stack.is(ItemTags.HEAD_ARMOR) || stack.is(ItemTags.CHEST_ARMOR)
+                || stack.is(ItemTags.LEG_ARMOR) || stack.is(ItemTags.FOOT_ARMOR);
+    }
 
     /**
      * Whether making this takes a crafting table standing or in the bag.
@@ -214,7 +250,7 @@ public enum Resource {
 
     /** Whether this comes out of a furnace rather than a grid: a smelted thing needs one standing by. */
     public boolean needsFurnace() {
-        return this == IRON;
+        return this == IRON || this == COPPER;
     }
 
     /**

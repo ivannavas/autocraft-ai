@@ -226,6 +226,17 @@ public final class QLearningBrain {
      * having to know about the other.
      */
     private static final int SWIM_PRIORITY = 0;
+    /**
+     * Breaking out of a block the body is stood inside, above every other claim on it.
+     *
+     * <p>Not a strategy and not a layer: there is nothing to weigh. A body inside a block is losing a
+     * heart every half second and the only thing that helps is the block coming away, exactly as the
+     * only thing that helps under water is the surface. It comes from a night the coach taught a skill
+     * that punched the ceiling and stacked a block under its own feet: when the punch missed and the
+     * stack landed, the body was inside the ceiling, and it suffocated there with a full bag.
+     */
+    private static final int UNBURY_PRIORITY = 0;
+    private MobGoal unburyGoal;
     /** Ticks spent on the death screen before asking to come back. Long enough to see what killed you. */
     private static final int RESPAWN_DELAY_TICKS = 40;
     /** Where the per-pursuit folders live, under the directory the shared tables are in. */
@@ -774,6 +785,13 @@ public final class QLearningBrain {
         // A screen nothing is using is closed before anything else is tended: with a furnace open the
         // body can neither break nor place, and every goal died a second after it started.
         closeStrayMenu(player);
+        // And armour in the bag goes on the body. Never mid-break — changing the held item throws the
+        // block's progress away — and never while a craft or a skill has the hand.
+        if (!handBusy()) {
+            Armoury.wear(player);
+        }
+        // Before any of the layers: a body inside a block digs itself out.
+        tendBurial(player);
         // On its own clock, whatever the commitment is doing: the water does not wait for a decision.
         tendWater(player);
         // Nor does a skeleton, or nightfall, or a roof the objective is on the other side of.
@@ -859,6 +877,18 @@ public final class QLearningBrain {
     }
 
     /** Whether the body is standing still for the coach's answer, and the answer is still on its way. */
+    /** Whether something is using the held item right now, so nothing else may change it. */
+    private boolean handBusy() {
+        return crafting()
+                || (installedGoal != null && engine.isCommitted(installedGoal))
+                || (craftGoal != null && engine.isRunning(craftGoal))
+                || (craftSkill != null && engine.isRunning(craftSkill))
+                || (installedGoal instanceof SkillGoal && engine.isRunning(installedGoal))
+                || (tacticGoal instanceof SkillGoal && engine.isRunning(tacticGoal))
+                || (passageGoal instanceof SkillGoal && engine.isRunning(passageGoal))
+                || (passageGoal != null && engine.isCommitted(passageGoal));
+    }
+
     private boolean mentorHolding() {
         return mentorHoldUntil > System.currentTimeMillis() && mentor.pending();
     }
@@ -1833,6 +1863,33 @@ public final class QLearningBrain {
      * body straight back when it lets go. The two are in the same body at once, and the engine's control
      * claims are what keep them out of the same legs at once.
      */
+    /**
+     * Breaks the block the body is standing inside, if it is standing inside one. Held until the block is
+     * gone or the goal gives up on it; nothing else the body might be doing outranks not suffocating.
+     */
+    private void tendBurial(LocalPlayer player) {
+        BlockPos head = BlockPos.containing(player.getEyePosition());
+        boolean buried = player.level().isLoaded(head)
+                && player.level().getBlockState(head).isSuffocating(player.level(), head);
+        if (!buried) {
+            if (unburyGoal != null) {
+                engine.removeGoal(unburyGoal);
+                unburyGoal = null;
+            }
+            return;
+        }
+        if (unburyGoal != null && engine.isRunning(unburyGoal)) {
+            return;
+        }
+        if (unburyGoal != null) {
+            engine.removeGoal(unburyGoal);
+        }
+        log.info("Buried in {} at {}; breaking out",
+                player.level().getBlockState(head).getBlock().getName().getString(), head.toShortString());
+        unburyGoal = new BreakGoal(java.util.List.of(head.immutable()));
+        engine.addGoal(UNBURY_PRIORITY, unburyGoal);
+    }
+
     private void tendWater(LocalPlayer player) {
         Water around = Water.around(player);
         if (!swimming(around)) {
@@ -2575,7 +2632,14 @@ public final class QLearningBrain {
                 progression.worthDigging(player.getBlockY()),
                 progression.heightWanted(player.getBlockY()),
                 reserve,
-                progression.minesWhatItSees() && sighting.kind() == FocusKind.RESOURCE);
+                progression.minesWhatItSees() && sighting.kind() == FocusKind.RESOURCE,
+                // Whether the thing the plan is after is already within the eyes' reach, whatever has the
+                // focus. Not the same question as the sighting: a skeleton eight blocks off takes the
+                // focus and the log is still there in front of the body — and a journey set off to find
+                // it arrives the instant it starts, which is how thirty-eight travels a minute happened
+                // with an acacia in plain view.
+                sighting.kind() == FocusKind.RESOURCE
+                        || (progression.wanted().isPresent() && perception.canSee(player, progression.wanted())));
     }
 
     /**

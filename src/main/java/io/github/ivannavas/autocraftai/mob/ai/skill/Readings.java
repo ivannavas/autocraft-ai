@@ -99,6 +99,7 @@ public final class Readings {
             case "hostiles" -> around.count();
             case "nearest" -> around.nearest().name();
             case "armed" -> around.armed();
+            case "armour", "armor" -> io.github.ivannavas.autocraftai.mob.ai.Armoury.worn(player);
             case "health" -> around.health().name();
             case "blocks" -> around.blocks();
             case "candig" -> around.canDig();

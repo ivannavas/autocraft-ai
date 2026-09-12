@@ -137,7 +137,8 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
             when: whether it applies, in this language: and, or, not, brackets, == != < <= > >=,
               numbers, words, and the readings: cover (SKY/PIT/ROOF), light (DAY/NIGHT/DARK), threat
               (the hostile kinds, e.g. SKELETON+ZOMBIE), hostiles (count), nearest (CLOSE/NEAR/FAR/NONE),
-              armed, health (LOW/MID/HIGH), blocks (count in hand), candig, roomabove, stuck, y, surface,
+              armed, armour (pieces worn, 0 to 4; the body puts on what it carries by itself),
+              health (LOW/MID/HIGH), blocks (count in hand), candig, roomabove, stuck, y, surface,
               depth (surface - y), sky, night and day (the world's clock, above ground or below; light
               is what the body sees), wet, hungry, food, fuel (how many things a furnace burns are
               carried: coal, charcoal, planks, logs, sticks), pickaxe, sword, onground,

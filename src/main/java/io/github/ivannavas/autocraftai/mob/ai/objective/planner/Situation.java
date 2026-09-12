@@ -78,7 +78,8 @@ public record Situation(
         int minutesWithoutProgress,
         String note,
         String table,
-        boolean underCover) {
+        boolean underCover,
+        int armour) {
 
     /** How far out a mob counts as being on top of us. */
     private static final double THREAT_RANGE = 16.0;
@@ -136,7 +137,8 @@ public record Situation(
                 DecisionLog.get().recent(),
                 Minecraft.getInstance().getLanguageManager().getSelected(),
                 0, "", List.of(), 0, "", "",
-                !player.level().canSeeSky(player.blockPosition().above()));
+                !player.level().canSeeSky(player.blockPosition().above()),
+                io.github.ivannavas.autocraftai.mob.ai.Armoury.worn(player));
     }
 
     /** The same moment, with the run's own record filled in. */
@@ -144,14 +146,14 @@ public record Situation(
                              String note) {
         return new Situation(biome, dimension, night, lightLevel, health, maxHealth, food, maxFood, depth,
                 hostilesNearby, carrying, obtained, achieved, objective, decisions, language,
-                deaths, lastDeath, shortOf, minutesWithoutProgress, note, table, underCover);
+                deaths, lastDeath, shortOf, minutesWithoutProgress, note, table, underCover, armour);
     }
 
     /** The same moment, with where the crafting table is said in words. */
     public Situation withTable(String table) {
         return new Situation(biome, dimension, night, lightLevel, health, maxHealth, food, maxFood, depth,
                 hostilesNearby, carrying, obtained, achieved, objective, decisions, language,
-                deaths, lastDeath, shortOf, minutesWithoutProgress, note, table, underCover);
+                deaths, lastDeath, shortOf, minutesWithoutProgress, note, table, underCover, armour);
     }
 
     private static int hostilesNear(LocalPlayer player) {
@@ -254,6 +256,8 @@ public record Situation(
         text.append("Height Y: ").append(depth).append('\n');
         text.append("Overhead: ").append(underCover ? "no sky — underground or under a roof" : "open sky").append('\n');
         text.append("Hostiles in sight: ").append(hostilesNearby).append('\n');
+        text.append("Armour worn: ").append(armour).append(" of 4 pieces")
+                .append(armour == 0 ? " — every hit lands in full" : "").append('\n');
         text.append("Inventory: ").append(carrying.isEmpty() ? "empty" : String.join(", ", carrying))
                 .append('\n');
         if (!table.isEmpty()) {

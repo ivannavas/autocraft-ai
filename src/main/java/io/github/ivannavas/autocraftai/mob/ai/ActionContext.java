@@ -37,7 +37,7 @@ public record ActionContext(Sighting sighting, Set<Resource> craftable, BlockPos
                             boolean hasBlocks, boolean canDigDown, Tool tool,
                             boolean hungry, boolean canEat, boolean wellFed, boolean worthDigging,
                             OptionalInt heightWanted, Reserve reserve,
-                            boolean mineOnSight) {
+                            boolean mineOnSight, boolean wantedInSight) {
 
     public ActionContext {
         craftable = Set.copyOf(craftable);

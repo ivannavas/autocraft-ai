@@ -79,9 +79,17 @@ public class ObjectiveAgent extends AgentExecutor {
                target: one of these words exactly, and never a block id. Block ids go in "sources", which
                        is a different field for a different thing: "LOG", not "minecraft:oak_log".
                        LOG, PLANKS, STICK, CRAFTING_TABLE, PICKAXE, STONE_PICKAXE, SWORD, COBBLESTONE,
-                       DIRT, SAND, GRAVEL, COAL, IRON, OBSIDIAN, FOOD
+                       DIRT, SAND, GRAVEL, COAL, RAW_COPPER, COPPER, ARMOUR, IRON, OBSIDIAN, FOOD
                        PICKAXE is the first, wooden one. STONE_PICKAXE is the one that mines iron: iron
                        ore gives nothing to a wooden pickaxe, so IRON always comes after STONE_PICKAXE.
+                       RAW_COPPER is what copper ore drops — a stone pickaxe gets it, it is commoner and
+                       shallower than iron, and it is the step most runs skip. COPPER is the ingot,
+                       smelted from it at a furnace like IRON. ARMOUR is any piece worn on the body: the
+                       player puts on whatever armour it carries by itself, so this objective's good is
+                       had the moment it is made. Copper armour is four to eight ingots a piece and is
+                       the first armour a run can reach. The situation says how many of the four pieces
+                       are on. Nearly every death is a mob or a fall, so armour before iron once there is
+                       a furnace: RAW_COPPER, then COPPER, then ARMOUR.
                        DIRT, SAND and GRAVEL are all just blocks to build with: ask for whichever the
                        biome actually has (sand in a desert, dirt in grassland), never for dirt in a
                        desert.

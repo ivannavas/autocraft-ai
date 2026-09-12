@@ -63,8 +63,10 @@ public class MentorAgent extends AgentExecutor {
                 teach the GOAL table instead — APPROACH/MINE, or FLEE.
 
             CRAFT choices - what to make meanwhile (the row is the shopping situation you are given):
-              NOTHING, PLANKS, STICK, CRAFTING_TABLE, SWORD, PICKAXE, STONE_PICKAXE, FURNACE, IRON, and
-              any craft skill on the situation's list of what it can make now.
+              NOTHING, PLANKS, STICK, CRAFTING_TABLE, SWORD, PICKAXE, STONE_PICKAXE, FURNACE, IRON,
+              COPPER (smelted from raw copper, like iron), ARMOUR (a piece of body armour at a table,
+              which the body then puts on by itself), and any craft skill on the situation's list of
+              what it can make now.
               A craft at a table or a furnace WALKS the body there and holds it, outranking every goal
               move, until it finishes or gives up. Read the "driving the body" line: if such a craft is
               holding the body and it is not what the plan needs right now, the block is that craft, not

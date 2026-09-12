@@ -165,7 +165,7 @@ public enum GoalAction {
             // it arrives at once, and a move that arrives at once costs nothing, so a row the coach had
             // once seeded with TRAVEL chose it fifty-eight times a minute, going nowhere, with the stone
             // three blocks away. What to do about a block in view is MINE, DIG_DOWN or a skill's question.
-            return context.sighting().kind() != FocusKind.RESOURCE;
+            return !context.wantedInSight();
         }
 
         @Override
