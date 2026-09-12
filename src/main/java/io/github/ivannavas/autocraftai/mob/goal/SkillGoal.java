@@ -195,6 +195,14 @@ public final class SkillGoal implements MobGoal {
                 : what.verb() == Skill.Verb.WAIT || what.verb() == Skill.Verb.HOLD
                 ? Math.max(Skill.STEP_TICKS, what.amount() + 20) : Skill.STEP_TICKS;
         if (++stepTicks > allowed) {
+            if (waiting) {
+                // A wait for a condition that ran its whole allowance is a wait kept, not a step that
+                // failed: the shelter stood for its three minutes and the body is handed back to the
+                // tables with the night still on. Called a failure, every night tactic the coach wrote
+                // would retire on its record after a few nights of doing exactly what it said.
+                finish(body);
+                return;
+            }
             fail(body, "step " + (step + 1) + " (" + what.describe() + ") did not finish");
             return;
         }
