@@ -250,7 +250,7 @@ public final class MineSightingGoal implements MobGoal {
             // block on the line from the eye is what stands between them. Without this the walk ended
             // standing on top of the ore, going nowhere, cut after two seconds, eight times on the same
             // coal, and no table had a move that dug the two blocks down to it.
-            occluder = overOrUnder(body, centre) ? firstOnTheLine(body) : null;
+            occluder = noWalkNearer(body, centre) ? firstOnTheLine(body) : null;
             return;
         }
 
@@ -273,10 +273,20 @@ public final class MineSightingGoal implements MobGoal {
         return body.player().getEyePosition().distanceToSqr(centre) <= reach * reach;
     }
 
-    /** Whether the block is about under or over the body: nowhere left to walk to get nearer it. */
-    private static boolean overOrUnder(MobBody body, Vec3 centre) {
+    /**
+     * Whether walking will get the body no nearer the block: it is about under or over the body, or
+     * below it down a slope no steeper than the line from the eye — which is a line the terrain layer
+     * can dig, one block at a time, the body stepping down into each. An ore eight down and eight
+     * across was "in view" for an hour and never reached; along that line it is a staircase.
+     */
+    private static boolean noWalkNearer(MobBody body, Vec3 centre) {
         Vec3 at = body.position();
-        return Math.hypot(centre.x - at.x, centre.z - at.z) <= OVER_UNDER_BLOCKS;
+        double across = Math.hypot(centre.x - at.x, centre.z - at.z);
+        double drop = body.player().getBlockY() - Math.floor(centre.y);
+        if (drop >= 2) {
+            return across <= Math.max(OVER_UNDER_BLOCKS, drop);
+        }
+        return across <= OVER_UNDER_BLOCKS;
     }
 
     /** The nearest block on the line from the eye to the target, not counting the target, or null. */

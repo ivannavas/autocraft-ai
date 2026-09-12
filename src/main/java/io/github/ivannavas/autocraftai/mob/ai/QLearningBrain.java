@@ -301,7 +301,8 @@ public final class QLearningBrain {
      * hostile, dry, on the ground, not a night in the open — the body waits where it was asked about.
      */
     private long mentorHoldUntil;
-    private static final long MENTOR_HOLD_MILLIS = 45_000L;
+    /** Sixty: Opus answers in about a minute, and at forty-five the wait ran out twelve times in eighteen. */
+    private static final long MENTOR_HOLD_MILLIS = 60_000L;
     /** Where the body stood when the last lesson landed, for judging whether it actually got away. */
     private Vec3 rescuePosition;
     /** Decisions before a lesson is judged at all, and blocks the body must have moved for "worked". */
@@ -1521,6 +1522,10 @@ public final class QLearningBrain {
         // noise — fifty-two choices in two minutes under a wait for health.
         if (installedGoal instanceof MineSightingGoal mine && mine.target() != null) {
             if (mine.struck()) {
+                fruitlessMines.remove(mine.target());
+            } else if (mine.occluder() != null) {
+                // Something named in the way is the terrain layer's work in progress, not a failure:
+                // an ore down a slope is dug towards a block a hand-back at a time.
                 fruitlessMines.remove(mine.target());
             } else if (fruitlessMines.merge(mine.target(), 1, Integer::sum) >= FRUITLESS_MINES_BEFORE_SHUN) {
                 fruitlessMines.remove(mine.target());

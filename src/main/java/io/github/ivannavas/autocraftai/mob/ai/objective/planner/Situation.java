@@ -77,7 +77,8 @@ public record Situation(
         List<String> shortOf,
         int minutesWithoutProgress,
         String note,
-        String table) {
+        String table,
+        boolean underCover) {
 
     /** How far out a mob counts as being on top of us. */
     private static final double THREAT_RANGE = 16.0;
@@ -134,7 +135,8 @@ public record Situation(
                 objective,
                 DecisionLog.get().recent(),
                 Minecraft.getInstance().getLanguageManager().getSelected(),
-                0, "", List.of(), 0, "", "");
+                0, "", List.of(), 0, "", "",
+                !player.level().canSeeSky(player.blockPosition().above()));
     }
 
     /** The same moment, with the run's own record filled in. */
@@ -142,14 +144,14 @@ public record Situation(
                              String note) {
         return new Situation(biome, dimension, night, lightLevel, health, maxHealth, food, maxFood, depth,
                 hostilesNearby, carrying, obtained, achieved, objective, decisions, language,
-                deaths, lastDeath, shortOf, minutesWithoutProgress, note, table);
+                deaths, lastDeath, shortOf, minutesWithoutProgress, note, table, underCover);
     }
 
     /** The same moment, with where the crafting table is said in words. */
     public Situation withTable(String table) {
         return new Situation(biome, dimension, night, lightLevel, health, maxHealth, food, maxFood, depth,
                 hostilesNearby, carrying, obtained, achieved, objective, decisions, language,
-                deaths, lastDeath, shortOf, minutesWithoutProgress, note, table);
+                deaths, lastDeath, shortOf, minutesWithoutProgress, note, table, underCover);
     }
 
     private static int hostilesNear(LocalPlayer player) {
@@ -243,8 +245,14 @@ public record Situation(
             text.append("STARVING: the hunger bar is almost empty. If there is nothing edible in the inventory"
                     + " this comes before everything else: the objective has to be the quickest way to food"
                     + " — the surface and its animals, or FOOD itself when it is already up there.\n");
+            if (underCover) {
+                text.append("It is underground with nothing to eat down there: no objective below the surface"
+                        + " feeds it. The way to food is up first (ASCEND to the surface height), then"
+                        + " animals or berry bushes.\n");
+            }
         }
         text.append("Height Y: ").append(depth).append('\n');
+        text.append("Overhead: ").append(underCover ? "no sky — underground or under a roof" : "open sky").append('\n');
         text.append("Hostiles in sight: ").append(hostilesNearby).append('\n');
         text.append("Inventory: ").append(carrying.isEmpty() ? "empty" : String.join(", ", carrying))
                 .append('\n');

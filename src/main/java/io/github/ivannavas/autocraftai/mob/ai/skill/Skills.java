@@ -492,17 +492,31 @@ public final class Skills {
         StringBuilder out = new StringBuilder();
         for (Skill skill : skills.values()) {
             Record record = records.get(skill.name());
+            if (record.retired) {
+                // A line, not the skill: fourteen forgotten skills quoted in full were half of every
+                // question the coach was asked — seven thousand tokens of steps nobody may run again —
+                // and the coach only needs to know the name is taken and why it went.
+                out.append(out.isEmpty() ? "" : "\n").append("  ").append(skill.name())
+                        .append(" (").append(skill.layer().name().toLowerCase(java.util.Locale.ROOT)).append(") — ")
+                        .append(record.forgotten.isEmpty() ? "retired for not finishing"
+                                : "forgotten by you: " + clip(record.forgotten, 100))
+                        .append(" [used ").append(record.uses).append(", finished ").append(record.completions).append(']');
+                continue;
+            }
             out.append(out.isEmpty() ? "" : "\n").append("  ").append(skill.describe())
                     .append(" [used ").append(record.uses).append(", finished ").append(record.completions)
-                    .append(record.empty > 0 ? ", did nothing " + record.empty : "")
-                    .append(!record.retired ? ""
-                            : record.forgotten.isEmpty() ? ", RETIRED for not finishing"
-                            : ", FORGOTTEN by you: " + record.forgotten);
+                    .append(record.empty > 0 ? ", did nothing " + record.empty : "");
             if (!record.problems.isEmpty()) {
-                out.append("; last failures: ").append(String.join(" / ", record.problems));
+                List<String> last = new ArrayList<>(record.problems);
+                last = last.subList(Math.max(0, last.size() - 2), last.size());
+                out.append("; last failures: ").append(String.join(" / ", last));
             }
             out.append(']');
         }
         return out.toString();
+    }
+
+    private static String clip(String text, int most) {
+        return text.length() <= most ? text : text.substring(0, most - 1) + "…";
     }
 }

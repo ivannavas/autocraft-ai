@@ -93,7 +93,7 @@ public final class ClaudeMentor implements Mentor {
      * two of them four seconds apart. A body still pinned this long after a lesson is worth a second
      * opinion; one pinned for four seconds is not a second block.
      */
-    private static final long MIN_INTERVAL_MILLIS = 90_000L;
+    private static final long MIN_INTERVAL_MILLIS = 120_000L;
     /** How long after teaching a state the same state may be taught again, if the body is still stuck. */
     private static final long RETEACH_AFTER_MILLIS = 90_000L;
     /** How many times one state may be taught. Two: the first answer and one that knows it failed. */
@@ -111,7 +111,7 @@ public final class ClaudeMentor implements Mentor {
      * answers that all "worked" for a few decisions is the pattern of a block the mentor cannot see, and
      * the fifth costs the same and teaches the same.
      */
-    private static final int MAX_PER_PURSUIT = 4;
+    private static final int MAX_PER_PURSUIT = 3;
     private static final String KEY_FILE = "anthropic-key.txt";
     private static final String KEY_ENVIRONMENT_VARIABLE = "ANTHROPIC_API_KEY";
 
