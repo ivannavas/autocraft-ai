@@ -514,6 +514,8 @@ public final class QLearningBrain {
     /** The block it was trying to get at, and how many were on the line to it, when it last chose. */
     private BlockPos stuckSought;
     private int stuckBetween;
+    /** The blocks that were on the line to the block wanted when the layer last chose, for counting the ones gone. */
+    private List<BlockPos> stuckOccluders = List.of();
     private Obstruction.Ahead stuckAhead;
     private InventoryCensus obtained = InventoryCensus.empty();
     private InventoryCensus previousStepCensus;
@@ -578,6 +580,18 @@ public final class QLearningBrain {
                 case PASSAGE -> passage.addColumn(skill.name());
                 case TACTIC -> tactics.addColumn(skill.name());
                 case CRAFT -> crafting.addColumn(skill.name());
+            }
+        });
+        // And a skill let go takes its column with it, from the same tables.
+        Skills.get().onDropped(skill -> {
+            switch (skill.layer()) {
+                case GOAL -> {
+                    general.dropColumn(skill.name());
+                    suites.values().forEach(suite -> suite.goals.dropColumn(skill.name()));
+                }
+                case PASSAGE -> passage.dropColumn(skill.name());
+                case TACTIC -> tactics.dropColumn(skill.name());
+                case CRAFT -> crafting.dropColumn(skill.name());
             }
         });
     }
@@ -2008,6 +2022,7 @@ public final class QLearningBrain {
         stuckTarget = here.target();
         stuckSought = here.sought();
         stuckBetween = here.aheadBlocks().size();
+        stuckOccluders = here.wanted() == Obstruction.Wanted.TOWARD ? List.copyOf(here.aheadBlocks()) : List.of();
         stuckAhead = here.ahead();
 
         if (holdsPassageSkill() || holdsPassageBreak()) {
@@ -2146,8 +2161,11 @@ public final class QLearningBrain {
             case FLAT -> stuckTarget == null ? 0.0 : flat(before, stuckTarget) - flat(now, stuckTarget);
             // Blocks taken off the line to the one it is after. The block itself, once it comes away,
             // pays through the ordinary reward like any other gain.
-            case TOWARD -> stuckSought == null ? 0.0
-                    : stuckBetween - Obstruction.occluders(player, stuckSought).size();
+            // Blocks that were on the line and are gone, not the line's length before and after: the
+            // line is drawn from the eye, and a step sideways put two more blocks on it or took two
+            // off, so a stroll was paid or charged two a second for the geometry and the break that
+            // actually removed a block read no better than the stroll.
+            case TOWARD -> stuckSought == null ? 0.0 : removedOf(player, stuckOccluders);
         };
         // A passage move that made no way pays for the corner too: a body that jumps and breaks the
         // block above in the same spot for a quarter of an hour is otherwise settled a second at a time,
@@ -2173,6 +2191,17 @@ public final class QLearningBrain {
                     String.format("%.2f", progress), String.format("%.2f", dwell));
         }
         return reward;
+    }
+
+    /** How many of the blocks that were in the way are no longer there. */
+    private static double removedOf(LocalPlayer player, List<BlockPos> before) {
+        int gone = 0;
+        for (BlockPos pos : before) {
+            if (player.level().isLoaded(pos) && player.level().getBlockState(pos).isAir()) {
+                gone++;
+            }
+        }
+        return gone;
     }
 
     private static double flat(Vec3 from, Vec3 to) {
@@ -3584,6 +3613,24 @@ public final class QLearningBrain {
             }
             // Told again for a revision, whose prior may have changed.
             prime();
+        }
+
+        private void dropColumn(String name) {
+            int index = columns.indexOf(name);
+            if (index < 0) {
+                return;
+            }
+            columns.remove(index);
+            table.dropColumn(index);
+            everything = new boolean[columns.size()];
+            Arrays.fill(everything, true);
+            // A claim on the dropped column is void; one past it has moved down a slot.
+            if (pendingColumn == index) {
+                pendingState = null;
+                pendingColumn = -1;
+            } else if (pendingColumn > index) {
+                pendingColumn--;
+            }
         }
 
         private void load() {

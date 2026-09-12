@@ -103,8 +103,14 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
     public static final int STEP_TICKS = 200;
     /** The most ticks a wait or a hold may ask for: smelting one item takes two hundred. */
     public static final int LONGEST_WAIT = 600;
-    /** The most a wait for a condition may last: a night, with room to spare. Outside the budget. */
-    public static final int WAIT_FOR_TICKS = 12000;
+    /**
+     * The most a wait for a condition may last: three minutes, outside the budget. It was a whole night,
+     * and every night tactic the coach wrote ended in "wait for day" — a body sealed in a hole with a
+     * pickaxe stood still for ten minutes at a time while the plan wanted stone. The wait ends here, and
+     * the layers get the body back; a tactic whose condition still holds may be chosen again, and the
+     * tactics table learns whether keeping the body or letting it dig is the better night.
+     */
+    public static final int WAIT_FOR_TICKS = 3600;
     /** The most a writer may seed a new skill with, so an invention is tried and not trusted. */
     public static final double MOST_PRIOR = 6.0;
 
@@ -156,7 +162,9 @@ public record Skill(String name, Layer layer, Condition when, Condition until, L
               {"walk": [f,u,r]} or {"walk": "furnace"} (up to the nearest block of that kind within eight
               blocks: a plan resource or a block id); {"look": [f,u,r]} or {"look": "<block>"};
               {"jump": true}, {"wait": ticks} or {"wait": "<condition>"} (stand still until it holds —
-              "day", "hostiles == 0" — for up to ten minutes, outside the skill's own minute);
+              "day", "hostiles == 0" — for up to three minutes, outside the skill's own minute; a wait
+              for day does not last the night on purpose: once sealed in, the body is expected to work
+              underground, and the tables decide whether to shelter again);
               {"look": "nearest"} or {"look": "worst"} face the nearest or the most dangerous hostile, so
               the next step's forward is towards it; {"attack": "worst"} or "nearest"; {"flee": ticks};
               {"select": "sword"|"pickaxe"|"axe"|"block"|"hand"|<item id or plan resource>} put it in hand;

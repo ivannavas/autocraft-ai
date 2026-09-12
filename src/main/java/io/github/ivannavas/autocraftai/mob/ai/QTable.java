@@ -179,6 +179,29 @@ public final class QTable {
      * The width the table has from now on. Narrower only while it holds no rows: a cleared table whose
      * skill columns have gone with the skills; with rows it can only grow, as {@link #resize} does.
      */
+    /**
+     * Takes a column out, closing the gap: every row and the priors lose that slot. For a skill let go
+     * from the book, whose column would otherwise sit dead in every table for ever.
+     */
+    public void dropColumn(int index) {
+        if (index < 0 || index >= actionCount) {
+            return;
+        }
+        actionCount--;
+        initial = without(initial, index);
+        values.replaceAll((state, row) -> without(row, index));
+    }
+
+    private static double[] without(double[] row, int index) {
+        if (index >= row.length) {
+            return row;
+        }
+        double[] out = new double[row.length - 1];
+        System.arraycopy(row, 0, out, 0, index);
+        System.arraycopy(row, index + 1, out, index, row.length - index - 1);
+        return out;
+    }
+
     public void width(int columns) {
         if (values.isEmpty()) {
             actionCount = columns;

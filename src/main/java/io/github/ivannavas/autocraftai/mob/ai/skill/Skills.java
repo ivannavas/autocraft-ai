@@ -51,6 +51,13 @@ public final class Skills {
     private static final int JUDGED_EARLY = 6;
     /** How many of a skill's failure reasons are kept for its writer. */
     private static final int PROBLEMS_KEPT = 3;
+    /**
+     * How many retired or forgotten skills are kept on the book. Forty-four were on it after a day and a
+     * half — sixty skills, sixteen alive — and every one went into every question to both agents as a
+     * line, and sat as a dead column in every table. The last dozen are enough for the writers to see
+     * what has been tried lately and not to reuse a name still warm; older ones go, name and column.
+     */
+    private static final int FORGOTTEN_KEPT = 12;
     /** Below this share of uses completed, a judged skill is retired. */
     private static final double KEEP_ABOVE = 0.15;
     private static final String FILE = "skills.json";
@@ -73,6 +80,8 @@ public final class Skills {
         private int completions;
         private int failures;
         private boolean retired;
+        /** When it was retired or forgotten, so the oldest can be let go first. */
+        private long retiredAt;
         /** Runs that finished with no step having done anything: every break found air, nothing moved. */
         private int empty;
         /** Why the coach forgot it, when it did; empty for a skill retired by its own record. */
@@ -113,6 +122,7 @@ public final class Skills {
     private final Map<String, Skill> skills = new LinkedHashMap<>();
     private final Map<String, Record> records = new LinkedHashMap<>();
     private final List<Consumer<Skill>> listeners = new ArrayList<>();
+    private final List<Consumer<Skill>> droppedListeners = new ArrayList<>();
     private Path file;
 
     private Skills() {
@@ -142,6 +152,7 @@ public final class Skills {
                     record.completions = entry.path("completions").asInt(0);
                     record.failures = entry.path("failures").asInt(0);
                     record.retired = entry.path("retired").asBoolean(false);
+                    record.retiredAt = entry.path("retiredAt").asLong(0L);
                     record.empty = entry.path("empty").asInt(0);
                     record.forgotten = entry.path("forgotten").asText("");
                     for (JsonNode problem : entry.path("problems")) {
@@ -169,6 +180,7 @@ public final class Skills {
         if (file == null) {
             return;
         }
+        prune();
         try {
             ObjectNode root = JSON.createObjectNode();
             ArrayNode listed = root.putArray("skills");
@@ -179,6 +191,7 @@ public final class Skills {
                 node.put("completions", record.completions);
                 node.put("failures", record.failures);
                 node.put("retired", record.retired);
+                node.put("retiredAt", record.retiredAt);
                 node.put("empty", record.empty);
                 node.put("forgotten", record.forgotten);
                 ArrayNode problems = node.putArray("problems");
@@ -259,6 +272,34 @@ public final class Skills {
     /** Told of every skill added from now on, so the tables can grow a column for it. */
     public void onAdded(Consumer<Skill> listener) {
         listeners.add(listener);
+    }
+
+    /** Told of every skill pruned from the book, so the tables can drop its column. */
+    public void onDropped(Consumer<Skill> listener) {
+        droppedListeners.add(listener);
+    }
+
+    /** Lets the oldest retired skills go once more than {@link #FORGOTTEN_KEPT} are on the book. */
+    private void prune() {
+        List<String> retired = new ArrayList<>();
+        for (Map.Entry<String, Record> entry : records.entrySet()) {
+            if (entry.getValue().retired && skills.containsKey(entry.getKey())) {
+                retired.add(entry.getKey());
+            }
+        }
+        if (retired.size() <= FORGOTTEN_KEPT) {
+            return;
+        }
+        retired.sort(java.util.Comparator.comparingLong(name -> records.get(name).retiredAt));
+        List<String> gone = retired.subList(0, retired.size() - FORGOTTEN_KEPT);
+        for (String name : new ArrayList<>(gone)) {
+            Skill skill = skills.remove(name);
+            records.remove(name);
+            if (skill != null) {
+                droppedListeners.forEach(listener -> listener.accept(skill));
+            }
+        }
+        log.info("Let {} old forgotten skill(s) go from the book: {}", gone.size(), String.join(", ", gone));
     }
 
     /** The skills that may be chosen in a layer, in the order they were written. */
@@ -413,6 +454,7 @@ public final class Skills {
         boolean rarely = record.uses >= JUDGED_AFTER && record.completions < record.uses * KEEP_ABOVE;
         if (!record.retired && (neverOnce || rarely)) {
             record.retired = true;
+            record.retiredAt = System.currentTimeMillis();
             log.info("Retiring skill {}: {} of {} uses finished", name, record.completions, record.uses);
             io.github.ivannavas.autocraftai.mob.ai.objective.Chronicle.get().skillRetired(name,
                     record.completions + " of " + record.uses + " uses finished"
@@ -442,6 +484,7 @@ public final class Skills {
         boolean rarely = record.uses >= JUDGED_AFTER && record.completions < record.uses * KEEP_ABOVE;
         if (!record.retired && (neverOnce || rarely)) {
             record.retired = true;
+            record.retiredAt = System.currentTimeMillis();
             log.info("Retiring skill {}: {} of {} uses finished, {} did nothing", name,
                     record.completions, record.uses, record.empty);
             io.github.ivannavas.autocraftai.mob.ai.objective.Chronicle.get().skillRetired(name,
@@ -457,6 +500,7 @@ public final class Skills {
             return;
         }
         record.retired = true;
+        record.retiredAt = System.currentTimeMillis();
         record.forgotten = why == null ? "" : why.strip();
         save();
         log.info("Forgot skill {}: {}", name, record.forgotten);
