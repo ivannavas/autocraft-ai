@@ -414,7 +414,18 @@ public final class QLearningBrain {
     /** How long a craft skill may wait for the body before the choice is given back. */
     private static final long CRAFT_SKILL_PENDING_MILLIS = 15000;
 
+    /**
+     * How this run learns. Static because a {@link Suite} is opened long after the constructor and has to
+     * build its tables the same way; one brain to a client makes that safe.
+     */
+    private static Learning learning = Learning.tables();
+
     private final Path directory;
+    /** The stores every pursuit shares, or null when each folder keeps its own table. */
+    private final Values sharedGoals;
+    private final Values sharedTiming;
+    private final Values sharedPlacement;
+    private final Values sharedPosition;
     private final Table crafting;
     private final Table water;
     private final Table passage;
@@ -554,26 +565,57 @@ public final class QLearningBrain {
     private boolean inWorld;
 
     public QLearningBrain(MobEngine engine, Path directory) {
+        this(engine, directory, Learning.tables(), "");
+    }
+
+    /**
+     * @param learning what beliefs are held in and whether there is a coach
+     * @param plannerModel which model plans the objectives, or empty for the planner's own default
+     */
+    public QLearningBrain(MobEngine engine, Path directory, Learning learning, String plannerModel) {
+        // Before anything else: the tables are about to be opened and each one has to know what kind of
+        // store it is. One brain to a client, so a static is the honest way to say "this whole run".
+        QLearningBrain.learning = learning;
         this.engine = engine;
         // The objectives are planned rather than scripted: the ladder that used to be the plan is now only
         // what the run climbs when there is nobody to ask.
-        this.progression = Progression.planned(directory);
-        this.mentor = ClaudeMentor.create(directory);
+        this.progression = Progression.planned(directory, plannerModel);
+        // A run with no coach is the point of the network: replay is meant to make the lessons
+        // unnecessary, and the way to find out is to turn them off and count the objectives.
+        this.mentor = learning.mentor() ? ClaudeMentor.create(directory) : Mentor.none();
+        if (!learning.mentor()) {
+            log.info("No coach this run; blocks are the local policy's own to work out");
+        }
+        if (learning.log()) {
+            Experience.get().open(directory);
+        }
         this.directory = directory;
         synchronized (TRACES) {
             TRACES.clear();
         }
         // The skills first: they are columns, and the tables have to open with them.
         Skills.get().load(directory);
+        // The four stores every pursuit shares, when beliefs are held in networks. A folder was how the
+        // tables kept wood apart from stone and it cost every new pursuit its first hour; a network is
+        // given the folder as a field of the key instead, so a pursuit new to the run arrives already
+        // believing what the others learned about a block in reach.
+        this.sharedGoals = learning.network() ? store(columnsFor(Skill.Layer.GOAL).size()) : null;
+        this.sharedTiming = learning.network() ? store(Commitment.values().length) : null;
+        this.sharedPlacement = learning.network() ? store(Spot.values().length) : null;
+        this.sharedPosition = learning.network() ? store(Ground.values().length) : null;
         // What every pursuit's goal table starts its rows from and learns into: the run's experience of
-        // situations, whichever objective it was after at the time.
-        this.general = new Table(columnsFor(Skill.Layer.GOAL),
-                directory.resolve(PURSUITS).resolve(GENERAL).resolve("goals.txt"));
-        this.crafting = new Table(columnsFor(Skill.Layer.CRAFT), directory.resolve("crafting.txt"));
-        this.water = new Table(names(Swim.values()), directory.resolve("water.txt"));
-        this.passage = new Table(columnsFor(Skill.Layer.PASSAGE), directory.resolve("passage.txt"));
-        this.tactics = new Table(columnsFor(Skill.Layer.TACTIC), directory.resolve("tactics.txt"));
+        // situations, whichever objective it was after at the time. With networks it is the shared store
+        // itself, which needs no inheriting — and it is the one that writes the weights out.
+        this.general = learning.network()
+                ? new Table(columnsFor(Skill.Layer.GOAL), net("goals"), "goals", "", sharedGoals, true)
+                : new Table(columnsFor(Skill.Layer.GOAL),
+                        directory.resolve(PURSUITS).resolve(GENERAL).resolve("goals.txt"), "goals");
+        this.crafting = new Table(columnsFor(Skill.Layer.CRAFT), path(directory, "crafting"), "crafting");
+        this.water = new Table(names(Swim.values()), path(directory, "water"), "water");
+        this.passage = new Table(columnsFor(Skill.Layer.PASSAGE), path(directory, "passage"), "passage");
+        this.tactics = new Table(columnsFor(Skill.Layer.TACTIC), path(directory, "tactics"), "tactics");
         general.load();
+        loadShared();
         Chronicle.get().load(directory);
         crafting.load();
         water.load();
@@ -630,6 +672,46 @@ public final class QLearningBrain {
                 suites.values().stream().flatMap(Suite::tables));
     }
 
+    /** A store of whichever kind this run holds its beliefs in. */
+    private static Values store(int columns) {
+        return learning.network()
+                ? new QNetwork(columns, learning.capacity(), learning.batch(), learning.perDecision())
+                : new QTable(columns);
+    }
+
+    /** Where a shared network's weights live. Its own folder: they are not files to read or edit. */
+    private Path net(String name) {
+        return directory.resolve("net").resolve(name + ".net");
+    }
+
+    /**
+     * Where a layer that is one store either way keeps it. A network and a table are not the same thing
+     * under the same name: a run switched from one to the other must not read the other's file and must
+     * not overwrite it, so that switching back is a restart rather than a loss.
+     */
+    private static Path path(Path directory, String name) {
+        return learning.network()
+                ? directory.resolve("net").resolve(name + ".net")
+                : directory.resolve(name + ".txt");
+    }
+
+    /** The three shared stores the folders do not own. The goals one is {@link #general}'s to load. */
+    private void loadShared() {
+        if (sharedTiming != null) {
+            sharedTiming.load(net("timing-rate"), names(Commitment.values()));
+            sharedPlacement.load(net("placement"), names(Spot.values()));
+            sharedPosition.load(net("position"), names(Ground.values()));
+        }
+    }
+
+    private void saveShared() {
+        if (sharedTiming != null) {
+            sharedTiming.save(net("timing-rate"), names(Commitment.values()));
+            sharedPlacement.save(net("placement"), names(Spot.values()));
+            sharedPosition.save(net("position"), names(Ground.values()));
+        }
+    }
+
     /**
      * The surroundings as a skill's conditions read them, fresh. Built on demand: a skill goal asks
      * while it is idle and once every few ticks while it runs, and each asking is an entity query.
@@ -680,7 +762,8 @@ public final class QLearningBrain {
     /** The folder for a pursuit, opened and read from disk the first time it is asked for. */
     private Suite suiteFor(Pursuit pursuit) {
         return suites.computeIfAbsent(pursuit.name(),
-                name -> new Suite(directory.resolve(PURSUITS).resolve(name), general));
+                name -> new Suite(name, directory.resolve(PURSUITS).resolve(name), general,
+                        sharedGoals, sharedTiming, sharedPlacement, sharedPosition));
     }
 
     /** Two lists as one, without either of them having to be growable. */
@@ -1282,6 +1365,7 @@ public final class QLearningBrain {
     /** Writes every table out. Called on the way out of the game as well as periodically. */
     public void save() {
         tables().forEach(Table::save);
+        saveShared();
     }
 
     /** Writes everything out and lets go of the planner's thread. The last thing the mod does. */
@@ -1289,6 +1373,7 @@ public final class QLearningBrain {
         save();
         progression.close();
         mentor.close();
+        Experience.get().close();
     }
 
     /**
@@ -2491,7 +2576,7 @@ public final class QLearningBrain {
         for (Trace trace : latest.values()) {
             double age = now - trace.at();
             double delta = -DEATH_TRACE * Math.pow(0.5, age / DEATH_TRACE_HALF_LIFE_MILLIS);
-            trace.table().table.nudge(trace.state(), trace.column(), delta);
+            trace.table().nudge(trace.state(), trace.column(), delta);
         }
         if (!latest.isEmpty()) {
             log.info("Death traced back to {} choices of the last two minutes", latest.size());
@@ -3389,9 +3474,9 @@ public final class QLearningBrain {
             log.info("Brain: on {} in {}, {} folders open with {} goal states, crafting {} states,"
                             + " {} moves cut short, epsilon {}, {} decisions",
                     progression.stateKey(), pursuit.label(), suites.size(),
-                    suites.values().stream().mapToInt(suite -> suite.goals.table.states()).sum(),
-                    crafting.table.states(), stalls,
-                    String.format(Locale.ROOT, "%.3f", active == null ? 0.0 : active.goals.table.epsilon()),
+                    suites.values().stream().mapToInt(suite -> suite.goals.states()).sum(),
+                    crafting.states(), stalls,
+                    String.format(Locale.ROOT, "%.3f", active == null ? 0.0 : active.goals.epsilon()),
                     decisions());
         }
     }
@@ -3407,26 +3492,26 @@ public final class QLearningBrain {
     private void publish(String state, String action, String timingChoice, String craftChoice) {
         List<QTableSnapshot.Folder> folders = suites.entrySet().stream()
                 .map(entry -> new QTableSnapshot.Folder(entry.getKey(),
-                        entry.getValue().goals.table.epsilon(), entry.getValue().goals.table.decisions(),
-                        entry.getValue().goals.table.rows(), entry.getValue().timing.table.rows(),
-                        entry.getValue().placement.table.rows(), entry.getValue().position.table.rows()))
+                        entry.getValue().goals.epsilon(), entry.getValue().goals.decisions(),
+                        entry.getValue().goals.rows(), entry.getValue().timing.rows(),
+                        entry.getValue().placement.rows(), entry.getValue().position.rows()))
                 .toList();
         snapshotListener.accept(new QTableSnapshot(
                 names(GoalAction.values()), names(Commitment.values()), names(Spot.values()),
                 names(Ground.values()), folders, active == null ? "" : pursuit.name(),
-                active == null ? 0.0 : active.goals.table.epsilon(), decisions(),
+                active == null ? 0.0 : active.goals.epsilon(), decisions(),
                 progression.stateKey(), progression.reason(), pursuit.label(),
                 progression.plan().map(QTableSnapshot.PlanView::of).orElse(null),
                 state, action, timingChoice, craftChoice, driverName(), stalls,
-                crafting.columns, crafting.table.rows(), CraftLog.get().recent(),
-                water.columns, water.table.rows(),
-                passage.columns, passage.table.rows(),
-                tactics.columns, tactics.table.rows()));
+                crafting.columns, crafting.rows(), CraftLog.get().recent(),
+                water.columns, water.rows(),
+                passage.columns, passage.rows(),
+                tactics.columns, tactics.rows()));
     }
 
     /** Goal decisions made across every folder opened so far. */
     private long decisions() {
-        return suites.values().stream().mapToLong(suite -> suite.goals.table.decisions()).sum();
+        return suites.values().stream().mapToLong(suite -> suite.goals.decisions()).sum();
     }
 
     /**
@@ -3489,7 +3574,13 @@ public final class QLearningBrain {
         forget();
         removeCraftSkill();
         skillBackoff.clear();
-        tables().forEach(table -> table.table.clear());
+        tables().forEach(Table::clear);
+        // The shared stores are not any one folder's, so clearing the folders does not reach them.
+        if (sharedTiming != null) {
+            sharedTiming.clear();
+            sharedPlacement.clear();
+            sharedPosition.clear();
+        }
         // The skills are learning too, and each live one is a column of its layer's table. Cleared
         // together, and the tables put back to their built-in columns while they hold no rows.
         Skills.get().clear();
@@ -3589,19 +3680,31 @@ public final class QLearningBrain {
         private final Table placement;
         private final Table position;
 
-        private Suite(Path folder, Table general) {
-            try {
-                Files.createDirectories(folder);
-            } catch (IOException e) {
-                log.warn("Could not create {}: {}", folder, e.getMessage());
+        private Suite(String name, Path folder, Table general, Values sharedGoals, Values sharedTiming,
+                      Values sharedPlacement, Values sharedPosition) {
+            boolean shared = sharedGoals != null;
+            // A folder of files only when there are files; a shared store keeps the pursuit in the key.
+            if (!shared) {
+                try {
+                    Files.createDirectories(folder);
+                } catch (IOException e) {
+                    log.warn("Could not create {}: {}", folder, e.getMessage());
+                }
             }
-            this.goals = new Table(columnsFor(Skill.Layer.GOAL), folder.resolve("goals.txt"));
-            this.goals.table.inherit(general.table);
+            String prefix = shared ? name + "|" : "";
+            this.goals = new Table(columnsFor(Skill.Layer.GOAL), folder.resolve("goals.txt"),
+                    "goals", prefix, sharedGoals, false);
+            if (!shared) {
+                this.goals.table.inherit(general.table);
+            }
             // A new file name for a new meaning: the old tables held totals, and their lesson was
             // "SHORT"; they are left where they are rather than read as rates.
-            this.timing = new Table(names(Commitment.values()), folder.resolve("timing-rate.txt"));
-            this.placement = new Table(names(Spot.values()), folder.resolve("placement.txt"));
-            this.position = new Table(names(Ground.values()), folder.resolve("position.txt"));
+            this.timing = new Table(names(Commitment.values()), folder.resolve("timing-rate.txt"),
+                    "timing", prefix, sharedTiming, false);
+            this.placement = new Table(names(Spot.values()), folder.resolve("placement.txt"),
+                    "placement", prefix, sharedPlacement, false);
+            this.position = new Table(names(Ground.values()), folder.resolve("position.txt"),
+                    "position", prefix, sharedPosition, false);
             tables().forEach(Table::load);
         }
 
@@ -3634,20 +3737,81 @@ public final class QLearningBrain {
         /** The column names, in order. Grows when a skill is added; never shrinks while the run is up. */
         private final List<String> columns;
         private final Path path;
-        private final QTable table;
+        private final Values table;
+        /** What this layer is called in the move log, so a reader can tell one line from another. */
+        private final String layer;
+        /**
+         * The folder's name and a bar, when the store is shared between folders, so that what was a
+         * file per pursuit is a field of the key instead. Empty when the table is the folder's own.
+         */
+        private final String prefix;
+        /** Whether the store belongs to somebody else, who loads and writes it. */
+        private final boolean borrowed;
         /** Every column legal, for the tables whose choices are never ruled out. */
         private boolean[] everything;
 
         private String pendingState;
         private int pendingColumn = -1;
+        /** What the state the claim was staked in allowed, kept for the move log rather than the learning. */
+        private boolean[] pendingLegal;
 
-        private Table(List<String> columns, Path path) {
+        private Table(List<String> columns, Path path, String layer) {
+            this(columns, path, layer, "", null, false);
+        }
+
+        /**
+         * @param shared a store this table reads and writes through rather than one of its own
+         * @param owner  whether this table is the one that loads and saves that shared store
+         */
+        private Table(List<String> columns, Path path, String layer,
+                      String prefix, Values shared, boolean owner) {
             this.columns = new java.util.ArrayList<>(columns);
             this.path = path;
-            this.table = new QTable(columns.size());
+            this.layer = layer;
+            this.prefix = prefix;
+            this.borrowed = shared != null && !owner;
+            this.table = shared != null ? shared : store(columns.size());
             this.everything = new boolean[columns.size()];
             Arrays.fill(this.everything, true);
             prime();
+        }
+
+        /** The key the store sees: the folder's name in front of it, where the store is shared. */
+        private String keyed(String state) {
+            return prefix.isEmpty() ? state : prefix + state;
+        }
+
+        /** The folder this table belongs to, as the move log names it. */
+        private String folder() {
+            return prefix.isEmpty() ? "" : prefix.substring(0, prefix.length() - 1);
+        }
+
+        private String columnName(int column) {
+            return column >= 0 && column < columns.size() ? columns.get(column) : "";
+        }
+
+        private List<QTableSnapshot.Row> rows() {
+            return table.rows(prefix);
+        }
+
+        private double epsilon() {
+            return table.epsilon();
+        }
+
+        private long decisions() {
+            return table.decisions();
+        }
+
+        private int states() {
+            return table.states();
+        }
+
+        private void clear() {
+            table.clear();
+        }
+
+        private void nudge(String state, int column, double delta) {
+            table.nudge(keyed(state), column, delta);
         }
 
         /**
@@ -3705,30 +3869,40 @@ public final class QLearningBrain {
         }
 
         private void load() {
-            table.load(path, columns);
+            if (!borrowed) {
+                table.load(path, columns);
+            }
         }
 
         private void save() {
-            table.save(path, columns);
+            if (!borrowed) {
+                table.save(path, columns);
+            }
         }
 
         /** Credits the choice this table is still waiting on, then leaves it waiting on the next one. */
         private void learn(String nextState, double reward, int steps, boolean[] nextLegal) {
             if (pendingState != null && pendingColumn >= 0) {
-                table.update(pendingState, pendingColumn, reward, steps, nextState, nextLegal);
+                table.update(keyed(pendingState), pendingColumn, reward, steps,
+                        keyed(nextState), nextLegal);
+                Experience.get().record(layer, folder(), pendingState, columnName(pendingColumn),
+                        reward, steps, nextState, nextLegal, false);
             }
         }
 
         private void learnTerminal(double reward) {
             if (pendingState != null && pendingColumn >= 0) {
-                table.updateTerminal(pendingState, pendingColumn, reward);
+                table.updateTerminal(keyed(pendingState), pendingColumn, reward);
+                Experience.get().record(layer, folder(), pendingState, columnName(pendingColumn),
+                        reward, 1, "", pendingLegal, true);
             }
         }
 
         private int choose(String state, boolean[] legal) {
-            int column = table.choose(state, legal);
+            int column = table.choose(keyed(state), legal);
             pendingState = state;
             pendingColumn = column;
+            pendingLegal = legal.clone();
             remember(this, state, column);
             return column;
         }
@@ -3746,7 +3920,7 @@ public final class QLearningBrain {
         private void seed(String state, String action, double value) {
             int column = columns.indexOf(action);
             if (column >= 0) {
-                table.seed(state, column, value);
+                table.seed(keyed(state), column, value);
             }
         }
 

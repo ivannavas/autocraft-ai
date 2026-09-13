@@ -192,21 +192,36 @@ public final class ClaudePlanner implements ObjectivePlanner {
      * tables. Which of the two it came from is worth logging; the key itself never is.
      */
     public static ObjectivePlanner create(Path directory) {
+        return create(directory, "");
+    }
+
+    /**
+     * @param model which model to ask, or empty for {@link #MODEL}
+     *
+     * <p>The model is a parameter because it depends on something the planner cannot see: whether there
+     * is a coach. Sonnet is the right answer while there is one — choosing the next errand from a
+     * described situation is the easier of the two jobs, and the coach on Opus is the one being paid for
+     * judgement. With the coach gone the planner is the only model in the run, and its review call —
+     * "this objective has dragged for eight minutes, is it still the right one" — <em>is</em> the
+     * diagnosis the coach used to do. That question is worth Opus.
+     */
+    public static ObjectivePlanner create(Path directory, String model) {
         String key = apiKey(directory);
         if (key == null) {
             log.info("No Anthropic key ({} or {}); the run will have no objectives",
                     KEY_ENVIRONMENT_VARIABLE, directory.resolve(KEY_FILE));
             return ObjectivePlanner.none();
         }
+        String asked = model == null || model.isBlank() ? MODEL : model.trim();
         Agent brief = ObjectiveAgent.class.getAnnotation(Agent.class);
         ObjectiveAgent agent = new ObjectiveAgent();
         agent.configure(AgentData.fromAnnotation(
                 brief,
-                new AnthropicModelExecutor(key, MODEL, MAX_TOKENS, TIMEOUT_SECONDS, API_URL),
+                new AnthropicModelExecutor(key, asked, MAX_TOKENS, TIMEOUT_SECONDS, API_URL),
                 STORE,
                 null,
                 Map.of()));
-        log.info("Objectives will be planned by {}", MODEL);
+        log.info("Objectives will be planned by {}", asked);
         return new ClaudePlanner(agent);
     }
 

@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.Locale;
 import java.util.Properties;
 
+import io.github.ivannavas.autocraftai.mob.ai.Learning;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -306,6 +307,51 @@ public final class Settings {
         return number("overlay.render.width", 1280);
     }
 
+    // --- how the run learns -------------------------------------------------------------------------
+
+    /**
+     * What beliefs are held in: {@code table} for a row per state, {@code network} for the small net that
+     * generalises between them and replays what it has seen.
+     *
+     * <p>Tables, still, by default. The network is the better answer on the evidence and it is not yet the
+     * evidence of this run: a switch changes what every saved file means, and the way to find out which
+     * is better here is to run both on the same world and count objectives, not to assume.
+     */
+    public Learning learning() {
+        boolean network = "network".equalsIgnoreCase(value("learning.brain", "table"));
+        return new Learning(network,
+                number("learning.replay", 20_000),
+                number("learning.batch", 32),
+                number("learning.passes", 1),
+                Boolean.parseBoolean(value("learning.log", "true")),
+                mentorEnabled());
+    }
+
+    /**
+     * Whether the coach is asked about a body that is stuck.
+     *
+     * <p>On, still. The case for turning it off is that most of what it is for — a state the local policy
+     * has no good answer for and cannot find one fast enough — is what replay and a network are supposed
+     * to fix, and the honest way to find out is a run with it off. It is a switch rather than a deletion
+     * because that experiment has two arms.
+     */
+    public boolean mentorEnabled() {
+        return Boolean.parseBoolean(value("mentor.enabled", "true"));
+    }
+
+    /**
+     * Which model plans the objectives.
+     *
+     * <p>Sonnet while there is a coach, Opus when there is not. The planner's two questions are not the
+     * same weight: "what next, given this situation" is the easy one, and "this objective has dragged for
+     * eight minutes — is it still the right one" is the coach's job by another name. With the coach gone
+     * the planner is the only model in the run and it inherits that question, so it is worth the better
+     * model. Setting {@code planner.model} says so outright and overrides both.
+     */
+    public String plannerModel() {
+        return value("planner.model", mentorEnabled() ? "" : "claude-opus-5");
+    }
+
     /**
      * What is configured, without saying what any of it is.
      *
@@ -328,6 +374,8 @@ public final class Settings {
                 + ",\"width\":" + width()
                 + ",\"height\":" + height()
                 + ",\"fps\":" + fps()
+                + ",\"brain\":" + quote(learning().network() ? "network" : "table")
+                + ",\"mentor\":" + mentorEnabled()
                 + "}";
     }
 

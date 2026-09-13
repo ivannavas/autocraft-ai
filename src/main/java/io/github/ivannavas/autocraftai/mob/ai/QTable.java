@@ -34,7 +34,7 @@ import lombok.extern.slf4j.Slf4j;
  * bootstrap term would look up the value of a move the next state does not offer.
  */
 @Slf4j
-public final class QTable {
+public final class QTable implements Values {
 
     private static final String FORMAT_HEADER = "# autocraft-ai q-table v1";
     private static final String ACTIONS_KEY = "actions";
@@ -124,9 +124,16 @@ public final class QTable {
         return values.size();
     }
 
-    /** The table whose rows this one starts from and learns into as well. */
-    public void inherit(QTable parent) {
-        this.parent = parent == this ? null : parent;
+    /**
+     * The table whose rows this one starts from and learns into as well.
+     *
+     * <p>Only another table can be inherited from: the arrangement is a row copied across, and a network
+     * has no rows to copy. A network needs none either — what the parent table was for is generalisation
+     * between folders, and a network keyed on the folder does that by itself.
+     */
+    @Override
+    public void inherit(Values parent) {
+        this.parent = parent instanceof QTable table && table != this ? table : null;
     }
 
     public double epsilon() {
@@ -141,10 +148,16 @@ public final class QTable {
      * Every state and what it believes, copied out for another thread to read. Boxing sixty rows once a
      * second is not worth avoiding, and the copy is what makes the overlay safe to serve without a lock.
      */
-    public List<QTableSnapshot.Row> rows() {
+    @Override
+    public List<QTableSnapshot.Row> rows(String prefix) {
+        // A table is never shared between folders, so every row it holds is the caller's own and the
+        // prefix has nothing to strip. It is taken all the same, so that a caller does not have to know
+        // which kind of store it is talking to.
         return values.entrySet().stream()
+                .filter(entry -> entry.getKey().startsWith(prefix))
                 .map(entry -> new QTableSnapshot.Row(
-                        entry.getKey(), Arrays.stream(entry.getValue()).boxed().toList()))
+                        entry.getKey().substring(prefix.length()),
+                        Arrays.stream(entry.getValue()).boxed().toList()))
                 .toList();
     }
 

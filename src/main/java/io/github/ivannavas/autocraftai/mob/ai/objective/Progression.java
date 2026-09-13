@@ -246,7 +246,12 @@ public final class Progression {
 
     /** Objectives from Claude, and from nowhere else. */
     public static Progression planned(Path directory) {
-        return new Progression(ClaudePlanner.create(directory));
+        return planned(directory, "");
+    }
+
+    /** @param plannerModel which model plans, or empty for the planner's own default */
+    public static Progression planned(Path directory, String plannerModel) {
+        return new Progression(ClaudePlanner.create(directory, plannerModel));
     }
 
     /** What the run is after, or empty while it is between orders. */

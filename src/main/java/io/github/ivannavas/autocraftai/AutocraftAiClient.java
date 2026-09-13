@@ -25,7 +25,13 @@ public class AutocraftAiClient implements ClientModInitializer {
     public void onInitializeClient() {
         // One file per learned dimension, so a change to one action set never invalidates the others.
         Path storage = FabricLoader.getInstance().getConfigDir().resolve(MOD_ID);
-        QLearningBrain brain = new QLearningBrain(MobEngine.get(), storage);
+
+        // Read before the brain is built rather than after, as it used to be: what beliefs are held in
+        // has to be known before the first table is opened, and which model plans depends on whether
+        // there is a coach.
+        Settings settings = new Settings(storage);
+        QLearningBrain brain = new QLearningBrain(MobEngine.get(), storage,
+                settings.learning(), settings.plannerModel());
 
         // The brain goes first: the goal it installs is meant to be the one the engine runs on this tick,
         // and the engine in turn runs before the player's own tick turns commands into movement.
@@ -38,8 +44,6 @@ public class AutocraftAiClient implements ClientModInitializer {
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> brain.close());
 
         ClearLearningButton.install(brain);
-
-        Settings settings = new Settings(storage);
 
         // Making a world is several ticks of work — leave, delete, generate — so it rides the client
         // tick like the brain does rather than blocking whichever request handler asked for it.
