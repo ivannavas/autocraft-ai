@@ -56,6 +56,16 @@ public final class CarveUpGoal implements MobGoal {
     private static final int GIVE_UP_TICKS = 400;
     /** Getting nowhere for this long: something is wrong that standing there will not fix. */
     private static final int STALLED_TICKS = 30;
+    /**
+     * How far to go looking for a wall to cut into.
+     *
+     * <p>A staircase starts at a step, and a step is a solid block beside the feet. Asked only of the
+     * four neighbours, the move turned itself off everywhere it was most needed: a body loose in a
+     * chamber stands on the floor with air on all four sides, so there was no step, so there was no
+     * staircase — and the one time it was chosen it ran four seconds and gave up without a block coming
+     * away. The wall is usually three or four blocks off. Walk to it first.
+     */
+    private static final int LOOK_FOR_A_WALL = 5;
     /** The four ways a staircase can turn. */
     private static final Direction[] WAYS = {
             Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST};
@@ -73,7 +83,7 @@ public final class CarveUpGoal implements MobGoal {
 
     @Override
     public boolean canUse(MobBody body) {
-        return !unsafe && ticksRunning < GIVE_UP_TICKS && somewhereToCut(body) != null;
+        return !unsafe && ticksRunning < GIVE_UP_TICKS && stepToCut(body) != null;
     }
 
     @Override
@@ -109,16 +119,24 @@ public final class CarveUpGoal implements MobGoal {
     @Override
     public void tick(MobBody body) {
         ticksRunning++;
-        Direction cutting = somewhereToCut(body);
-        if (cutting == null) {
+        BlockPos step = stepToCut(body);
+        if (step == null) {
             unsafe = true;
             return;
         }
-        BlockPos next = inTheWay(body, cutting);
+        BlockPos feet = body.player().blockPosition();
+        if (!beside(feet, step)) {
+            // The wall is over there. Walking to it is the first part of cutting into it.
+            body.moveControl().moveTo(Vec3.atBottomCenterOf(step.above()), 1.0F);
+            body.lookControl().lookAt(Vec3.atCenterOf(step));
+            breaking = false;
+            ticksStalled++;
+            return;
+        }
+        BlockPos next = inTheWay(body, step);
         if (next == null) {
             // The step is clear: walk into it and the feet come up a block. The move control does the
             // jump, the same as it would over any other step.
-            BlockPos step = body.player().blockPosition().relative(cutting);
             body.moveControl().moveTo(Vec3.atBottomCenterOf(step.above()), 1.0F);
             body.lookControl().lookAt(Vec3.atCenterOf(step.above()));
             breaking = false;
@@ -137,32 +155,48 @@ public final class CarveUpGoal implements MobGoal {
         body.moveControl().stop();
     }
 
+    private static boolean beside(BlockPos feet, BlockPos step) {
+        return Math.abs(step.getX() - feet.getX()) + Math.abs(step.getZ() - feet.getZ()) == 1;
+    }
+
     /**
-     * Which way a step could be cut, or null when none of the four will do.
+     * The block to cut a step into: the nearest one at foot height that can be stood on and whose two
+     * upper blocks can be taken away, or null when there is nothing like it within reach.
      *
-     * <p>A way works when the block beside the feet is something to stand on and the two above it can be
-     * broken. Asked afresh every tick rather than remembered, because the answer changes as the blocks
-     * come away, and a staircase that insisted on its first choice would cut into lava rather than turn.
+     * <p>Asked afresh every tick rather than remembered, because the answer changes as the blocks come
+     * away, and a staircase that insisted on its first choice would cut into lava rather than turn.
      */
-    private Direction somewhereToCut(MobBody body) {
+    private BlockPos stepToCut(MobBody body) {
         if (body.player().getBlockY() >= TOP) {
             return null;
         }
+        BlockPos feet = body.player().blockPosition();
+        // The one the body faces first, so a staircase keeps its direction rather than spiralling for
+        // the sake of a block half a step nearer.
         Direction facing = body.player().getDirection();
-        if (cuttable(body, facing)) {
-            return facing;
+        if (cuttable(body, feet.relative(facing))) {
+            return feet.relative(facing);
         }
-        for (Direction other : WAYS) {
-            if (other != facing && cuttable(body, other)) {
-                return other;
+        BlockPos best = null;
+        int nearest = Integer.MAX_VALUE;
+        for (int dx = -LOOK_FOR_A_WALL; dx <= LOOK_FOR_A_WALL; dx++) {
+            for (int dz = -LOOK_FOR_A_WALL; dz <= LOOK_FOR_A_WALL; dz++) {
+                int away = Math.abs(dx) + Math.abs(dz);
+                if (away == 0 || away >= nearest) {
+                    continue;
+                }
+                BlockPos candidate = feet.offset(dx, 0, dz);
+                if (cuttable(body, candidate)) {
+                    best = candidate;
+                    nearest = away;
+                }
             }
         }
-        return null;
+        return best;
     }
 
-    private boolean cuttable(MobBody body, Direction towards) {
+    private boolean cuttable(MobBody body, BlockPos step) {
         Level level = body.level();
-        BlockPos step = body.player().blockPosition().relative(towards);
         if (!level.isLoaded(step) || !level.isLoaded(step.above(2))) {
             return false;
         }
@@ -179,11 +213,12 @@ public final class CarveUpGoal implements MobGoal {
         return level.getFluidState(body.player().blockPosition().above(2)).isEmpty();
     }
 
+    /** Kept for the legality mask, which only wants to know whether there is a staircase to be cut. */
+
     /** The next block that has to come away before the step can be walked onto, or null if none is left. */
-    private BlockPos inTheWay(MobBody body, Direction towards) {
+    private BlockPos inTheWay(MobBody body, BlockPos step) {
         Level level = body.level();
         BlockPos feet = body.player().blockPosition();
-        BlockPos step = feet.relative(towards);
         // Head room where the body is going, then head room where it is: the last one only matters when
         // the body is sealed under a ceiling, which is exactly when this move is worth having.
         for (BlockPos candidate : new BlockPos[] {step.above(), step.above(2), feet.above(2)}) {
@@ -201,7 +236,7 @@ public final class CarveUpGoal implements MobGoal {
      * discover one punished decision at a time.
      */
     public static boolean anywhereToCut(MobBody body) {
-        return new CarveUpGoal().somewhereToCut(body) != null;
+        return new CarveUpGoal().stepToCut(body) != null;
     }
 
     /** The right thing in the hand for this block, once per block: switching mid-break cancels it. */
