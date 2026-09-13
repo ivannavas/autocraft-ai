@@ -69,7 +69,22 @@ public final class Experience {
                         double reward, int steps, String next, String legal, boolean terminal) {
     }
 
-    private final BlockingQueue<Move> pending = new LinkedBlockingQueue<>(QUEUE);
+    /**
+     * What a second's reward was made of, written as its own line.
+     *
+     * <p>The gap that made a whole afternoon of reward work guesswork. The log held the total and
+     * nothing else, so "why is ninety per cent of every move negative" could only be answered by
+     * reasoning about which cost was probably dominating — and the answer arrived at that way is a
+     * hypothesis, not a measurement. With the parts written down the same question is a sum over a
+     * column, and a rebalance can be argued from the file instead of from the shape of the totals.
+     *
+     * <p>Its own line rather than a field on the move, so nothing that reads moves has to change and a
+     * reader that does not care can skip it by its layer.
+     */
+    private record Parts(long at, String pursuit, String state, String parts) {
+    }
+
+    private final BlockingQueue<Object> pending = new LinkedBlockingQueue<>(QUEUE);
     private final AtomicBoolean running = new AtomicBoolean();
     private Path folder;
     private Thread writer;
@@ -132,6 +147,22 @@ public final class Experience {
         }
     }
 
+    /**
+     * What the second's reward was made of: names to values, as the scoring produced them.
+     *
+     * @param parts already formatted as {@code name=value} pairs separated by semicolons, since the
+     *              caller is the only thing that knows the names and building a map to take it apart
+     *              again once a second is work for nobody
+     */
+    public void breakdown(String pursuit, String state, String parts) {
+        if (!running.get()) {
+            return;
+        }
+        if (!pending.offer(new Parts(System.currentTimeMillis(), pursuit, state, parts))) {
+            dropped++;
+        }
+    }
+
     private static String mask(boolean[] legal) {
         if (legal == null) {
             return "";
@@ -149,13 +180,13 @@ public final class Experience {
             long written = size();
             long flushed = System.currentTimeMillis();
             while (running.get() || !pending.isEmpty()) {
-                Move move = pending.poll(1, TimeUnit.SECONDS);
-                if (move == null) {
+                Object entry = pending.poll(1, TimeUnit.SECONDS);
+                if (entry == null) {
                     sink.flush();
                     flushed = System.currentTimeMillis();
                     continue;
                 }
-                String line = encode(move);
+                String line = entry instanceof Move move ? encode(move) : encode((Parts) entry);
                 sink.write(line);
                 sink.write('\n');
                 written += line.length() + 1;
@@ -228,6 +259,14 @@ public final class Experience {
                 .append("\",\"terminal\":").append(move.terminal())
                 .append('}');
         return out.toString();
+    }
+
+    /** The same one-shape-only JSON, for a line of parts. */
+    private static String encode(Parts parts) {
+        return "{\"t\":" + parts.at()
+                + ",\"layer\":\"reward\",\"pursuit\":\"" + escape(parts.pursuit())
+                + "\",\"state\":\"" + escape(parts.state())
+                + "\",\"parts\":\"" + escape(parts.parts()) + "\"}";
     }
 
     private static String escape(String text) {

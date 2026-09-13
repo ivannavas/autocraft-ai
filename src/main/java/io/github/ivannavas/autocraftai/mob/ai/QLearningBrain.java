@@ -1638,8 +1638,9 @@ public final class QLearningBrain {
             traceAdvance();
         }
         double base = score(step);
-        double reward = base + climbed + exposure(step.steps())
-                + (base <= 0.0 ? dwelling(player, step.steps()) : 0.0);
+        double dwelt = base <= 0.0 ? dwelling(player, step.steps()) : 0.0;
+        double exposed = exposure(step.steps());
+        double reward = base + climbed + exposed + dwelt;
 
         // What the move that just ended did, before anything replaces it. The planner reads these when an
         // objective drags on: a run of them is what a rut looks like from outside.
@@ -1675,9 +1676,15 @@ public final class QLearningBrain {
                 lastSurroundings == null ? null : lastSurroundings.cover(),
                 progression.heightWanted(player.getBlockY()),
                 Pursuit.NO_SOURCE.equals(pursuit.source()) && berryBushNear(player));
-        // Closing on something to eat pays a little on its own. Food only paid when eaten, and a
-        // hungry body with a pig in view had nothing between "saw it" and "ate it" to learn from.
-        reward += closingOnFood(observation);
+        // Closing on what the plan came for pays a little on its own. A resource only paid when it
+        // landed in the bag, and a body with a tree in view had nothing between "saw it" and "felled
+        // it" to learn from but the bill for the seconds.
+        double closing = closingOnTarget(observation);
+        reward += closing;
+        // And what all of that was made of, for whoever has to reprice it next. See
+        // Experience#breakdown for the afternoon that went into guessing this rather than reading it.
+        Experience.get().breakdown(pursuit.name(), observation.key(),
+                partsOf(step, climbed, exposed, dwelt, closing));
 
         boolean[] legalGoals = legalGoals(context);
         // The bag as the plan counts it: a workbench standing within reach is a table held.
@@ -3074,17 +3081,61 @@ public final class QLearningBrain {
      * A little for getting nearer to something to eat, while food is what the plan is after: the
      * distance bucket of a living thing in view dropped since the last decision.
      */
-    private double closingOnFood(Observation now) {
-        if (lastObservation == null || !"FOOD".equals(pursuit.name())
-                || !FocusKind.PASSIVE.name().equals(now.subject())
-                || !FocusKind.PASSIVE.name().equals(lastObservation.subject())
-                || now.distance() == Perception.Distance.NONE) {
+    /**
+     * Getting nearer the thing the plan is after — and charged the same for drifting off it.
+     *
+     * <h2>Why the journey had to stop being free of reward and full of cost</h2>
+     * Measured over seven thousand seven hundred moves: every action had a negative mean, the tenth
+     * percentile of reward was -5.5 and the ninetieth was -0.01, and the total scaled with how long a
+     * move ran at a near-constant three quarters of a point a second whatever it was doing. The reason
+     * is plain once it is written down: {@code Gather.score} pays {@code netChange(resource) * worth} and
+     * nothing else, so the whole walk to the tree earns nothing and is charged for every second of
+     * itself, and only the moment the log lands pays. Almost everything a body does is the walk.
+     *
+     * <p>A table asked to learn from that has to see through fifteen negative seconds to a positive one
+     * fifteen steps later, which is exactly the credit assignment a discount of 0.9 is worst at.
+     *
+     * <h2>Symmetric, which is what makes it safe</h2>
+     * This is potential-based shaping: the payment is the change in a function of the state — how near
+     * the wanted thing is — so closing a band pays and opening one costs exactly as much. Over any
+     * round trip the two cancel to nothing, which means it cannot be farmed by walking up to a tree and
+     * away from it for ever. That guarantee is what lets the weight be big enough to matter.
+     *
+     * <p>{@link #CLOSING_WEIGHT} is derived rather than picked: a body crosses two bands on a full
+     * approach, a walk of that length costs about eight points at the measured rate, and three a band
+     * gives back six of them. The journey is meant to end up cheap, not free — dithering must still
+     * lose — while arriving, at four for a log or twelve for an objective, is what turns the whole move
+     * clearly positive.
+     *
+     * <p>It replaces a version of itself that only ever paid for closing and only on food. Paying one
+     * way and not the other is not a potential and can be farmed: a body oscillating between two bands
+     * collected on every other second.
+     */
+    private double closingOnTarget(Observation now) {
+        if (lastObservation == null
+                || now.distance() == Perception.Distance.NONE
+                || lastObservation.distance() == Perception.Distance.NONE
+                || !now.subject().equals(lastObservation.subject())
+                || !now.source().equals(lastObservation.source())
+                || !worthClosingOn(now.subject())) {
             return 0.0;
         }
-        return now.distance().ordinal() < lastObservation.distance().ordinal() ? CLOSING_ON_FOOD : 0.0;
+        // Distance runs NONE, CLOSE, NEAR, FAR, so a smaller ordinal is nearer and the sign works out.
+        return CLOSING_WEIGHT * (lastObservation.distance().ordinal() - now.distance().ordinal());
     }
 
-    private static final double CLOSING_ON_FOOD = 2.0;
+    /**
+     * What is worth walking towards: the block the plan came for, a drop it can use, and an animal
+     * while the errand is food. Not a hostile — closing on one of those is the tactics layer's
+     * business and paying for it here would be paying a body to walk into a zombie.
+     */
+    private boolean worthClosingOn(String subject) {
+        return FocusKind.RESOURCE.name().equals(subject)
+                || FocusKind.ITEM.name().equals(subject)
+                || (FocusKind.PASSIVE.name().equals(subject) && "FOOD".equals(pursuit.name()));
+    }
+
+    private static final double CLOSING_WEIGHT = 3.0;
 
     /** Whether a sweet berry bush or a melon stands within a few blocks: food, for a body that knows to take it. */
     private static boolean berryBushNear(LocalPlayer player) {
@@ -3107,6 +3158,37 @@ public final class QLearningBrain {
     }
 
     /** The general objectives alone — health, patience, effort, food, breath — without the plan's. */
+    /**
+     * The second's reward broken into the names that produced it, as {@code name=value} pairs.
+     *
+     * <p>The general objectives name themselves — survival, impatience, standing about, wasted effort
+     * and the rest — so most of this is their own list read out. The four the brain adds on top of them
+     * have to be named here because it is the brain that adds them.
+     */
+    private String partsOf(StepContext step, double climbed, double exposed, double dwelt, double closing) {
+        StringBuilder out = new StringBuilder(160);
+        for (Objective objective : GeneralObjectives.all()) {
+            append(out, objective.name(), objective.score(step));
+        }
+        append(out, "plan", progression.score(step));
+        append(out, "advance", climbed);
+        append(out, "exposure", exposed);
+        append(out, "dwelling", dwelt);
+        append(out, "closing", closing);
+        return out.toString();
+    }
+
+    /** Only the parts that came to something: a line of zeroes says nothing and costs the same to write. */
+    private static void append(StringBuilder out, String name, double value) {
+        if (Math.abs(value) < 0.0005) {
+            return;
+        }
+        if (!out.isEmpty()) {
+            out.append(';');
+        }
+        out.append(name).append('=').append(String.format(Locale.ROOT, "%.4f", value));
+    }
+
     private double generalScore(StepContext step) {
         return GeneralObjectives.all().stream()
                 .mapToDouble(objective -> objective.score(step))
