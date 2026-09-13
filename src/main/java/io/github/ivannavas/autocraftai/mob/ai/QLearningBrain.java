@@ -767,7 +767,7 @@ public final class QLearningBrain {
     /** The three shared stores the folders do not own. The goals one is {@link #general}'s to load. */
     private void loadShared() {
         if (sharedTiming != null) {
-            sharedTiming.load(net("timing-rate"), names(Commitment.values()));
+            sharedTiming.load(net("timing-step"), names(Commitment.values()));
             sharedPlacement.load(net("placement"), names(Spot.values()));
             sharedPosition.load(net("position"), names(Ground.values()));
         }
@@ -775,7 +775,7 @@ public final class QLearningBrain {
 
     private void saveShared() {
         if (sharedTiming != null) {
-            sharedTiming.save(net("timing-rate"), names(Commitment.values()));
+            sharedTiming.save(net("timing-step"), names(Commitment.values()));
             sharedPlacement.save(net("placement"), names(Spot.values()));
             sharedPosition.save(net("position"), names(Ground.values()));
         }
@@ -1775,12 +1775,27 @@ public final class QLearningBrain {
         // Timing is keyed by the goal as well as the state: the question is not "how long to commit" but
         // "how long to commit to this".
         String timingKey = observation.key() + '/' + chosenName;
-        // Learned as a rate — what the move earned per second held — and not as the move's total.
-        // Learned as the total, a second of any move at all cost less than ten of it whenever the
-        // seconds were charged and nothing came of them, and SHORT won two rows in three all day
-        // whatever the move; as a rate a long move that ended in the log is worth more per second
-        // than a short one that did not, and a losing move loses the same per second at any length.
-        active.timing.learn(timingKey, reward / Math.max(1, step.steps()), 1, active.timing.everything);
+        // Learned the way every other table learns: everything the move earned over its whole run,
+        // discounted by how long that took. It was a rate — the move's earnings per second held — and
+        // the rate had to go.
+        //
+        // <p>The rate was put there because the total made SHORT win two rows in three, and that was
+        // read as the total being the wrong question. It was not: if a second of a move loses money,
+        // then ten of them lose ten times as much, and preferring the shorter commitment is the right
+        // answer to the question actually asked. The losses were the problem, not the arithmetic.
+        //
+        // <p>What the rate did instead, measured over seven hundred goal moves of a real run: 93 % of
+        // them ended below zero, and a loss spread over ten seconds reads as -0.40 a second where the
+        // same failure in one second reads as -1.26. Three times better for being longer. Worse, the
+        // two are not independent — a move is short because it was cut for going nowhere, so "short"
+        // is a label for "was failing" and the table learned the correlation backwards. LONG took 93
+        // of 115 rows, every one of them with its best column still negative, and the body committed
+        // ten seconds at a time to moves that paid nothing. That is what standing about looks like
+        // from the outside.
+        //
+        // <p>Between the two collapses the total's is much the cheaper: a body that re-decides every
+        // second can leave a bad move, and one that has committed ten cannot.
+        active.timing.learn(timingKey, reward, step.steps(), active.timing.everything);
         Commitment chosen = Commitment.values()[active.timing.choose(timingKey, active.timing.everything)];
 
         int craft = chooseCraft(craftKey, legalCrafts);
@@ -3880,9 +3895,10 @@ public final class QLearningBrain {
             if (!shared) {
                 this.goals.table.inherit(general.table);
             }
-            // A new file name for a new meaning: the old tables held totals, and their lesson was
-            // "SHORT"; they are left where they are rather than read as rates.
-            this.timing = new Table(names(Commitment.values()), folder.resolve("timing-rate.txt"),
+            // A new file name for a new meaning, for the third time: timing.txt held totals,
+            // timing-rate.txt held rates, and this holds the semi-Markov total every other table
+            // learns. Each is left where it is rather than read as the next thing along.
+            this.timing = new Table(names(Commitment.values()), folder.resolve("timing-step.txt"),
                     "timing", prefix, sharedTiming, false);
             this.placement = new Table(names(Spot.values()), folder.resolve("placement.txt"),
                     "placement", prefix, sharedPlacement, false);
