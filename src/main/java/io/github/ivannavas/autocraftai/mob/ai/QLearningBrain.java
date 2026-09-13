@@ -599,6 +599,21 @@ public final class QLearningBrain {
      * where REACH_BAND was the answer.
      */
     private boolean installedRan;
+    /**
+     * Whether anything ever took the body off the move in flight.
+     *
+     * <p>The companion to {@link #installedRan}, and the difference between two things that look
+     * identical from the tables: a move that never ran because the water or the terrain had the body,
+     * which is not its fault and must not be priced, and a move that never ran because its own goal
+     * declined to start, which is entirely its fault and has to be.
+     *
+     * <p>Without the distinction the second one is free, and a move that is free is a move that keeps
+     * being chosen. TRAVEL strands itself when no heading is walkable — its own {@code canUse} says so
+     * on purpose, to hand the decision back rather than stutter — and with its claims dropped it was
+     * picked, refused, dropped and picked again every two seconds for six minutes, while the planner
+     * watched and rewrote the objective around a body that never moved.
+     */
+    private boolean installedDisplaced;
     /** Which way it wanted, and where, when it last chose: what its progress is measured against. */
     private Obstruction.Wanted stuckWanting;
     private Vec3 stuckTarget;
@@ -974,6 +989,8 @@ public final class QLearningBrain {
         }
         if (installedGoal != null && engine.isRunning(installedGoal)) {
             installedRan = true;
+        } else if (displaced()) {
+            installedDisplaced = true;
         }
         keepTheLayersHonest(player);
         if (!doneNow && stillHolding()) {
@@ -1624,7 +1641,7 @@ public final class QLearningBrain {
             if (active != null) {
                 // Settled on what it earned — unless it never had the body, in which case it earned
                 // nothing and the claims go without being priced. See the drop below.
-                if (installedRan) {
+                if (installedRan || !installedDisplaced) {
                     active.settle(reward);
                 } else {
                     active.drop();
@@ -1653,7 +1670,7 @@ public final class QLearningBrain {
         // told otherwise learns about a move it has never seen made — REACH_BAND priced at the cost of
         // the terrain layer's thrashing, in the one state where REACH_BAND was the way out. The craft
         // table is paid as usual: a two-by-two craft needs no body and runs whoever has it.
-        if (!installedRan) {
+        if (!installedRan && installedDisplaced) {
             active.drop();
         }
         active.goals.learn(observation.key(), reward, step.steps(), legalGoals);
@@ -3660,6 +3677,7 @@ public final class QLearningBrain {
         installedTarget = null;
         // A fresh move has not run yet, whatever the one it replaces managed.
         installedRan = false;
+        installedDisplaced = false;
     }
 
     private void maintain(boolean climbed) {
