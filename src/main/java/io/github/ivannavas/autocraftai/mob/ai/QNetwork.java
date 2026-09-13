@@ -78,6 +78,12 @@ public final class QNetwork implements Values {
      */
     private static final int TARGET_EVERY = 200;
     /**
+     * How often the target actually catches up here. Two hundred steps while a run is going, which is
+     * what a live run wants; a sweep of a finished log wants something else entirely — see
+     * {@link #targetEvery}.
+     */
+    private int targetEvery = TARGET_EVERY;
+    /**
      * The most a belief may be pushed to by credit arriving after the fact. The table's own bound, kept
      * so a run of deaths cannot drive a move out of reach of the learning that has to bring it back.
      */
@@ -93,6 +99,27 @@ public final class QNetwork implements Values {
      */
     private static final int LESSON_PASSES = 120;
     private static final double LESSON_CLOSE = 0.25;
+
+    /**
+     * Sets how many training steps pass before the target catches up.
+     *
+     * <p>Exists for training from a log that is not going to grow. A target chasing every two hundred
+     * steps is right while a run is going, where every step brings a move nobody has seen before; over
+     * a finished set it is not fitted Q iteration but a fit against a target that keeps moving during
+     * the fit. Frozen for a whole sweep, each pass is a proper fit against a fixed target, which is
+     * what the method is supposed to be.
+     *
+     * <p>It should be said plainly that this was added to stop values inflating over repeated sweeps —
+     * one pass put the best move at 0.6, three at 8.4, ten at 14.7 — and it did not stop them. The
+     * inflation was not the target's doing: a log from a stuck body is three quarters states whose
+     * recorded successor is themselves, with no terminal anywhere to anchor the discounting, so
+     * {@code r / (1 - 0.9)} is the honest answer to what the data says and ten times the reward is what
+     * it comes to. The data was the problem. Freezing the target is still the correct thing to do here
+     * and is kept for that reason alone, not for the one it was written for.
+     */
+    public void targetEvery(int steps) {
+        this.targetEvery = Math.max(1, steps);
+    }
 
     private final Mlp online;
     private final Mlp target;
@@ -222,7 +249,7 @@ public final class QNetwork implements Values {
                 learn(move);
             }
             online.step();
-            if (++trained % TARGET_EVERY == 0) {
+            if (++trained % targetEvery == 0) {
                 online.copyInto(target);
             }
         }

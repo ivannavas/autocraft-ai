@@ -69,6 +69,16 @@ public final class Rehearse {
         System.out.printf(Locale.ROOT, "%d moves of layer %s, %d columns%n", read.size(), layer, columns.size());
 
         QNetwork network = new QNetwork(columns.size(), capacity, batch, passes);
+        // Fitted Q iteration: the target is frozen for a whole sweep and catches up once at the end.
+        //
+        // And a warning that belongs next to the knob rather than in a commit message: more epochs is
+        // not more learning here. A log from a stuck body is mostly states whose recorded successor is
+        // themselves and carries no terminal to anchor the discounting, so repeated sweeps walk every
+        // value towards r/(1-discount) — ten times the reward — and a move that happened to be in
+        // flight when an objective completed takes the whole advance bonus with it. Two such moves out
+        // of two hundred and forty-seven came out as the best in the run. Keep the epochs low, and
+        // look at what the values say before trusting a network trained this way with a body.
+        network.targetEvery(Math.max(1, read.size() * Math.max(1, passes)));
         for (int epoch = 1; epoch <= epochs; epoch++) {
             for (String[] move : read) {
                 int column = columns.indexOf(move[1]);
