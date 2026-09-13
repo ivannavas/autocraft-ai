@@ -43,7 +43,10 @@ import net.minecraft.world.phys.Vec3;
  *   <li>whatever is under the crosshair</li>
  * </ol>
  *
- * <p>Living things have to be in the view cone and in line of sight — that part is genuinely seeing.
+ * <p>Living things have to be in line of sight, and non-hostile ones in the view cone as well — that
+ * part is genuinely seeing. A hostile is exempt from the cone because which way the head points is the
+ * running goal's doing and a creeper behind the body is still a creeper; it is not exempt from the
+ * sight line, and used to be. See {@link #nearestThreat}.
  * Drops and wanted blocks are found by a scan of the surroundings regardless of facing, which is a
  * deliberate cheat: the body's head is driven by its goals, so anything that had to be looked at first
  * could never be found in order to look at it.
@@ -122,11 +125,39 @@ public final class Perception {
         return blockUnderCrosshair(client);
     }
 
+    /**
+     * The hostile worth attending to: near, alive, and <em>actually visible</em>.
+     *
+     * <h2>The line of sight that was missing</h2>
+     * This is the first rule of the whole of perception and it was the one branch that never checked
+     * whether the body could see what it was reacting to. The class says, a few lines up, that living
+     * things have to be in the view cone and in line of sight; that was only ever true of
+     * {@link #nearestVisibleLiving}, which excludes hostiles outright. So a zombie eight blocks away
+     * through solid rock became the sighting and outranked everything.
+     *
+     * <p>Underground that is most of the time, and the cost is not that the body is nervous — it is that
+     * the whole action set turns over. A sighting of {@code HOSTILE} makes {@link GoalAction#MINE}
+     * illegal, since mining wants a block in view, and makes WATCH, FLEE and ATTACK legal, since those
+     * want something alive. Measured in a live run: thirty-two of eighty decisions had the sighting on a
+     * hostile, and the body stood watching a wall with a zombie behind it while its objective was the
+     * stone it was standing in.
+     *
+     * <p>Line of sight only, and deliberately not the view cone. Which way the head happens to be
+     * pointing is driven by whatever goal is running — that is the documented cheat the block scan
+     * relies on — and a creeper behind the body is no less a creeper. What matters is whether there is
+     * rock in between.
+     *
+     * <p>Nothing is lost by it. A skeleton shooting has line of sight by definition, and a creeper has
+     * it by the time it is worth anything. And "there is something hostile nearby, seen or not" is not
+     * forgotten either: the tactics layer keeps its own count at any range and no line of sight, which
+     * is the right place for it — that question is whether to hole up, not where to point the hands.
+     */
     private Sighting nearestThreat(LocalPlayer player) {
         return nearest(player, THREAT_RANGE,
                 candidate -> candidate instanceof LivingEntity living
                         && living.isAlive()
-                        && candidate instanceof Enemy)
+                        && candidate instanceof Enemy
+                        && player.hasLineOfSight(living))
                 .map(found -> Sighting.of(FocusKind.HOSTILE, found))
                 .orElseGet(Sighting::nothing);
     }
