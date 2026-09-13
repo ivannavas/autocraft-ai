@@ -189,7 +189,32 @@ public final class QLearningBrain {
     private static final java.util.Deque<Trace> TRACES = new java.util.ArrayDeque<>();
     private static final long TRACE_KEEP_MILLIS = 120_000;
     private static final double DEATH_TRACE = 8.0;
-    private static final double DEATH_TRACE_HALF_LIFE_MILLIS = 30_000;
+    private static final double TRACE_HALF_LIFE_MILLIS = 30_000;
+    /**
+     * Credit for an objective reached, spread back over the choices that led to it.
+     *
+     * <h2>Why an advance needed this and only a death had it</h2>
+     * The trail was built to stop a death landing on whichever unlucky move happened to be open when
+     * the body fell, because a night that kills spreads its decisions over two hundred rows and the one
+     * that takes the hit is rarely the one that walked out under the sky at dusk. Every word of that is
+     * true of an objective reached and nothing was done about it: {@code ADVANCE_BONUS} is the largest
+     * number in the run and it landed, whole, on whatever move was in flight when the fifth iron came
+     * off the ground.
+     *
+     * <p>What that does to a table is not subtle. Over two hundred and forty-seven goal moves of a real
+     * run, WATCH was chosen twice and averaged +21.8, FLEE twice and averaged +14.9 — the two best moves
+     * in the run by a distance, on two samples each, because each happened to be holding the body at a
+     * finish. Meanwhile REACH_BAND over thirty-two samples averaged -7.1 and TRAVEL over eighty-five
+     * -7.8: the moves that actually go somewhere, priced by the seconds they cost and never once by the
+     * objective they arrived at. A table learns that from its own row. A network, asked to generalise,
+     * spreads a two-sample windfall to every state that looks like it — which is what a sweep of that
+     * log produced, and why it is worth saying that the network was not wrong there, the data was.
+     *
+     * <p>So an advance is traced back exactly as a death is, and for the identical reason. The lump
+     * still lands on the move that was there at the finish — it was, and the ordinary reward is the
+     * right place to say so — and this is what the walk before it gets.
+     */
+    private static final double ADVANCE_TRACE = 8.0;
 
     /**
      * A cost per second of standing under the open sky at night with no shelter running. Not a rule:
@@ -1568,6 +1593,11 @@ public final class QLearningBrain {
         // Score before looking: reaching a rung changes what the body is after, and the sighting that
         // follows should already be taken with the new rung's eyes.
         double climbed = progression.advanceIfComplete(step);
+        if (climbed > 0.0) {
+            // The finish pays the move that was there through the ordinary reward; the walk that got
+            // it there is paid here. See ADVANCE_TRACE for what it cost not to.
+            traceAdvance();
+        }
         double base = score(step);
         double reward = base + climbed + exposure(step.steps())
                 + (base <= 0.0 ? dwelling(player, step.steps()) : 0.0);
@@ -2699,6 +2729,22 @@ public final class QLearningBrain {
 
     /** The death, traced back: each distinct choice of the last two minutes loses value by its age. */
     private void traceDeath() {
+        traceBack(-DEATH_TRACE, "Death");
+    }
+
+    /** The objective, traced back: the walk that got there is paid, less the further back it was. */
+    private void traceAdvance() {
+        traceBack(ADVANCE_TRACE, "An objective reached");
+    }
+
+    /**
+     * Spreads credit or blame over the distinct choices of the last two minutes, halving with age.
+     *
+     * <p>The trail is spent either way. A choice that has been paid for an objective is not owed
+     * anything by the next one, and leaving it on the list would have the same walk credited again at
+     * every finish for the following two minutes.
+     */
+    private void traceBack(double amount, String what) {
         long now = System.currentTimeMillis();
         Map<String, Trace> latest = new LinkedHashMap<>();
         synchronized (TRACES) {
@@ -2710,11 +2756,11 @@ public final class QLearningBrain {
         }
         for (Trace trace : latest.values()) {
             double age = now - trace.at();
-            double delta = -DEATH_TRACE * Math.pow(0.5, age / DEATH_TRACE_HALF_LIFE_MILLIS);
-            trace.table().nudge(trace.state(), trace.column(), delta);
+            trace.table().nudge(trace.state(), trace.column(),
+                    amount * Math.pow(0.5, age / TRACE_HALF_LIFE_MILLIS));
         }
         if (!latest.isEmpty()) {
-            log.info("Death traced back to {} choices of the last two minutes", latest.size());
+            log.info("{} traced back to {} choices of the last two minutes", what, latest.size());
         }
     }
 

@@ -76,8 +76,23 @@ import net.minecraft.world.phys.Vec3;
 @Slf4j
 public final class Progression {
 
-    /** Paid once, on reaching an objective. Deliberately large: this is the point of the whole run. */
-    private static final double ADVANCE_BONUS = 25.0;
+    /**
+     * Paid on reaching an objective to the move that was there at the finish.
+     *
+     * <p>Twelve, and it was twenty-five. Not because an objective is worth less than it was — it is
+     * worth more, and most of it is now paid to the walk that got there rather than to the last step;
+     * see {@code QLearningBrain.ADVANCE_TRACE}. Twenty-five landing whole on one move was the single
+     * largest number in the run going to whichever move happened to be holding the body when the fifth
+     * iron came off the ground, and over two hundred and forty-seven goal moves of a real run that made
+     * WATCH, chosen twice, the best move in the game at +21.8 a go, and FLEE, chosen twice, the second
+     * at +14.9 — while REACH_BAND over thirty-two averaged -7.1 and TRAVEL over eighty-five -7.8. One
+     * sample of a windfall beat eighty-five samples of the truth.
+     *
+     * <p>Still the biggest single thing that can happen to a move: three logs' worth, against the four
+     * a wasted second costs. Large enough to be worth a long detour, which is what it is for; too small
+     * for one lucky sample to out-price everything the run actually learned.
+     */
+    private static final double ADVANCE_BONUS = 12.0;
 
     /**
      * Paid once for getting somewhere that has what the plan needs, at a height the plan wants.
