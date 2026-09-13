@@ -113,6 +113,30 @@ public final class TravelGoal implements MobGoal {
         return CONTROLS;
     }
 
+    /**
+     * Whether there is anywhere at all within reach that the body could walk to.
+     *
+     * <p>The legality question behind {@link io.github.ivannavas.autocraftai.mob.ai.GoalAction#TRAVEL},
+     * and the one nobody was asking. A journey with nothing walkable along its bearing or any detour
+     * strands itself on its first tick and hands the decision straight back — deliberately, see
+     * {@link #canUse} — which from outside looks like a goal that started and stopped in the same
+     * second. The brain would then choose the same move again, because nothing in the state it keys on
+     * says whether there is anywhere to go: a body boxed in reads exactly like a body on an open plain.
+     * Seventeen of eighteen decisions were TRAVEL, for six minutes, without a step.
+     *
+     * <p>So it is asked here instead, the way {@code canDigDown} is asked — a fact about the world that
+     * rules a move out, rather than an opinion for a table to spend its exploration discovering over and
+     * over. Eight directions, sampled the same way a journey samples its own bearing.
+     */
+    public static boolean anywhereToWalk(MobBody body) {
+        for (int turn = 0; turn < 8; turn++) {
+            if (furthestWalkable(body, turn * Math.PI / 4.0) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     @Override
     public boolean canUse(MobBody body) {
         // Being stranded has to bar the start as well as the continuation. The engine offers a stopped goal
@@ -275,7 +299,7 @@ public final class TravelGoal implements MobGoal {
      *
      * @return where to go, or null when even the first step that way is neither walkable nor swimmable
      */
-    private Vec3 furthestWalkable(MobBody body, double heading) {
+    private static Vec3 furthestWalkable(MobBody body, double heading) {
         Vec3 best = null;
         for (int ahead = AIM_NEAREST; ahead <= AIM_FURTHEST; ahead += AIM_STEP) {
             Vec3 point = body.position().add(
@@ -297,7 +321,7 @@ public final class TravelGoal implements MobGoal {
      * <p>Top down, so a bank above the water is found before the water is, and a body walks where it can
      * and swims only where it must.
      */
-    private Vec3 standingSpot(MobBody body, BlockPos candidate) {
+    private static Vec3 standingSpot(MobBody body, BlockPos candidate) {
         Level level = body.level();
         Player player = body.player();
         for (int y = candidate.getY() + FLOOR_SEARCH_UP; y >= candidate.getY() - FLOOR_SEARCH_DOWN; y--) {

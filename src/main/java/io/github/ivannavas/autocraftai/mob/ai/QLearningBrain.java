@@ -2929,6 +2929,7 @@ public final class QLearningBrain {
                 // build with as far as every table is concerned. Which is the truth of it.
                 PlaceBlockGoal.hotbarSlotWithBlock(player, reserve) >= 0,
                 Perception.canDigDown(player),
+                TravelGoal.anywhereToWalk(engine.body()),
                 toolFor(player, sighting.blockPos()),
                 Perception.isHungry(player),
                 Perception.canEat(player),

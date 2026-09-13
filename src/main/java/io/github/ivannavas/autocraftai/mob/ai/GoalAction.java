@@ -165,7 +165,10 @@ public enum GoalAction {
             // it arrives at once, and a move that arrives at once costs nothing, so a row the coach had
             // once seeded with TRAVEL chose it fifty-eight times a minute, going nowhere, with the stone
             // three blocks away. What to do about a block in view is MINE, DIG_DOWN or a skill's question.
-            return !context.wantedInSight();
+            // And somewhere to actually walk to. Without this a boxed-in body chose TRAVEL, had its
+            // journey strand itself on the first tick, and chose TRAVEL again — seventeen times in
+            // eighteen decisions, for six minutes, without a step.
+            return !context.wantedInSight() && context.canTravel();
         }
 
         @Override

@@ -24,6 +24,7 @@ import net.minecraft.core.BlockPos;
  * @param wall       the solid block straight ahead at body height, or null if the way is clear
  * @param hasBlocks  the body is carrying something it could put down
  * @param canDigDown there is solid ground under the feet with more solid ground under that
+ * @param canTravel there is somewhere within reach the body could actually walk to
  * @param tool       what to break the sighted block with, per the objective or per the game
  * @param hungry     the body is hungry enough for it to be worth deciding about
  * @param canEat     there is a mouthful in the hotbar and room for it
@@ -34,7 +35,7 @@ import net.minecraft.core.BlockPos;
  * @param mineOnSight the block in view is one the plan came here to break
  */
 public record ActionContext(Sighting sighting, Set<Resource> craftable, BlockPos wall,
-                            boolean hasBlocks, boolean canDigDown, Tool tool,
+                            boolean hasBlocks, boolean canDigDown, boolean canTravel, Tool tool,
                             boolean hungry, boolean canEat, boolean wellFed, boolean worthDigging,
                             OptionalInt heightWanted, Reserve reserve,
                             boolean mineOnSight, boolean wantedInSight) {
@@ -68,6 +69,17 @@ public record ActionContext(Sighting sighting, Set<Resource> craftable, BlockPos
      */
     public boolean canDigDown() {
         return canDigDown;
+    }
+
+    /**
+     * Whether setting off is a move the body could make right now.
+     *
+     * <p>Legality, not opinion, and for the same reason {@link #canDigDown()} is: a body with nothing
+     * walkable in any direction cannot travel, and no amount of learning should have to discover that
+     * one punished decision at a time in every state it happens to be true in.
+     */
+    public boolean canTravel() {
+        return canTravel;
     }
 
     /** Whether eating is a move the body could make right now. Legality only, like {@link #canDigDown()}. */
