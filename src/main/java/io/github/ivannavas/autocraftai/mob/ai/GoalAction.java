@@ -2,6 +2,7 @@ package io.github.ivannavas.autocraftai.mob.ai;
 
 import io.github.ivannavas.autocraftai.mob.MobGoal;
 import io.github.ivannavas.autocraftai.mob.goal.ApproachSightingGoal;
+import io.github.ivannavas.autocraftai.mob.goal.CarveUpGoal;
 import io.github.ivannavas.autocraftai.mob.goal.AttackSightingGoal;
 import io.github.ivannavas.autocraftai.mob.goal.DigDownGoal;
 import io.github.ivannavas.autocraftai.mob.goal.EatGoal;
@@ -199,6 +200,35 @@ public enum GoalAction {
         @Override
         public boolean isApplicable(ActionContext context) {
             return context.canDigDown() && context.worthDigging();
+        }
+
+        @Override
+        public boolean usesSighting() {
+            return false;
+        }
+    },
+
+    /**
+     * Cut a staircase up. The mirror of {@link #DIG_DOWN}, and for a long time the half that was missing.
+     *
+     * <p>Descending needs nothing in view and nothing in the bag, so a body anywhere can always go down.
+     * Ascending had no such move: walking needs somewhere to walk, pillaring needs blocks, and a body
+     * sealed in rock with an empty bag has neither. It could always get into a hole it could not get out
+     * of, which it proved twice in one day — on top of a pillar it built, and at y=-20 under a ceiling.
+     *
+     * <p>Legality is a fact about the world rather than an opinion, the same as {@link #DIG_DOWN}'s:
+     * there has to be a step beside the feet worth cutting towards. See
+     * {@link CarveUpGoal#anywhereToCut}.
+     */
+    CARVE_UP {
+        @Override
+        public MobGoal create(ActionContext context, Aim aim) {
+            return new CarveUpGoal();
+        }
+
+        @Override
+        public boolean isApplicable(ActionContext context) {
+            return context.canCarveUp();
         }
 
         @Override

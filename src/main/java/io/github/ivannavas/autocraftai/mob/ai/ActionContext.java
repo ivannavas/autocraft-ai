@@ -25,6 +25,8 @@ import net.minecraft.core.BlockPos;
  * @param hasBlocks  the body is carrying something it could put down
  * @param canDigDown there is solid ground under the feet with more solid ground under that
  * @param canTravel there is somewhere within reach the body could actually walk to
+ * @param canCarveUp there is a step beside the feet a staircase could be cut towards, and the plan
+ *                   wants the body higher than it is
  * @param tool       what to break the sighted block with, per the objective or per the game
  * @param hungry     the body is hungry enough for it to be worth deciding about
  * @param canEat     there is a mouthful in the hotbar and room for it
@@ -35,7 +37,8 @@ import net.minecraft.core.BlockPos;
  * @param mineOnSight the block in view is one the plan came here to break
  */
 public record ActionContext(Sighting sighting, Set<Resource> craftable, BlockPos wall,
-                            boolean hasBlocks, boolean canDigDown, boolean canTravel, Tool tool,
+                            boolean hasBlocks, boolean canDigDown, boolean canTravel,
+                            boolean canCarveUp, Tool tool,
                             boolean hungry, boolean canEat, boolean wellFed, boolean worthDigging,
                             OptionalInt heightWanted, Reserve reserve,
                             boolean mineOnSight, boolean wantedInSight) {
@@ -69,6 +72,16 @@ public record ActionContext(Sighting sighting, Set<Resource> craftable, BlockPos
      */
     public boolean canDigDown() {
         return canDigDown;
+    }
+
+    /**
+     * Whether cutting a way up is a move the body could make right now.
+     *
+     * <p>Legality, like {@link #canDigDown()} and for the mirror reason: a body with no step beside it
+     * cannot cut a staircase, and a body the plan does not want higher has no business cutting one.
+     */
+    public boolean canCarveUp() {
+        return canCarveUp;
     }
 
     /**

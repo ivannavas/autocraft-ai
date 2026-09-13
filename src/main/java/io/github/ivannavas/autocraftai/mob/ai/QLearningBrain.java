@@ -44,6 +44,7 @@ import io.github.ivannavas.autocraftai.mob.ai.objective.Tool;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Travel;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Way;
 import io.github.ivannavas.autocraftai.mob.goal.ApproachSightingGoal;
+import io.github.ivannavas.autocraftai.mob.goal.CarveUpGoal;
 import io.github.ivannavas.autocraftai.mob.goal.CraftAtTableGoal;
 import io.github.ivannavas.autocraftai.mob.goal.CraftGoal;
 import io.github.ivannavas.autocraftai.mob.goal.CraftingGoal;
@@ -2958,6 +2959,11 @@ public final class QLearningBrain {
                 PlaceBlockGoal.hotbarSlotWithBlock(player, reserve) >= 0,
                 Perception.canDigDown(player),
                 TravelGoal.anywhereToWalk(engine.body()),
+                // Only when the plan actually wants the body higher: a staircase cut for its own sake is
+                // a body mining the ceiling because nothing else was paying.
+                progression.heightWanted(player.getBlockY()).stream()
+                        .anyMatch(height -> height > player.getBlockY())
+                        && CarveUpGoal.anywhereToCut(engine.body()),
                 toolFor(player, sighting.blockPos()),
                 Perception.isHungry(player),
                 Perception.canEat(player),
