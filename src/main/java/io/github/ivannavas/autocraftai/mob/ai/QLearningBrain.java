@@ -591,6 +591,20 @@ public final class QLearningBrain {
     /** Until when the tactics layer stands aside, the way the passage layer already could. */
     private long tacticCooldownUntil;
     /**
+     * Until when the water layer stands aside — and only ever while the body's lungs are full.
+     *
+     * <p>The watchdog left the water out on the grounds that it ends when the body is dry, which is the
+     * third time in one day that a layer's own "this cannot go round for ever" turned out to be wrong.
+     * A body spawned at a shoreline had Swim(SHORE) start and stop four times a second for a minute,
+     * at priority zero, above everything, while the errand underneath had no legs at all.
+     *
+     * <p>So it is bounded like the others, with the one guard that matters: a head under water with its
+     * air running out is the single claim nothing may override, and this must never be the reason a
+     * body drowns. Full lungs means the body is at the surface or standing in the shallows, where the
+     * water layer is not saving anyone's life — it is just another layer going round.
+     */
+    private long swimCooldownUntil;
+    /**
      * Whether the goal of the move in flight has had the body at all.
      *
      * <p>A move that never ran earned nothing, and crediting it with what the seconds happened to be
@@ -1044,10 +1058,11 @@ public final class QLearningBrain {
             displacedTicks = 0;
             return;
         }
-        if (passageGoal == null && tacticGoal == null) {
-            // Displaced by the water or by a craft at a table, or by nothing at all. Neither of those
-            // goes round for ever — one ends when the body is dry, the other when the thing is made or
-            // given up on — and neither is this watchdog's to interrupt.
+        boolean drowningMatters = swimGoal != null
+                && player.getAirSupply() < player.getMaxAirSupply();
+        if (passageGoal == null && tacticGoal == null && (swimGoal == null || drowningMatters)) {
+            // Nothing here that goes round for ever: a craft at a table ends when the thing is made or
+            // given up on, and a body whose air is going down is being kept alive rather than kept busy.
             return;
         }
         if (++displacedTicks < DISPLACED_LIMIT_TICKS) {
@@ -1070,6 +1085,12 @@ public final class QLearningBrain {
             settleTactics(player, lastSurroundings);
             removeTactic();
             tacticCooldownUntil = until;
+        }
+        if (swimGoal != null && !drowningMatters) {
+            water.forget();
+            wet = null;
+            removeSwim();
+            swimCooldownUntil = until;
         }
         // And the move underneath starts its count afresh: the seconds it spent without the body were
         // not its own, and cutting it the moment it finally gets them would be charging it for them.
@@ -2169,6 +2190,13 @@ public final class QLearningBrain {
                 wet = null;
                 removeSwim();
             }
+            return;
+        }
+        if (System.currentTimeMillis() < swimCooldownUntil
+                && player.getAirSupply() >= player.getMaxAirSupply()) {
+            // Stood aside after holding the body too long with full lungs. The moment the air starts
+            // going down the guard above lets this layer straight back in, cooldown or no cooldown.
+            removeSwim();
             return;
         }
         Reserve reserve = progression.reserved();
