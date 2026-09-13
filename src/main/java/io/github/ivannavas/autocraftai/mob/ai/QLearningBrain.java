@@ -530,6 +530,50 @@ public final class QLearningBrain {
     private static final long PASSAGE_COOLDOWN_MILLIS = 10_000;
     /** How much way, in blocks the wanted direction, counts as making some. */
     private static final double PASSAGE_WAY_MADE = 1.5;
+    /**
+     * Ticks the primary may spend with the body taken off it before the layers doing the taking are
+     * made to stand aside, whatever they think they are achieving.
+     *
+     * <h2>The hole three careful guards left between them</h2>
+     * Every part of this was reasonable on its own and together they had no bottom. A primary that has
+     * been displaced is not charged for the second — {@link #gettingNowhere()} returns false, and rightly,
+     * since a move that has not got the body is not the one failing. A move whose terrain fix is still in
+     * hand is not re-decided — {@link #stillHolding()} returns true, and rightly, since deciding again
+     * underneath the fix threw the fix away. And the terrain layer's own patience bounds how long it may
+     * hold on without making way — except that its clock restarts whenever the obstruction reading clears
+     * for a single tick, which on a one-block pillar it does every other second.
+     *
+     * <p>So each guard assumed one of the others was the bound, and none of them was. A body that
+     * towered up out of a forest canopy stood on top of its own pillar for a quarter of an hour: every
+     * direction off it reads as a gap, so the terrain layer took the body and never gave it back —
+     * BRIDGE_GAP, whose {@code until} wants solid ground under the next block along, and EDGE_RETREAT,
+     * whose {@code until} wants firm ground to retreat to, neither of which exists on a pillar. The goal
+     * table meanwhile chose REACH_BAND and DIG_DOWN — the moves that would have got it down in one
+     * second — and had them installed and never started, two hundred and sixty-four times against a
+     * hundred and eight. The coach was asked, diagnosed it correctly, and taught REACH_BAND=6; the
+     * lesson landed in the one layer with no legs.
+     *
+     * <p>This is the missing bound, and it is deliberately the crudest one that works: not an opinion
+     * about whether a layer is getting anywhere — each layer already has its own and they are the
+     * things that failed — but a hard ceiling on how long the body may go without the primary running
+     * at all. Fifteen seconds is longer than any honest fix takes and far shorter than a stuck run.
+     */
+    private static final int DISPLACED_LIMIT_TICKS = 300;
+    /** How long the two layers that can loop stand aside once the ceiling is hit. */
+    private static final long DISPLACED_STAND_ASIDE_MILLIS = 15_000;
+    /** Ticks in a row the primary has had no body, counted only against the layers that can loop. */
+    private int displacedTicks;
+    /** Until when the tactics layer stands aside, the way the passage layer already could. */
+    private long tacticCooldownUntil;
+    /**
+     * Whether the goal of the move in flight has had the body at all.
+     *
+     * <p>A move that never ran earned nothing, and crediting it with what the seconds happened to be
+     * worth is how a table learns about a move it has never seen made. The goal tables were being told
+     * REACH_BAND was worth whatever the terrain layer's thrashing cost, over and over, in the one state
+     * where REACH_BAND was the answer.
+     */
+    private boolean installedRan;
     /** Which way it wanted, and where, when it last chose: what its progress is measured against. */
     private Obstruction.Wanted stuckWanting;
     private Vec3 stuckTarget;
@@ -903,6 +947,10 @@ public final class QLearningBrain {
         if (stalledNow) {
             stalledSteps++;
         }
+        if (installedGoal != null && engine.isRunning(installedGoal)) {
+            installedRan = true;
+        }
+        keepTheLayersHonest(player);
         if (!doneNow && stillHolding()) {
             return;
         }
@@ -934,6 +982,57 @@ public final class QLearningBrain {
     private boolean displaced() {
         return busy(swimGoal) || busy(tacticGoal) || busy(craftGoal) || busy(craftSkill) || busy(passageGoal)
                 || crafting();
+    }
+
+    /**
+     * Makes the looping layers stand aside when the primary has gone too long without the body.
+     *
+     * <p>See {@link #DISPLACED_LIMIT_TICKS} for what this is for. It says nothing about whether either
+     * layer was right — it may well have been — only that the errand the run is actually on has had
+     * nothing for fifteen seconds, and that whatever is being attempted has had its turn.
+     */
+    private void keepTheLayersHonest(LocalPlayer player) {
+        // Counted against the primary running, not against the layers holding it. Counting consecutive
+        // ticks of "a layer is busy" would be the passage layer's own patience bug written out a second
+        // time: one tick in which neither layer happens to hold a running goal — between tearing one
+        // down and installing the next, which on a pillar is every other second — and the clock starts
+        // again from nothing. What cannot be gamed by a flicker is the thing actually being complained
+        // about: the errand has had no body.
+        if (installedGoal == null || engine.isRunning(installedGoal)) {
+            displacedTicks = 0;
+            return;
+        }
+        if (passageGoal == null && tacticGoal == null) {
+            // Displaced by the water or by a craft at a table, or by nothing at all. Neither of those
+            // goes round for ever — one ends when the body is dry, the other when the thing is made or
+            // given up on — and neither is this watchdog's to interrupt.
+            return;
+        }
+        if (++displacedTicks < DISPLACED_LIMIT_TICKS) {
+            return;
+        }
+        displacedTicks = 0;
+        long until = System.currentTimeMillis() + DISPLACED_STAND_ASIDE_MILLIS;
+        log.info("The primary has had no body for {} s on {}; terrain and surroundings stand aside",
+                DISPLACED_LIMIT_TICKS / STEP_TICKS, lastState);
+        if (passageGoal != null) {
+            // Settled with no continuation rather than credited against a state it never reached: the
+            // layer is being stopped, not finishing.
+            passage.learnTerminal(passageReward(player));
+            passage.forget();
+            stuckSince = null;
+            removePassage();
+            passageCooldownUntil = until;
+        }
+        if (tacticGoal != null) {
+            settleTactics(player, lastSurroundings);
+            removeTactic();
+            tacticCooldownUntil = until;
+        }
+        // And the move underneath starts its count afresh: the seconds it spent without the body were
+        // not its own, and cutting it the moment it finally gets them would be charging it for them.
+        stalledSteps = 0;
+        stalledNow = false;
     }
 
     /**
@@ -1493,7 +1592,13 @@ public final class QLearningBrain {
             // because a table that has never seen the state the body is in now has nothing to bootstrap
             // from — and the reward itself is what it earned, whichever folder came next.
             if (active != null) {
-                active.settle(reward);
+                // Settled on what it earned — unless it never had the body, in which case it earned
+                // nothing and the claims go without being priced. See the drop below.
+                if (installedRan) {
+                    active.settle(reward);
+                } else {
+                    active.drop();
+                }
             }
             active = suite;
         }
@@ -1513,6 +1618,14 @@ public final class QLearningBrain {
         // All three learn from the same reward over the same move: each one's share of the credit is
         // whatever its own column was doing while that reward was earned.
         String craftKey = CraftSituation.key(progression.needs(), held);
+        // Unless the move never got the body at all, in which case its claims are dropped rather than
+        // paid. What the seconds were worth was the doing of whichever layer displaced it, and a table
+        // told otherwise learns about a move it has never seen made — REACH_BAND priced at the cost of
+        // the terrain layer's thrashing, in the one state where REACH_BAND was the way out. The craft
+        // table is paid as usual: a two-by-two craft needs no body and runs whoever has it.
+        if (!installedRan) {
+            active.drop();
+        }
         active.goals.learn(observation.key(), reward, step.steps(), legalGoals);
         crafting.learn(craftKey, reward, step.steps(), legalCrafts);
 
@@ -2437,6 +2550,13 @@ public final class QLearningBrain {
      * it is the main lesson here: a night survived is a night that did not end in minus twenty.
      */
     private void tendTactics(LocalPlayer player) {
+        if (System.currentTimeMillis() < tacticCooldownUntil) {
+            // Stood aside because the errand had gone too long without the body. The surroundings are
+            // not being ignored — a hostile still gets the water layer and the goal table's own ATTACK —
+            // only this layer's turn at answering them is over for a moment.
+            settleTactics(player, lastSurroundings);
+            return;
+        }
         if (wet != null && !anySkillApplies(Skill.Layer.TACTIC, player)) {
             // The water layer owns a swimming body, unless a tactic skill says the water is its
             // business: the coach wrote two ways out of a flooded hole, both conditioned on "wet", and
@@ -2464,7 +2584,7 @@ public final class QLearningBrain {
         if (tacticSince != null) {
             tactics.learn(key, tacticReward(player, here), 1, legal);
         }
-        boolean hold = holdsTactic(here);
+        boolean hold = holdsTactic(here, player);
         tacticSince = Moment.of(player);
         tacticSeen = here;
 
@@ -2487,13 +2607,28 @@ public final class QLearningBrain {
      * changed — a skeleton turning up is a new question whatever the tower was doing. A tactic that
      * has finished, given up or stalled hands the second back to the table.
      */
-    private boolean holdsTactic(Surroundings here) {
+    private boolean holdsTactic(Surroundings here, LocalPlayer player) {
         if (tacticGoal == null || tacticColumn == Tactic.CARRY_ON.ordinal()) {
             return false;
         }
         if (!engine.isRunning(tacticGoal) || tacticGoal.isDone()
                 || tacticGoal.stalledTicks() >= STALL_TICKS) {
             return false;
+        }
+        // A tactic skill whose own condition has gone is not an answer to anything any more. DAYLIGHT
+        // is "stack blocks until you can see the sky"; the moment the sky is there it has nothing left
+        // to do, and held for another thirty seconds without anyone re-reading its condition it simply
+        // towered on. The hold was only ever meant to stop the table re-rolling a tower it had started,
+        // not to keep a skill running past its own reason for existing.
+        if (tacticGoal instanceof SkillGoal run) {
+            try {
+                if (!run.skill().when().test(readings(player))) {
+                    log.debug("Tactic {} let go: its own condition no longer holds", run.skill().name());
+                    return false;
+                }
+            } catch (RuntimeException e) {
+                return false;
+            }
         }
         // A shelter is for whatever turns up: something hostile arriving is not a reason to leave it.
         return committed() || tacticSeen == null || tacticSeen.threat().equals(here.threat());
@@ -3462,6 +3597,8 @@ public final class QLearningBrain {
         installedAction = null;
         installedSkill = null;
         installedTarget = null;
+        // A fresh move has not run yet, whatever the one it replaces managed.
+        installedRan = false;
     }
 
     private void maintain(boolean climbed) {
@@ -3722,6 +3859,14 @@ public final class QLearningBrain {
                 table.learnTerminal(reward);
                 table.forget();
             });
+        }
+
+        /**
+         * Lets go of every claim without pricing any of it: the move these tables chose never got the
+         * body, so there is nothing to be told about it either way.
+         */
+        private void drop() {
+            tables().forEach(Table::forget);
         }
     }
 
