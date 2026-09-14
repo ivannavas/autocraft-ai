@@ -3244,7 +3244,14 @@ public final class QLearningBrain {
         for (Objective objective : GeneralObjectives.all()) {
             append(out, objective.name(), objective.score(step));
         }
-        append(out, "plan", progression.score(step));
+        // Read, never recomputed: progression.score consumes its progress payment, so asking it twice
+        // reports a number the body never actually learned from. See Progression#scoreParts.
+        if (!progression.scoreParts().isEmpty()) {
+            if (!out.isEmpty()) {
+                out.append(';');
+            }
+            out.append(progression.scoreParts());
+        }
         append(out, "advance", climbed);
         append(out, "exposure", exposed);
         append(out, "dwelling", dwelt);

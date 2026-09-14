@@ -217,6 +217,8 @@ public final class Progression {
      * objective can never exceed its own finish line.
      */
     private double progressPaid;
+    /** What the last score was made of, for the move log. See {@link #scoreParts}. */
+    private String scoreParts = "";
     /**
      * Per unit of progress towards the objective, paid the first time the run reaches it.
      *
@@ -815,25 +817,66 @@ public final class Progression {
         // Collected here, and only once: noteProgress runs earlier in the same decision.
         double nearer = progressPaid;
         progressPaid = 0.0;
-        double total = nearer + (current == null ? 0.0 : current.score(context))
-                + shoppingList(context) + reserveBroken(context) + readiness(context);
+        double own = current == null ? 0.0 : current.score(context);
+        double list = shoppingList(context);
+        double broken = reserveBroken(context);
+        double ready = readiness(context);
+        StringBuilder parts = new StringBuilder();
+        part(parts, "nearer", nearer);
+        part(parts, "objective", own);
+        part(parts, "shopping", list);
+        part(parts, "reserve", broken);
+        part(parts, "readiness", ready);
+        double total = nearer + own + list + broken + ready;
 
         // Height is the only part that needs a body to read it off. With no body the band cannot be
         // charged for, and "at the right height" is true exactly when there is no band to be at odds with.
         OptionalInt y = context.player() == null
                 ? OptionalInt.empty() : OptionalInt.of(context.player().getBlockY());
         Bounds band = bounds();
-        total += arrived(context, y.isPresent() ? band.contains(y.getAsInt()) : !band.bind());
+        double reached = arrived(context, y.isPresent() ? band.contains(y.getAsInt()) : !band.bind());
+        part(parts, "arrived", reached);
+        total += reached;
         if (y.isPresent()) {
-            total += band.charge(y.getAsInt(), context.steps());
+            double outside = band.charge(y.getAsInt(), context.steps());
+            part(parts, "band", outside);
+            total += outside;
             // And what the step did about it. Without this the band was all stick and no carrot: the
             // plan said where the thing is and the only move that went there was the one that paid least.
             if (context.positionBefore() != null && context.positionAfter() != null) {
-                total += band.closed((int) Math.floor(context.positionBefore().y),
+                double closed = band.closed((int) Math.floor(context.positionBefore().y),
                         (int) Math.floor(context.positionAfter().y));
+                part(parts, "bandClosed", closed);
+                total += closed;
             }
         }
+        scoreParts = parts.toString();
         return total;
+    }
+
+    /**
+     * What the last {@link #score} was made of, as {@code name=value} pairs.
+     *
+     * <p>Kept rather than recomputed, and that is the whole point of it. The breakdown used to be built
+     * by calling {@code score} a second time, which was wrong in a way that took a day to notice:
+     * {@link #progressPaid} is consumed on read, so the second call saw none of it and every "plan"
+     * figure written to the move log was missing exactly the positive term. The reward the body learned
+     * from was right; the number being read over its shoulder was not, and it was on the way to being
+     * redesigned around.
+     */
+    public String scoreParts() {
+        return scoreParts;
+    }
+
+    private static void part(StringBuilder out, String name, double value) {
+        if (Math.abs(value) < 0.0005) {
+            return;
+        }
+        if (!out.isEmpty()) {
+            out.append(';');
+        }
+        out.append("plan.").append(name).append('=')
+                .append(String.format(java.util.Locale.ROOT, "%.4f", value));
     }
 
     /**
