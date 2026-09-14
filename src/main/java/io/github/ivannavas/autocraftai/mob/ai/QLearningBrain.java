@@ -225,11 +225,29 @@ public final class QLearningBrain {
     private static final double EXPOSED_COST = 0.15;
 
     /**
-     * The cost of getting nowhere: per second, scaled by how much of the last five minutes was spent
-     * within six blocks of here and by how trodden the cell is. Charged only on steps that made no
-     * progress, so a body mining a vein pays nothing while the vein pays it. A signal, not a rule —
-     * it says "this corner has had a quarter of an hour" to tables that otherwise see every second
-     * there as a fresh situation.
+     * The cost of getting nowhere, charged once per decision and scaled by how much of the last five
+     * minutes was spent within six blocks of here and by how trodden the cell is. Charged only on steps
+     * that made no progress, so a body mining a vein pays nothing while the vein pays it. A signal, not
+     * a rule — it says "this corner has had a quarter of an hour" to tables that otherwise see every
+     * second there as a fresh situation.
+     *
+     * <h2>Once a decision, and it used to be once a second</h2>
+     * Multiplied by the move's length it was the loudest thing in the reward by a distance. Measured
+     * over a body shuffling in a river bed: dwelling came to -146 of a -208 total, seventy per cent of
+     * everything, about six and a half per move and near enough identical whichever move was chosen.
+     * Nothing that depends on the action can be heard under a term that size which does not.
+     *
+     * <p>Worse, the per-second form punished exactly the moves that escape. A body cuts a staircase out
+     * of a pit at two to four seconds a step, so patience was charged by the second while a one-second
+     * dither was charged once — the same duration confounder that had already been found and fixed in
+     * the timing table, sitting here unnoticed.
+     *
+     * <p>And it made escape arithmetically impossible. The standing costs come to about eighty-five
+     * hundredths a second; {@link io.github.ivannavas.autocraftai.mob.ai.objective.Ascend} pays eight
+     * tenths for a block of height. Climbing takes more than a second a block, so getting out of a hole
+     * was always a net loss, and the move that works was indistinguishable from the moves that do not
+     * because all of them lost. Charged once a decision, the place still says it is worthless and the
+     * move that leaves it can finally come out ahead.
      */
     private static final double DWELL_COST = 0.4;
     private static final double REVISIT_COST = 0.2;
@@ -2791,7 +2809,8 @@ public final class QLearningBrain {
         }
         double excess = Math.max(0.0, territory.dwell(player.position()) - DWELL_ALLOWED) / (1.0 - DWELL_ALLOWED);
         double trodden = Math.min(1.0, territory.visitsAt(player.position()) / (double) WELL_TRODDEN);
-        return -(DWELL_COST * excess + REVISIT_COST * trodden) * Math.max(1, steps);
+        // Once for the decision, not once for every second of it. See the note on DWELL_COST.
+        return -(DWELL_COST * excess + REVISIT_COST * trodden);
     }
 
     /** The dwelling, in words, for the mentor. */
