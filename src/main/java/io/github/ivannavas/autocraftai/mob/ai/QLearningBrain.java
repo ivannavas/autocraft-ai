@@ -3016,6 +3016,7 @@ public final class QLearningBrain {
                 progression.heightWanted(player.getBlockY()).stream()
                         .anyMatch(height -> height > player.getBlockY())
                         && CarveUpGoal.anywhereToCut(engine.body()),
+                equippedFor(player, sighting),
                 toolFor(player, sighting.blockPos()),
                 Perception.isHungry(player),
                 Perception.canEat(player),
@@ -3037,6 +3038,27 @@ public final class QLearningBrain {
      * What to break a block with: the objective's answer when it named this block, the game's otherwise.
      * Worked out here rather than inside the goal so the goal is handed a decision instead of a lookup.
      */
+    /**
+     * Whether what is in view can be got out of the world with what the hotbar is carrying.
+     *
+     * <p>Asked of the hotbar rather than of the hand, because the mining goal picks the right slot
+     * before its first swing — what matters at decision time is whether the body owns the tool, not
+     * whether it happens to be holding it.
+     */
+    private boolean equippedFor(LocalPlayer player, Sighting sighting) {
+        if (!sighting.isBlock() || sighting.blockPos() == null
+                || !player.level().isLoaded(sighting.blockPos())) {
+            return false;
+        }
+        net.minecraft.world.level.block.state.BlockState state =
+                player.level().getBlockState(sighting.blockPos());
+        // A block that needs no tool at all — wood, dirt, sand — is one the hands are already equipped
+        // for, and punching it costs nothing extra. Otherwise the hotbar has to hold something that
+        // will get a drop out of it.
+        return !state.requiresCorrectToolForDrops()
+                || Tool.bestFor(state).hotbarSlotFor(player.getInventory(), state) >= 0;
+    }
+
     private Tool toolFor(LocalPlayer player, BlockPos pos) {
         if (pos == null || !player.level().isLoaded(pos)) {
             return Tool.HAND;

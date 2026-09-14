@@ -25,6 +25,7 @@ import net.minecraft.core.BlockPos;
  * @param hasBlocks  the body is carrying something it could put down
  * @param canDigDown there is solid ground under the feet with more solid ground under that
  * @param canTravel there is somewhere within reach the body could actually walk to
+ * @param equipped the block in view can be harvested with something the hotbar is carrying
  * @param canCarveUp there is a step beside the feet a staircase could be cut towards, and the plan
  *                   wants the body higher than it is
  * @param tool       what to break the sighted block with, per the objective or per the game
@@ -38,7 +39,7 @@ import net.minecraft.core.BlockPos;
  */
 public record ActionContext(Sighting sighting, Set<Resource> craftable, BlockPos wall,
                             boolean hasBlocks, boolean canDigDown, boolean canTravel,
-                            boolean canCarveUp, Tool tool,
+                            boolean canCarveUp, boolean equipped, Tool tool,
                             boolean hungry, boolean canEat, boolean wellFed, boolean worthDigging,
                             OptionalInt heightWanted, Reserve reserve,
                             boolean mineOnSight, boolean wantedInSight) {
@@ -149,6 +150,25 @@ public record ActionContext(Sighting sighting, Set<Resource> craftable, BlockPos
         }
         if (hungry) {
             tags.append('H');
+        }
+        // Whether the thing in view can actually be harvested with what is carried.
+        //
+        // <p>The distinction the state could not make, and the most expensive one missing from it.
+        // "Stone in reach with a pickaxe" and "stone in reach with bare hands" were the same row, so no
+        // learner of any kind could tell them apart — not a table, not a network, because the difference
+        // was simply not written down anywhere the goals table could read.
+        //
+        // <p>Worse than merely missing. WASTED_EFFORT charges four a second for swinging at something
+        // the hand cannot harvest, and that charge landed on the row that also held the case where the
+        // body was doing it properly. The result was not "do not punch stone", it was MINE dragged down
+        // everywhere, including when it was exactly right.
+        //
+        // <p>It is also what lets the crafting table's work matter to the goals table without the two
+        // ever being crossed: making a pickaxe now moves the body from one row to a different one, and
+        // the goals table can hold a different opinion in each. That is the interaction the split was
+        // said to cost, bought back for one character of key rather than a cross-product.
+        if (equipped) {
+            tags.append('T');
         }
         return tags.isEmpty() ? "-" : tags.toString();
     }
