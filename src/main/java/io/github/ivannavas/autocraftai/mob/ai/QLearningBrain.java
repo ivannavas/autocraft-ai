@@ -163,6 +163,8 @@ public final class QLearningBrain {
      * run out a ten-second commitment at half pay.
      */
     private static final int STALL_LIMIT_STEPS = 2;
+    /** Ticks of swinging at something the held tool will not get a drop from before the move is cut. */
+    private static final int WASTED_LIMIT_TICKS = 60;
     /** Priority the chosen goal is installed at. */
     private static final int GOAL_PRIORITY = 2;
     /** A two-by-two craft claims no controls, so its priority only orders it against other free goals. */
@@ -1610,6 +1612,24 @@ public final class QLearningBrain {
         // and the terrain layer keeps the body between them — so a review that had just called the
         // shaft useless sat unread for two minutes while the body dug on down it.
         if (progression.answerWaiting()) {
+            return false;
+        }
+        // Enough swinging at something that will not drop. This sits above the committed check on
+        // purpose: a goal refuses interruption while a block is coming apart, because throwing away a
+        // half-broken block wastes the work — and that reasoning is exactly inverted here. The block is
+        // coming apart and it will give nothing when it does, so the work is the waste.
+        //
+        // <p>Measured before this existed: wasted effort fired on fifteen per cent of decisions at
+        // thirty-four and a half points each — nine seconds of punching at four a second — and came to
+        // fifty-nine per cent of everything the run was charged. One such episode costs what three
+        // completed objectives pay. Nothing else caught it: the block cracks, so the goal believes it is
+        // getting somewhere and never reports a stall, which is the whole reason WASTED_EFFORT was
+        // written in the first place.
+        //
+        // <p>Three seconds, not zero. The move stays legal and the tables keep learning what it is worth
+        // — with the tool in the state now they can tell the two cases apart — it simply cannot run the
+        // body into the ground while they do.
+        if (wastedTicks >= WASTED_LIMIT_TICKS) {
             return false;
         }
         if (installedGoal != null && engine.isCommitted(installedGoal)
