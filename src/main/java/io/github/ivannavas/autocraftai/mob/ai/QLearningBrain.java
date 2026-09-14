@@ -3070,6 +3070,9 @@ public final class QLearningBrain {
         // below — ways, band, tool — is answered for that.
         pursuit = progression.focus(player, sighting);
         Reserve reserve = progression.reserved();
+        // Worked out once: it decides both whether setting off is a move at all and whether breaking
+        // the block underfoot is, which turn out to be the same question asked from two sides.
+        boolean walkable = TravelGoal.anywhereToWalk(engine.body());
         return new ActionContext(
                 sighting,
                 Recipes.craftableNow(player),
@@ -3078,7 +3081,7 @@ public final class QLearningBrain {
                 // build with as far as every table is concerned. Which is the truth of it.
                 PlaceBlockGoal.hotbarSlotWithBlock(player, reserve) >= 0,
                 Perception.canDigDown(player),
-                TravelGoal.anywhereToWalk(engine.body()),
+                walkable,
                 // Only when the plan actually wants the body higher: a staircase cut for its own sake is
                 // a body mining the ceiling because nothing else was paying.
                 progression.heightWanted(player.getBlockY()).stream()
@@ -3089,7 +3092,20 @@ public final class QLearningBrain {
                 Perception.isHungry(player),
                 Perception.canEat(player),
                 Perception.wellFed(player),
-                progression.worthDigging(player.getBlockY()),
+                // Or there is simply nowhere to walk. Digging down is normally barred unless the plan
+                // wants depth — a body after wood that sinks a shaft has left, not found a slower route
+                // to wood — and that reasoning has one hole in it, which the body found twice: on top of
+                // a pillar of its own making, with the plan wanting neither height nor depth, TRAVEL is
+                // illegal because nothing is walkable, CARVE_UP is illegal because no height is wanted,
+                // and breaking the block underfoot is the only way down there has ever been.
+                //
+                // <p>Measured on the second occurrence: x and z did not move for a full minute at y=83
+                // while standing about charged 92 per cent of decisions, and the only legal moves left
+                // were WANDER, which cannot move a body off a one-block top, and PLACE, which makes the
+                // pillar taller.
+                //
+                // <p>A body that cannot walk anywhere is not sinking a shaft. It is getting down.
+                progression.worthDigging(player.getBlockY()) || !walkable,
                 progression.heightWanted(player.getBlockY()),
                 reserve,
                 progression.minesWhatItSees() && sighting.kind() == FocusKind.RESOURCE,
