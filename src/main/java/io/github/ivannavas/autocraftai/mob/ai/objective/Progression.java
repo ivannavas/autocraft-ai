@@ -193,6 +193,44 @@ public final class Progression {
     /** The furthest along the objective the run has been, and how long since it last got further. */
     private double bestProgress = Double.NEGATIVE_INFINITY;
     private int stepsSinceProgress;
+    /**
+     * What the step just taken earned for getting the objective nearer, waiting to be collected by
+     * {@link #score}.
+     *
+     * <h2>The dense signal the run did not have</h2>
+     * Measured over two hundred and thirty-seven decisions: the costs fired on essentially all of them —
+     * impatience on 100 per cent, dwelling on 92, standing about on 64 — and something paid on three.
+     * Not a matter of weights being a little off: the cost side was always connected and the pay side
+     * almost never. Under a reward like that the best policy is to spend time as cheaply as possible,
+     * which is why a body kept putting a block under its own feet and breaking it again — standing still
+     * costs less than walking anywhere. It was not stuck and it was not farming. It was right.
+     *
+     * <p>What pays now is the thing the run is actually for: getting nearer to finishing the objective.
+     * {@link #progressOf} already measured it every step — the objective's own count, what the shopping
+     * list has got, the band closed, ground made on a journey — and was read only to decide whether the
+     * body was stuck. It was never once paid for.
+     *
+     * <h2>A high-water mark, so it cannot be farmed</h2>
+     * Paid against {@link #bestProgress}, which only ever rises, so gathering a log, dropping it and
+     * gathering it again pays once. That is stronger than a potential, which pays back what it charged
+     * on the way out; here going backwards is simply not a way to earn anything, and the total over an
+     * objective can never exceed its own finish line.
+     */
+    private double progressPaid;
+    /**
+     * Per unit of progress towards the objective, paid the first time the run reaches it.
+     *
+     * <p>Three, against standing costs of about one and a half a decision, so that a decision which got
+     * the objective nearer comes out clearly ahead of one that did not. A unit is roughly one item of
+     * the shopping list, which is about what a log is worth — the two are meant to be the same order,
+     * since bringing a log home and being one log nearer to the plan are one event seen from either end.
+     */
+    private static final double PROGRESS_WEIGHT = 3.0;
+    /**
+     * The most one decision may be paid for progress. A body that walks into a cave and picks up
+     * fourteen things at once has done well, and not four objectives' worth of well.
+     */
+    private static final double MOST_PROGRESS_PAID = 9.0;
     /** How many times the objective has got nearer, ever: what says a lesson was followed by progress. */
     private long progressCount;
     /** How near the band counts as progress, and what each block of that nearness is worth. */
@@ -701,6 +739,7 @@ public final class Progression {
         startedAt = null;
         bestProgress = Double.NEGATIVE_INFINITY;
         stepsSinceProgress = 0;
+        progressPaid = 0.0;
         readied.clear();
         reviewedShort = false;
         reviewedStarving = false;
@@ -773,7 +812,10 @@ public final class Progression {
      * it goes away when the plan does.
      */
     public double score(StepContext context) {
-        double total = (current == null ? 0.0 : current.score(context))
+        // Collected here, and only once: noteProgress runs earlier in the same decision.
+        double nearer = progressPaid;
+        progressPaid = 0.0;
+        double total = nearer + (current == null ? 0.0 : current.score(context))
                 + shoppingList(context) + reserveBroken(context) + readiness(context);
 
         // Height is the only part that needs a body to read it off. With no body the band cannot be
@@ -909,6 +951,11 @@ public final class Progression {
         }
         double now = progressOf(context);
         if (now > bestProgress + 1.0E-6) {
+            // The first reading of an objective sets the mark rather than being paid for it: there is
+            // nothing to have got nearer to yet.
+            if (bestProgress > Double.NEGATIVE_INFINITY) {
+                progressPaid = Math.min(MOST_PROGRESS_PAID, PROGRESS_WEIGHT * (now - bestProgress));
+            }
             bestProgress = now;
             stepsSinceProgress = 0;
             progressCount++;
