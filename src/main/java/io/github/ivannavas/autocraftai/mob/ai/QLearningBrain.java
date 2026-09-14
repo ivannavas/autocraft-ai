@@ -324,7 +324,10 @@ public final class QLearningBrain {
     private static final int TACTIC_PRIORITY = 0;
     /** Per hostile that died over a second the tactics layer was in charge of. About a log and a half. */
     private static final double KILL_BONUS = 6.0;
-    /** Per block of height gained while trapped under a roof or down a pit: the way out is up. */
+    /**
+     * Per block of height gained while trapped under a roof or down a pit, and charged the same per
+     * block lost: the way out is up, and going back down is going back.
+     */
     private static final double TACTIC_HEIGHT_WEIGHT = 0.6;
     /** Paid once, for getting the sky back over the head. */
     private static final double DAYLIGHT_BONUS = 4.0;
@@ -2943,7 +2946,11 @@ public final class QLearningBrain {
         long dead = tacticSeen.hostiles().stream().filter(hostile -> !hostile.isAlive()).count();
         reward += KILL_BONUS * dead;
         if (tacticSeen.cover() != Surroundings.Cover.SKY) {
-            reward += TACTIC_HEIGHT_WEIGHT * Math.max(0.0, player.getY() - tacticSince.position().y);
+            // Symmetric, for the reason Ascend had to become symmetric a few hours ago: paying for
+            // height gained and charging nothing for height lost is a cycle worth 0.6 a block to a body
+            // that goes up and comes back down, for ever, under any roof. The same shape, in a second
+            // place, found by sweeping for it rather than by watching it happen.
+            reward += TACTIC_HEIGHT_WEIGHT * (player.getY() - tacticSince.position().y);
             if (now != null && now.cover() == Surroundings.Cover.SKY) {
                 reward += DAYLIGHT_BONUS;
             }
