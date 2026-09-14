@@ -429,6 +429,28 @@ public final class QLearningBrain {
      * for the situation to change, and for the tables to weigh what the run earned.
      */
     private static final long SKILL_BACKOFF_MILLIS = 60_000L;
+    /**
+     * Moves whose goal refused to run, and until when they are off the table.
+     *
+     * <h2>Charging a move that will not start is not enough</h2>
+     * A goal that declines to begin hands the decision straight back — {@link
+     * io.github.ivannavas.autocraftai.mob.goal.TravelGoal} does it on purpose when nothing along its
+     * bearing or any detour is walkable — and the brain would choose the same thing again a second
+     * later. Pricing it helps only while the differences between moves are legible, and in a corner
+     * they are not: with the dwelling charge at its ceiling every move in the row is worth about minus
+     * six whatever it is, and a further half point of blame for refusing to start is lost in the noise.
+     *
+     * <p>So the move comes off the table for a moment instead, the way a skill that never acted already
+     * did and a craft that gave up already did. It is not a judgement about the move — it is the
+     * observation that it did not happen, which is a fact and does not need learning.
+     *
+     * <p>{@link GoalAction#WANDER} is never benched. It is the move that guarantees the mask is never
+     * empty, and a body with nothing legal at all has no decision to make.
+     */
+    private final Map<String, Long> actionBackoff = new HashMap<>();
+    /** Long enough for the world to have changed, short enough not to be a ban. */
+    private static final long ACTION_BACKOFF_MILLIS = 8_000L;
+
     /** Crafts that gave up recently, and until when they are not to be tried again. */
     private final Map<Resource, Long> craftBackoff = new EnumMap<>(Resource.class);
     /** How many times in a row each craft has given up, cleared the first time it gets made. */
@@ -3202,6 +3224,13 @@ public final class QLearningBrain {
             allowed[i] = actions[i].isApplicable(context);
         }
         legalSkills(Skill.Layer.GOAL, allowed, Minecraft.getInstance().player);
+        long now = System.currentTimeMillis();
+        for (int i = 0; i < allowed.length && i < active.goals.columns.size(); i++) {
+            if (allowed[i] && i != GoalAction.WANDER.ordinal()
+                    && actionBackoff.getOrDefault(active.goals.columns.get(i), 0L) > now) {
+                allowed[i] = false;
+            }
+        }
         // A hostile in view used to bar approaching, watching, mining, eating and, unarmed, everything
         // but fleeing or building. Gone: what to do with a zombie behind you is learned — from the
         // exposure, from the death traced back to the choices before it, and from the coach — not told.
@@ -3787,6 +3816,16 @@ public final class QLearningBrain {
         if (installedGoal != null) {
             settleSkill(installedGoal);
             engine.removeGoal(installedGoal);
+        }
+        // A move that never got the body, with nothing having taken it away, is a move whose goal
+        // declined to start. Off the table for a moment rather than merely charged for it.
+        if (installedGoal != null && !installedRan && !installedDisplaced) {
+            String name = installedName();
+            if (!name.isEmpty() && !GoalAction.WANDER.name().equals(name)) {
+                actionBackoff.put(name, System.currentTimeMillis() + ACTION_BACKOFF_MILLIS);
+                log.debug("{} would not start; off the table for {} s",
+                        name, ACTION_BACKOFF_MILLIS / 1000);
+            }
         }
         installedGoal = null;
         installedAction = null;
