@@ -103,6 +103,17 @@ public final class Perception {
      */
     public Sighting look(Minecraft client, LocalPlayer player, Optional<Predicate<BlockState>> wanted,
                          Predicate<ItemEntity> worthFetching, Predicate<ItemEntity> prized) {
+        return look(client, player, wanted, worthFetching, prized, false);
+    }
+
+    /**
+     * @param hunting the plan is after food and the body has not got any, so an animal is the thing it
+     *                came here for and is found the way any other wanted thing is — by a scan, not by
+     *                happening to be in front of the head
+     */
+    public Sighting look(Minecraft client, LocalPlayer player, Optional<Predicate<BlockState>> wanted,
+                         Predicate<ItemEntity> worthFetching, Predicate<ItemEntity> prized,
+                         boolean hunting) {
         Sighting threat = nearestThreat(player);
         if (threat.isPresent()) {
             return threat;
@@ -114,6 +125,14 @@ public final class Perception {
         Sighting resource = nearestWantedBlock(player, wanted);
         if (resource.isPresent()) {
             return resource;
+        }
+        // An animal, when an animal is what the plan came for. It ranks exactly where a wanted block
+        // would, because that is what it is.
+        if (hunting) {
+            Sighting quarry = nearestQuarry(player);
+            if (quarry.isPresent()) {
+                return quarry;
+            }
         }
         if (drop.isPresent()) {
             return drop;
@@ -185,6 +204,32 @@ public final class Perception {
      */
     public boolean canSee(LocalPlayer player, Optional<Predicate<BlockState>> wanted) {
         return nearestWantedBlock(player, wanted).isPresent();
+    }
+
+    /**
+     * The nearest animal worth eating, found by a scan rather than by the view cone.
+     *
+     * <p>The same deliberate cheat that drops and wanted blocks already get, and for the reason stated
+     * at the top of this class: the head is driven by whatever goal is running, so anything that has to
+     * be looked at before it can be found never gets found. That was written about blocks and it is just
+     * as true of a cow — and while the objective is food, a cow <em>is</em> the wanted thing.
+     *
+     * <p>Measured before this existed: over thirteen hundred decisions spent looking for food the eyes
+     * reported an animal on seven point eight per cent of them, and a plain block on forty-six. ATTACK
+     * was chosen fourteen times in all — and had the best hit rate of any move in the pursuit, one in
+     * five paying off. The policy was not the problem. It was almost never offered the move.
+     *
+     * <p>Line of sight is still required, so a pig through a wall is not the answer to being hungry.
+     */
+    private Sighting nearestQuarry(LocalPlayer player) {
+        return nearest(player, SIGHT_RANGE,
+                candidate -> candidate instanceof LivingEntity living
+                        && living.isAlive()
+                        && !(candidate instanceof Enemy)
+                        && !(candidate instanceof Player)
+                        && player.hasLineOfSight(living))
+                .map(found -> Sighting.of(classify(found), found))
+                .orElseGet(Sighting::nothing);
     }
 
     private Sighting nearestVisibleLiving(LocalPlayer player) {

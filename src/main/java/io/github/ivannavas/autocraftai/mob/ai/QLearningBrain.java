@@ -2989,7 +2989,11 @@ public final class QLearningBrain {
         long now = System.currentTimeMillis();
         shunned.values().removeIf(until -> until <= now);
         Sighting sighting = perception.look(client, player, progression.wanted(),
-                item -> !shunned.containsKey(item), item -> prized(item.getItem()));
+                item -> !shunned.containsKey(item), item -> prized(item.getItem()),
+                // Hunting when the errand is food and there is none in the bag: then an animal is the
+                // thing the plan came for, and the eyes go looking for it instead of waiting to be
+                // pointed at one. See Perception#nearestQuarry.
+                progression.needs().containsKey(Resource.FOOD) && !Perception.wellFed(player));
         // Noted here because this is where the eyes are: arriving somewhere with what the plan is after
         // in view is the thing the position table exists to learn, and it cannot see it any other way.
         sawWhatItNeeds = sighting.kind() == FocusKind.RESOURCE;
