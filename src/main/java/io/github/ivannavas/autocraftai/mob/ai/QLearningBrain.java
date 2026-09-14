@@ -2409,6 +2409,32 @@ public final class QLearningBrain {
                 legal[i] = i == Passage.CARRY_ON.ordinal();
             }
         }
+        // Nothing this layer can legally do would get the body higher, and higher is where it wants to
+        // go. Standing aside is the honest answer, not another sideways shuffle.
+        //
+        // <h2>Seven moves, two of which climb</h2>
+        // CARRY_ON, BREAK_AHEAD, AROUND, BACK and BRIDGE_GAP are all horizontal; only PILLAR and
+        // BREAK_ABOVE gain height, and on an open-topped wall with an empty bag both are illegal —
+        // there is nothing overhead to break and nothing to stand on. So the layer was being asked how
+        // to get up and answering with the only words it had, which were all sideways.
+        //
+        // <p>Measured: forty-three thousand passage decisions since the last reset against a few
+        // thousand of the goal layer's, eighty-two per cent of the recent ones in UP|WALL|OPEN, and the
+        // body shuffling BACK at two and a half points a second for an hour. The move that solves it is
+        // CARVE_UP, which lives in the goal layer — and this layer outranks it, so it never got a turn.
+        //
+        // <p>The same filter the skills already get a few lines up, applied to the built-in moves: a
+        // layer with no answer to the question should not hold the body while it fails to answer it.
+        if (here.wanted() == Obstruction.Wanted.UP && !anyClimbs(legal)) {
+            if (stuckSince != null) {
+                passage.learnTerminal(passageReward(player));
+                passage.forget();
+                stuckSince = null;
+            }
+            removePassage();
+            passageCooldownUntil = System.currentTimeMillis() + PASSAGE_COOLDOWN_MILLIS;
+            return;
+        }
         String key = here.key();
         if (stuckSince != null) {
             passage.learn(key, passageReward(player), 1, legal);
@@ -2630,6 +2656,21 @@ public final class QLearningBrain {
     }
 
     /** Doing nothing and going round always work; the rest need something to break, build or dig. */
+    /** Whether any move this layer may legally make could leave the body higher than it started. */
+    private boolean anyClimbs(boolean[] legal) {
+        Passage[] options = Passage.values();
+        for (int i = 0; i < legal.length && i < passage.columns.size(); i++) {
+            if (!legal[i]) {
+                continue;
+            }
+            if (i < options.length ? options[i].climbs()
+                    : Skills.get().named(passage.columns.get(i)).map(Skill::climbs).orElse(false)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean[] legalPassages(Obstruction here, LocalPlayer player) {
         Passage[] options = Passage.values();
         boolean[] allowed = new boolean[passage.columns.size()];

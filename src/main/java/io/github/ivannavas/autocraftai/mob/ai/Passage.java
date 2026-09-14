@@ -62,6 +62,11 @@ public enum Passage {
     /** Break the ceiling, which is what stands between a body under a ledge and stacking its way up. */
     BREAK_ABOVE {
         @Override
+        public boolean climbs() {
+            return true;
+        }
+
+        @Override
         public MobGoal create(Obstruction here, Reserve reserve) {
             return new BreakGoal(here.ceilingBlocks());
         }
@@ -84,7 +89,17 @@ public enum Passage {
      * once on that row laid forty-one blocks in four minutes and stood in the sky over a forest with
      * no move left that made way. The precondition is what the move can do, as with the others.
      */
+    /**
+     * Whether this move can get the body higher than it started. Only two of them can, and knowing
+     * which matters when the question is "how do I get up" — see the brain, which stands this layer
+     * aside when none of its legal answers can climb.
+     */
     PILLAR {
+        @Override
+        public boolean climbs() {
+            return true;
+        }
+
         @Override
         public MobGoal create(Obstruction here, Reserve reserve) {
             return new PlaceBlockGoal(null, reserve);
@@ -157,4 +172,9 @@ public enum Passage {
 
     /** Whether there is anything for this choice to act on. */
     public abstract boolean isApplicable(Obstruction here);
+
+    /** Whether this move can leave the body higher than it started. False for all but two. */
+    public boolean climbs() {
+        return false;
+    }
 }
