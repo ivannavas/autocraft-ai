@@ -71,7 +71,18 @@ public final class CarveUpGoal implements MobGoal {
             Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST};
 
     private int ticksRunning;
-    private int ticksStalled;
+    /**
+     * Ground covered and blocks broken, the way every other moving goal measures itself.
+     *
+     * <p>It counted its own stalled ticks by hand and counted them wrong: walking to the wall and
+     * stepping up onto the cut both bumped the counter, and only a landed swing cleared it — so the
+     * staircase reported itself as getting nowhere during precisely the seconds it was getting
+     * somewhere. At a point a second for standing about that made CARVE_UP the second worst paid move
+     * in the game, mean -5.49 over three hundred uses, for doing exactly what it was written to do.
+     */
+    private final Advance advance = new Advance();
+    /** Swings that the game would not take. Its own count, since a refused blow is not a still body. */
+    private int blindSwings;
     private boolean breaking;
     private boolean unsafe;
     private BlockPos equippedFor;
@@ -107,13 +118,14 @@ public final class CarveUpGoal implements MobGoal {
 
     @Override
     public int stalledTicks() {
-        return ticksStalled;
+        return advance.stalledTicks();
     }
 
     @Override
     public void start(MobBody body) {
         breaking = false;
-        ticksStalled = 0;
+        blindSwings = 0;
+        advance.reset();
     }
 
     @Override
@@ -130,7 +142,7 @@ public final class CarveUpGoal implements MobGoal {
             body.moveControl().moveTo(Vec3.atBottomCenterOf(step.above()), 1.0F);
             body.lookControl().lookAt(Vec3.atCenterOf(step));
             breaking = false;
-            ticksStalled++;
+            advance.walking(body);
             return;
         }
         BlockPos next = inTheWay(body, step);
@@ -140,7 +152,7 @@ public final class CarveUpGoal implements MobGoal {
             body.moveControl().moveTo(Vec3.atBottomCenterOf(step.above()), 1.0F);
             body.lookControl().lookAt(Vec3.atCenterOf(step.above()));
             breaking = false;
-            ticksStalled++;
+            advance.walking(body);
             return;
         }
         equip(body, next);
@@ -256,12 +268,15 @@ public final class CarveUpGoal implements MobGoal {
         BlockHitResult hit = aimedAt(body, target);
         if (hit == null || !strike(body, target, hit)) {
             breaking = false;
-            if (++ticksStalled >= STALLED_TICKS) {
+            advance.nothing();
+            if (++blindSwings >= STALLED_TICKS) {
                 unsafe = true;
             }
             return;
         }
-        ticksStalled = 0;
+        blindSwings = 0;
+        // A blow that lands is progress that has nothing to do with ground covered.
+        advance.progress();
     }
 
     private boolean strike(MobBody body, BlockPos target, BlockHitResult hit) {
