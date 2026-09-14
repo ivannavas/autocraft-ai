@@ -719,7 +719,25 @@ public final class Progression {
      * {@link Way#DIG} — or when the band wants the body lower than it is. Otherwise it is not offered.
      */
     public boolean worthDigging(int y) {
-        return active.where().allows(Way.DIG) || y > bounds().ceiling();
+        Bounds band = bounds();
+        // Not below the plan's own floor. The band is where the plan says the thing is; a shaft that has
+        // already gone past it is not a route to anything, it is a hole being dug by a body that will
+        // then have to climb out of it.
+        //
+        // <p>The clause was missing and it cost four buried runs in a day. worthDigging asked only
+        // whether digging is a way to what the plan wants, never whether the body had gone past it, so
+        // for any underground resource DIG_DOWN stayed legal at every depth: a cobblestone errand with a
+        // band of 55 to 100 dug to y=6 and spent the next eight minutes hungry at the bottom. The reward
+        // had been saying so all along — DIG_DOWN averaged -19.22 over 337 uses, the worst move in the
+        // game by three and a half times — and being merely expensive is not enough when a single move
+        // can put the body somewhere it cannot get back from.
+        //
+        // <p>A fact about the plan rather than an opinion for a table to buy one buried run at a time,
+        // which is what the legality mask is for.
+        if (band.bind() && y <= band.floor()) {
+            return false;
+        }
+        return active.where().allows(Way.DIG) || y > band.ceiling();
     }
 
     /** Why the run is after this, in a sentence, or empty when nobody said. For the overlay only. */
