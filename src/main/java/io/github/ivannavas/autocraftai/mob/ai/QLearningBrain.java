@@ -3151,13 +3151,20 @@ public final class QLearningBrain {
      * <p>It replaces a version of itself that only ever paid for closing and only on food. Paying one
      * way and not the other is not a potential and can be farmed: a body oscillating between two bands
      * collected on every other second.
+     *
+     * <h2>The guards were tight enough to switch it off</h2>
+     * It also required the two readings to name the same <em>source</em> — the same tree, the same kind
+     * of animal — and that turned out to be almost never true. Measured: it paid on seven decisions out
+     * of a hundred and fifty-five, four and a half per cent, in a stretch where the body walked for
+     * twenty minutes and earned nothing at all on a hundred and nine moves. The eyes re-pick their
+     * target constantly and the source field changes with them; what matters for "am I getting nearer"
+     * is that it is still the same kind of thing worth walking to, which the subject already says.
      */
     private double closingOnTarget(Observation now) {
         if (lastObservation == null
                 || now.distance() == Perception.Distance.NONE
                 || lastObservation.distance() == Perception.Distance.NONE
                 || !now.subject().equals(lastObservation.subject())
-                || !now.source().equals(lastObservation.source())
                 || !worthClosingOn(now.subject())) {
             return 0.0;
         }
