@@ -20,7 +20,20 @@ import net.minecraft.world.level.block.state.BlockState;
  */
 public record Ascend(int level, String reason) implements Phase {
 
-    /** Per block of height gained. Pillaring up costs a block and a jump, so it has to be worth more. */
+    /**
+     * Per block of height gained, and charged the same for every block lost.
+     *
+     * <h2>The half that was missing</h2>
+     * It paid {@code max(0, moved)} and charged nothing for going the other way, so a body that went
+     * one block up and one block back earned 0.8 a cycle for no net progress at all — for ever. Caught
+     * live: REACH_BAND took thirty-eight of forty decisions while x and z did not move a single block in
+     * a minute and y bounced between two values. It was not stuck. It was milking the objective.
+     *
+     * <p>Symmetric, the payment over a whole climb telescopes to the height actually gained, which is
+     * what the objective is for. It is the same asymmetry that was found and fixed in the closing signal
+     * — paying one way and not the other is not a potential and can always be farmed — and {@link
+     * Bounds#closed} had it right all along.
+     */
     private static final double PER_BLOCK = 0.8;
     /** Below this it is not a climb, it is a step. */
     public static final int FLOOR = -55;
@@ -87,7 +100,7 @@ public record Ascend(int level, String reason) implements Phase {
     @Override
     public double score(StepContext context) {
         double climbed = context.positionAfter().y - context.positionBefore().y;
-        return Math.max(0.0, climbed) * PER_BLOCK;
+        return climbed * PER_BLOCK;
     }
 
     /** On foot and by climbing, and never by digging: the way out of a hole is not a deeper hole. */
