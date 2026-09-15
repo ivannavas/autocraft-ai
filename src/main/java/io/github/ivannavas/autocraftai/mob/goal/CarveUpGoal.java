@@ -7,7 +7,6 @@ import java.util.Set;
 import io.github.ivannavas.autocraftai.mob.MobBody;
 import io.github.ivannavas.autocraftai.mob.MobControl;
 import io.github.ivannavas.autocraftai.mob.MobGoal;
-import io.github.ivannavas.autocraftai.mob.ai.WastedEffort;
 import io.github.ivannavas.autocraftai.mob.ai.objective.Tool;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
@@ -287,11 +286,18 @@ public final class CarveUpGoal implements MobGoal {
         Minecraft.getInstance().level.addBreakingBlockEffect(hit.getBlockPos(), hit.getDirection());
         body.player().swing(InteractionHand.MAIN_HAND);
         breaking = true;
-        // Cutting up through stone with no pickaxe still gets there, very slowly, and comes up with
-        // nothing on the way. The height is the objective's business; the waste is charged here.
-        if (!body.player().hasCorrectToolForDrops(body.level().getBlockState(target))) {
-            WastedEffort.get().wastedSwing();
-        }
+        // No waste charge here, and that was a mistake copied wholesale from DigDownGoal.
+        //
+        // <p>WastedEffort is for swinging at a block the held item cannot <em>harvest</em> — cannot get
+        // a drop out of. Mining for drops with the wrong thing in hand produces nothing and deserves
+        // the bill. Cutting a staircase does not want the drop: the product is the hole, and the block
+        // comes away whatever is in the hand.
+        //
+        // <p>Charged, it made escape the most expensive move a trapped body had. Measured in a
+        // dripstone cave with no pickaxe and no food: 247 of 275 decisions in one state whose only
+        // legal moves were WANDER, DIG_DOWN, CARVE_UP and REACH_BAND, with CARVE_UP at -14.85 against
+        // WANDER at -0.61. The body picked WANDER three times in four and it was right to — it was
+        // being charged four points a second for the one move that could get it out.
         return true;
     }
 

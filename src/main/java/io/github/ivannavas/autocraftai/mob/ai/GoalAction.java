@@ -70,7 +70,16 @@ public enum GoalAction {
         }
     },
 
-    /** Only against something that can follow you. Running away from a log is not a strategy. */
+    /**
+     * Only against something that would chase you. Running away from a log is not a strategy, and
+     * neither is running away from a cow.
+     *
+     * <p>It was legal against anything alive, which meant it competed head to head with ATTACK every
+     * time an animal came into view. Measured over 332 such decisions: FLEE legal in 54 per cent and
+     * chosen 68 times, against ATTACK chosen 45 — the body walked or ran away from its dinner more
+     * often than it killed it, while ATTACK was the best-paying move in the whole repertoire at 46 per
+     * cent of uses positive. A passive animal cannot follow you and there is nothing to flee.
+     */
     FLEE {
         @Override
         public MobGoal create(ActionContext context, Aim aim) {
@@ -79,7 +88,8 @@ public enum GoalAction {
 
         @Override
         public boolean isApplicable(ActionContext context) {
-            return context.sighting().isValid() && context.sighting().isCreature();
+            return context.sighting().isValid()
+                    && context.sighting().kind() == FocusKind.HOSTILE;
         }
     },
 
